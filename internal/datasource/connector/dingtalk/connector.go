@@ -390,6 +390,10 @@ func (c *Connector) sync(
 		return nil, nil, errors.New("no DingTalk resources selected")
 	}
 
+	configDigest, err := originalArtifactConfigDigest(dataSourceConfig, selected)
+	if err != nil {
+		return nil, nil, err
+	}
 	api := c.api(cfg)
 	workspaces, err := api.listWorkspaces(ctx)
 	if err != nil {
@@ -477,9 +481,9 @@ func (c *Connector) sync(
 				continue
 			}
 			rendered := renderDocument(document.title(), blocks)
-			items = append(items, fetchedDocument(
-				scope.ResourceID, scope.Reference.WorkspaceID, document, rendered,
-			))
+			item := fetchedDocument(scope.ResourceID, scope.Reference.WorkspaceID, document, rendered)
+			sealFetchedArtifact(ctx, &item, scope, document, configDigest)
+			items = append(items, item)
 			newRevisions[document.ID] = revision
 		}
 

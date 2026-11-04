@@ -858,8 +858,10 @@ func (r *knowledgeRepository) UpdateActiveDeletingKnowledgeColumns(
 func (r *knowledgeRepository) FinalizeSubtask(
 	ctx context.Context, id string,
 ) (int, bool, error) {
-	if err := PrecheckKnowledgeBuildWrite(ctx); err != nil {
-		return 0, false, err
+	if checked, _ := ctx.Value(wikiSettlementTransactionKey{}).(*gorm.DB); checked != r.db {
+		if err := PrecheckKnowledgeBuildWrite(ctx); err != nil {
+			return 0, false, err
+		}
 	}
 	now := time.Now()
 	var promoted bool

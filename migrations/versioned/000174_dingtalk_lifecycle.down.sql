@@ -1,0 +1,2 @@
+DO $$ BEGIN IF EXISTS(SELECT 1 FROM dingtalk_run_claims) OR EXISTS(SELECT 1 FROM dingtalk_document_publications WHERE tombstone) OR EXISTS(SELECT 1 FROM dingtalk_work_intents WHERE process_attempt<>1 OR capacity_settled) THEN RAISE EXCEPTION 'DingTalk lifecycle state cannot be discarded'; END IF; END $$;
+ALTER TABLE dingtalk_work_intents DROP COLUMN capacity_settled; ALTER TABLE dingtalk_work_intents DROP COLUMN process_attempt; ALTER TABLE dingtalk_document_publications DROP COLUMN tombstone; DROP TABLE dingtalk_run_claims;

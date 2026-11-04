@@ -1,0 +1,10 @@
+ALTER TABLE knowledge_input_admissions DROP CONSTRAINT knowledge_input_admissions_origin_kind_check; ALTER TABLE knowledge_input_admissions ADD CONSTRAINT knowledge_input_admissions_origin_kind_check CHECK(origin_kind IN ('human','derived','history','nextcloud','dingtalk_original'));
+CREATE TABLE dingtalk_original_input_receipts (admission_id TEXT PRIMARY KEY REFERENCES knowledge_input_admissions(admission_id),
+tenant_id BIGINT NOT NULL CHECK(tenant_id>0), knowledge_base_id TEXT NOT NULL, knowledge_id TEXT NOT NULL,
+data_source_id TEXT NOT NULL, sync_log_id TEXT NOT NULL, source_revision BIGINT NOT NULL CHECK(source_revision>0),
+facts TEXT NOT NULL, facts_digest TEXT NOT NULL CHECK(length(facts_digest)=64), input_digest TEXT NOT NULL CHECK(length(input_digest)=64), root_digest TEXT NOT NULL CHECK(length(root_digest)=64));
+CREATE TABLE dingtalk_source_input_revisions(datasource_id TEXT PRIMARY KEY,revision BIGINT NOT NULL CHECK(revision>0));
+INSERT INTO dingtalk_source_input_revisions SELECT id,1 FROM data_sources;
+CREATE TRIGGER dingtalk_original_receipt_immutable BEFORE UPDATE OR DELETE ON dingtalk_original_input_receipts FOR EACH ROW EXECUTE FUNCTION knowledge_input_admission_immutable();
+CREATE FUNCTION dingtalk_source_input_revision() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF TG_OP='UPDATE' THEN IF NOT (OLD.tenant_id IS DISTINCT FROM NEW.tenant_id OR OLD.knowledge_base_id IS DISTINCT FROM NEW.knowledge_base_id OR OLD.type IS DISTINCT FROM NEW.type OR OLD.config IS DISTINCT FROM NEW.config OR OLD.deleted_at IS DISTINCT FROM NEW.deleted_at) THEN RETURN NEW; END IF; END IF; INSERT INTO dingtalk_source_input_revisions VALUES(CASE WHEN TG_OP='DELETE' THEN OLD.id ELSE NEW.id END,1) ON CONFLICT(datasource_id) DO UPDATE SET revision=dingtalk_source_input_revisions.revision+1; IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END; $$;
+CREATE TRIGGER dingtalk_source_input_revision AFTER INSERT OR UPDATE OR DELETE ON data_sources FOR EACH ROW EXECUTE FUNCTION dingtalk_source_input_revision();

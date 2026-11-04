@@ -1,0 +1,2 @@
+CREATE TEMP TABLE dingtalk_lifecycle_guard(n INTEGER CHECK(n=0)); INSERT INTO dingtalk_lifecycle_guard SELECT (SELECT count(*) FROM dingtalk_run_claims)+(SELECT count(*) FROM dingtalk_document_publications WHERE tombstone)+(SELECT count(*) FROM dingtalk_work_intents WHERE process_attempt<>1 OR capacity_settled); DROP TABLE dingtalk_lifecycle_guard;
+ALTER TABLE dingtalk_work_intents DROP COLUMN capacity_settled; ALTER TABLE dingtalk_work_intents DROP COLUMN process_attempt; ALTER TABLE dingtalk_document_publications DROP COLUMN tombstone; DROP TABLE dingtalk_run_claims;

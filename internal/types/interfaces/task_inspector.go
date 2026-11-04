@@ -122,3 +122,11 @@ type RuntimeTaskInspector interface {
 	// semantics of deleting archived records one by one.
 	PurgeArchivedRuntimeTasks(ctx context.Context, queue string) (deleted int, supported bool, err error)
 }
+
+// QueuedKnowledgeInspector provides one read-only snapshot of document IDs in
+// pending, scheduled, retry and active queues. An error invalidates the whole
+// snapshot; callers must defer orphan recovery rather than infer no work.
+// Optional so existing cancellation-only backends remain source-compatible.
+type QueuedKnowledgeInspector interface {
+	QueuedKnowledgeIDs(context.Context) (map[string]struct{}, error)
+}

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"mime/multipart"
 	"net/url"
@@ -114,7 +115,12 @@ func (s *knowledgeService) CreateKnowledgeFromFile(
 			checkParams.NextcloudContentRevision = metadata["nextcloud_content_revision"]
 		}
 	}
-	exists, existingKnowledge, err := s.repo.CheckKnowledgeExists(ctx, tenantID, kbID, checkParams)
+	publication, isDingTalkPublication := ctx.Value(dingTalkFilePublicationKey{}).(*dingTalkFilePublication)
+	var exists bool
+	var existingKnowledge *types.Knowledge
+	if !isDingTalkPublication {
+		exists, existingKnowledge, err = s.repo.CheckKnowledgeExists(ctx, tenantID, kbID, checkParams)
+	}
 	if err != nil {
 		logger.Errorf(ctx, "Failed to check knowledge existence: %v", err)
 		return nil, err
@@ -259,12 +265,41 @@ func (s *knowledgeService) CreateKnowledgeFromFile(
 	logger.Info(ctx, "Saving knowledge record to database")
 	artifact, artifactErr := readOriginalUploadArtifact(file)
 	if artifactErr != nil {
+		if isDingTalkPublication {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+			return nil, errors.Join(artifactErr, fileSvc.DeleteFile(cleanupCtx, filePath))
+		}
 		return nil, artifactErr
 	}
 	var createErr error
-	ctx, createErr = s.createAdmittedKnowledge(ctx, knowledge, artifact)
+	if isDingTalkPublication {
+		if publication.rebuild {
+			publication.result, createErr = publication.store.PublishDingTalkConfigurationRebuild(ctx, knowledge, artifact)
+		} else {
+			publication.result, createErr = publication.store.PublishDingTalkOriginal(ctx, knowledge, artifact)
+		}
+		if createErr == nil {
+			ctx = repository.WithKnowledgeBuildInputProof(ctx, s.knowledgeInputs, publication.result.Proof)
+			if publication.result.Outcome == "unchanged" {
+				cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+				defer cancel()
+				if err := fileSvc.DeleteFile(cleanupCtx, filePath); err != nil {
+					return nil, err
+				}
+				knowledge = publication.result.Knowledge
+			}
+		}
+	} else {
+		ctx, createErr = s.createAdmittedKnowledge(ctx, knowledge, artifact)
+	}
 	if err := createErr; err != nil {
 		logger.Errorf(ctx, "Failed to create knowledge record, ID: %s, error: %v", knowledge.ID, err)
+		if isDingTalkPublication {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+			return nil, errors.Join(err, fileSvc.DeleteFile(cleanupCtx, filePath))
+		}
 		if types.CapacityWriteSessionFromContext(ctx) == nil {
 			if deleteErr := fileSvc.DeleteFile(ctx, filePath); deleteErr != nil {
 				logger.Errorf(
@@ -283,6 +318,11 @@ func (s *knowledgeService) CreateKnowledgeFromFile(
 			logger.Errorf(ctx, "Failed to set knowledge tags, knowledge ID: %s, error: %v", knowledge.ID, err)
 			return nil, err
 		}
+	}
+	// The committed DingTalk publication carries a durable process intent.
+	// Its dedicated consumer acknowledges only a verified stable queue task.
+	if isDingTalkPublication {
+		return knowledge, nil
 	}
 
 	// Enqueue document processing task to Asynq

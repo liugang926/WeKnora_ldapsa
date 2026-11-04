@@ -137,6 +137,11 @@ func (s *KnowledgeInputProvenanceStore) UpdateKnowledgeWithInput(
 	if !ok || origin.lineage.RequireComplete() != nil {
 		return nil, types.ErrSourceLineageUnknown
 	}
+	// Original external artifacts use an atomic replacement creation. A generic
+	// retained-field update cannot issue a new original receipt.
+	if origin.kind == dingTalkOriginalKind {
+		return nil, ErrKnowledgeInputChanged
+	}
 	var proof *types.KnowledgeBuildInputProof
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var old types.Knowledge
@@ -379,23 +384,39 @@ func (s *KnowledgeInputProvenanceStore) CreateKnowledgeWithInput(
 	}
 	var proof *types.KnowledgeBuildInputProof
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		kb, err := loadKnowledgeBuildConfigurationInTx(tx, k.TenantID, k.KnowledgeBaseID)
-		if err != nil {
-			return err
-		}
-		controlled, err := ragKnowledgeIsControlled(tx, k)
-		if err != nil {
-			return err
-		}
-		if controlled {
-			return ErrKnowledgeInputChanged
-		}
-		if err := tx.Create(k).Error; err != nil {
-			return err
-		}
-		proof, err = s.admitInTx(ctx, tx, k, kb, input, origin)
+		var err error
+		proof, err = s.createKnowledgeWithInputInTx(ctx, tx, k, input, origin)
 		return err
 	})
+	return proof, err
+}
+
+func (s *KnowledgeInputProvenanceStore) createKnowledgeWithInputInTx(ctx context.Context, tx *gorm.DB, k *types.Knowledge, input any, origin knowledgeInputOrigin) (*types.KnowledgeBuildInputProof, error) {
+	kb, err := loadKnowledgeBuildConfigurationInTx(tx, k.TenantID, k.KnowledgeBaseID)
+	if err != nil {
+		return nil, err
+	}
+	controlled, err := ragKnowledgeIsControlled(tx, k)
+	if err != nil {
+		return nil, err
+	}
+	if controlled {
+		return nil, ErrKnowledgeInputChanged
+	}
+	var dingTalkArtifact dingTalkArtifact
+	if origin.kind == dingTalkOriginalKind {
+		dingTalkArtifact, err = s.checkDingTalkOriginalCreation(ctx, tx, k, input)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Create(k).Error; err != nil {
+		return nil, err
+	}
+	proof, err := s.admitInTx(ctx, tx, k, kb, input, origin)
+	if err == nil && origin.kind == dingTalkOriginalKind {
+		err = saveDingTalkOriginalReceipt(tx, k, proof, dingTalkArtifact)
+	}
 	return proof, err
 }
 
@@ -422,6 +443,13 @@ func (s *KnowledgeInputProvenanceStore) admitInTx(
 	generation, err := inputRowRevision(tx, "knowledge", k.ID)
 	if err != nil {
 		return nil, err
+	}
+	if local, _ := ctx.Value(dingTalkLocalReparseKey{}).(bool); local {
+		var previous uint64
+		if err := tx.Model(&knowledgeInputAdmission{}).Where("knowledge_id = ? AND tenant_id = ?", k.ID, k.TenantID).Select("COALESCE(MAX(build_generation), 0)").Scan(&previous).Error; err != nil {
+			return nil, err
+		}
+		generation = previous + 1
 	}
 	if origin.kind == "nextcloud" {
 		lease, _, err := NextcloudBuildInputLease(ctx)
@@ -632,6 +660,11 @@ func (s *KnowledgeInputProvenanceStore) admissionInTxWithOptions(
 	}
 	if _, err := readKnowledgeConfigurationOrigin(tx, kb); err != nil {
 		return nil, nil, nil, err
+	}
+	if a.OriginKind == dingTalkOriginalKind {
+		if err := verifyDingTalkOriginalReceipt(tx, k, &a); err != nil {
+			return nil, nil, nil, err
+		}
 	}
 	if a.OriginKind == "history" {
 		if err := s.verifyCommittedHistoryParents(tx, k, &a); err != nil {

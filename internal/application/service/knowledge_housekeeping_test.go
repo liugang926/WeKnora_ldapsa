@@ -139,6 +139,19 @@ type fakeTaskInspector struct {
 	err          error
 }
 
+func (f fakeTaskInspector) QueuedKnowledgeIDs(context.Context) (map[string]struct{}, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	ids := make(map[string]struct{})
+	for id, queued := range f.queued {
+		if queued {
+			ids[id] = struct{}{}
+		}
+	}
+	return ids, nil
+}
+
 func (f fakeTaskInspector) CancelTasksForKnowledge(
 	_ context.Context, _ string,
 ) (int, int, error) {
@@ -361,8 +374,7 @@ func TestHousekeeping_StillRecoversWhenNoDurableOp(t *testing.T) {
 }
 
 // TestHousekeeping_QueueProbeError_FailsSafe confirms the fail-safe
-// direction: when the queue probe errors we still recover the row rather
-// than leaving it stranded forever.
+// direction: an unavailable queue cannot prove that a row is orphaned.
 func TestHousekeeping_QueueProbeError_FailsSafe(t *testing.T) {
 	db := setupHousekeepingDB(t)
 	svc := newHousekeepingSvcWithInspector(db, fakeTaskInspector{
@@ -377,8 +389,8 @@ func TestHousekeeping_QueueProbeError_FailsSafe(t *testing.T) {
 	require.NoError(t, db.Raw(
 		`SELECT parse_status FROM knowledges WHERE id = ?`, "kid-probeerr",
 	).Row().Scan(&status))
-	assert.Equal(t, types.ParseStatusFailed, status,
-		"queue probe error must fail safe and still recover the stuck row")
+	assert.Equal(t, types.ParseStatusProcessing, status,
+		"queue probe error must defer the candidate without destroying its state")
 }
 
 // TestHousekeeping_PreservesRecentlyTouched: any knowledge whose

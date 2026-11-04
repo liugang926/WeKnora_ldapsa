@@ -433,18 +433,14 @@ func (h *HousekeepingService) filterByLastSpanActivity(ctx context.Context, cand
 // durable per document in task_pending_ops (dedup_key = knowledge ID), while
 // asynq only carries a per-KB wake-up trigger whose payload has no knowledge
 // ID — and TypeWikiIngest is deliberately absent from the inspector's
-// taskTypesForKnowledgeCancel set anyway. So HasQueuedTasksForKnowledge
+// taskTypesForKnowledgeCancel set anyway. So the transient queue snapshot
 // structurally reports "nothing queued" for a document whose only outstanding
 // work is a queued Wiki ingest, and the sweep force-fails a perfectly healthy
 // row. Probe the durable table directly before consulting the inspector.
 //
 // When no inspector is wired (nil) the durable gate still applies; only the
-// transient queue check is skipped. On probe error we fail safe, but in
-// opposite directions by design: an inspector error KEEPS the candidate as
-// stuck (matching the span heartbeat query), whereas a durable-table error
-// DEFERS every candidate to the next sweep — we cannot tell backlog from
-// orphan without it, and wrongly failing a live document is not recoverable
-// by the user, while waiting one more interval is.
+// transient queue check is skipped. Any probe error defers the candidates:
+// unknown queue state must never be interpreted as absence of work.
 func (h *HousekeepingService) filterOutQueued(
 	ctx context.Context, candidates []types.Knowledge,
 ) (kept []types.Knowledge, skipped int) {
@@ -473,24 +469,29 @@ func (h *HousekeepingService) filterOutQueued(
 		durable[id] = struct{}{}
 	}
 
+	// Snapshot once for the whole sweep rather than walking every queue for
+	// every candidate (upstream #4360). Keep the durable Wiki gate first.
+	var queued map[string]struct{}
+	if h.inspector != nil && len(durable) < len(candidates) {
+		scanner, ok := h.inspector.(interfaces.QueuedKnowledgeInspector)
+		if !ok {
+			logger.Warnf(ctx, "[Housekeeping] queue snapshot unavailable; deferring %d candidate(s)", len(candidates))
+			return candidates[:0], len(candidates)
+		}
+		var err error
+		queued, err = scanner.QueuedKnowledgeIDs(ctx)
+		if err != nil {
+			logger.Warnf(ctx, "[Housekeeping] queue snapshot failed: %v (deferring %d candidate(s))", err, len(candidates))
+			return candidates[:0], len(candidates)
+		}
+	}
 	out := candidates[:0]
 	for _, k := range candidates {
 		if _, ok := durable[k.ID]; ok {
 			skipped++
 			continue
 		}
-		if h.inspector == nil {
-			out = append(out, k)
-			continue
-		}
-		queued, err := h.inspector.HasQueuedTasksForKnowledge(ctx, k.ID)
-		if err != nil {
-			logger.Warnf(ctx,
-				"[Housekeeping] queue probe failed for %s: %v (will fail safe and treat as stuck)", k.ID, err)
-			out = append(out, k)
-			continue
-		}
-		if queued {
+		if _, ok := queued[k.ID]; ok {
 			skipped++
 			continue
 		}

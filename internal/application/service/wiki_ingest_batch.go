@@ -189,7 +189,7 @@ func (s *wikiIngestService) newWikiBatchContext(
 	}
 }
 
-func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task) error {
+func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task) (resultErr error) {
 	taskStartedAt := time.Now()
 	retryCount, _ := asynq.GetRetryCount(ctx)
 	maxRetry, _ := asynq.GetMaxRetry(ctx)
@@ -217,6 +217,9 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 	loggedMaxInflight := 0
 
 	defer func() {
+		if resultErr != nil && exitStatus == "success" {
+			exitStatus = "failed"
+		}
 		logger.Infof(
 			ctx,
 			"wiki ingest stats: kb=%s tenant=%d retry=%d/%d status=%s elapsed=%s mode=%s pending_ops=%d ops(ingest=%d,retract=%d) ingest(success=%d,failed=%d) retract_handled=%d pages(total=%d) followup=%v tunables(batch=%d,map_par=%d,reduce_par=%d,max_inflight=%d) preview=%s",
@@ -445,6 +448,7 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 	// 1. MAP PHASE (Parallel extraction and generation of updates)
 	var mapMu sync.Mutex
 	var failedOps []WikiPendingOp
+	var settlementErrors []error
 	slugUpdates := make(map[string][]SlugUpdate)
 	var docResults []*docIngestResult
 	var retractFolderIDs []string
@@ -599,12 +603,19 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 				// "finalizing" until the housekeeping sweep marks it
 				// failed. The matching +1 was seeded by
 				// KnowledgePostProcess.SetFinalizing.
-				s.finalizeWikiSubtask(mapCtx, op.KnowledgeID)
+				if err := s.finalizeWikiSubtask(mapCtx, payload, op, "", 0); err != nil {
+					mapMu.Lock()
+					settlementErrors = append(settlementErrors, err)
+					mapMu.Unlock()
+				}
 			}
 			return nil
 		})
 	}
 	_ = eg.Wait()
+	if err := errors.Join(settlementErrors...); err != nil {
+		return fmt.Errorf("wiki terminal settlement: %w", err)
+	}
 	if err := s.checkWikiTaskAuthorization(ctx); err != nil {
 		return fmt.Errorf("wiki ingest: authorization changed after map: %w", err)
 	}
@@ -684,7 +695,8 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 			acquired, lockErr := s.withSlugLock(reduceCtx, payload.KnowledgeBaseID, slug, func() error {
 				changed, affectedType, additionFailed, reduceErr = s.reduceSlugUpdates(
 					reduceCtx, chatModel, payload.KnowledgeBaseID, slug, updates, payload.TenantID, batchCtx, kidToWikiSpan)
-				return reduceErr
+				// Classify reduction failures below; this return only reports lock errors.
+				return nil
 			})
 			if lockErr != nil {
 				collectUnapplied(updates)
@@ -734,8 +746,9 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 	}
 	_ = egReduce.Wait()
 
-	tailCtx, tailCancel := wikiIngestCleanupContext(ctx)
-	defer tailCancel()
+	// Publishing is normal task work, not detached shutdown cleanup. It may
+	// touch hundreds of pages and must retain the task deadline/cancellation.
+	tailCtx := ctx
 	if err := s.checkWikiTaskAuthorization(tailCtx); err != nil {
 		return fmt.Errorf("wiki ingest: authorization changed after reduce: %w", err)
 	}
@@ -773,7 +786,10 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 	// written, not after the debounce window. This is a cheap status flip.
 	if len(allPagesAffected) > 0 {
 		logger.Infof(ctx, "wiki ingest: publishing draft pages")
-		s.publishDraftPages(tailCtx, payload.KnowledgeBaseID, allPagesAffected)
+		if err := s.publishDraftPages(tailCtx, payload.KnowledgeBaseID, allPagesAffected); err != nil {
+			exitStatus = "publish_failed"
+			return fmt.Errorf("wiki ingest: publish draft pages: %w", err)
+		}
 	}
 	if err := s.checkWikiTaskAuthorization(tailCtx); err != nil {
 		return fmt.Errorf("wiki ingest: authorization changed during publish: %w", err)
@@ -846,7 +862,24 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 		// held — the retry (or the dead-letter drain in requeueFailedOps)
 		// releases it once the op reaches a real terminal state.
 		if _, unapplied := unappliedSlugKIDs[r.KnowledgeID]; !unapplied {
-			s.finalizeWikiSubtask(ctx, r.KnowledgeID)
+			var matched *WikiPendingOp
+			for i := range pendingOps {
+				if pendingOps[i].KnowledgeID == r.KnowledgeID && pendingOps[i].Op == WikiOpIngest {
+					matched = &pendingOps[i]
+					break
+				}
+			}
+			if matched == nil {
+				spanCancel()
+				return fmt.Errorf("wiki settlement missing operation for %s", r.KnowledgeID)
+			}
+			if err := s.finalizeWikiSubtask(ctx, payload, *matched, "", 0); err != nil {
+				spanCancel()
+				return fmt.Errorf("wiki successful operation settlement: %w", err)
+			}
+		}
+		if _, unapplied := unappliedSlugKIDs[r.KnowledgeID]; unapplied {
+			continue
 		}
 		if r.WikiSpan == nil {
 			continue
@@ -1868,12 +1901,14 @@ func (s *wikiIngestService) reduceSlugUpdates(
 		if pageSpan == nil {
 			return
 		}
+		spanCtx, spanCancel := wikiIngestCleanupContext(ctx)
+		defer spanCancel()
 		if err != nil {
-			s.tracker().FailSpan(ctx, pageSpan, "REDUCE_FAILED", err.Error(), err)
+			s.tracker().FailSpan(spanCtx, pageSpan, "REDUCE_FAILED", err.Error(), err)
 			return
 		}
 		if !changed {
-			s.tracker().SkipSpan(ctx, pageSpan, "no_change")
+			s.tracker().SkipSpan(spanCtx, pageSpan, "no_change")
 			return
 		}
 		out := types.JSONMap{
@@ -1890,10 +1925,46 @@ func (s *wikiIngestService) reduceSlugUpdates(
 			out["chunk_refs"] = len(page.ChunkRefs)
 			out["aliases"] = []string(page.Aliases)
 		}
-		s.tracker().EndSpan(ctx, pageSpan, out)
+		s.tracker().EndSpan(spanCtx, pageSpan, out)
 	}()
 
-	page, err = s.wikiService.GetPageBySlug(ctx, kbID, slug)
+	for attempt := 1; ; attempt++ {
+		if ctx.Err() != nil {
+			return false, "", false, ctx.Err()
+		}
+		if attempt > 1 {
+			updates = s.filterLiveUpdates(ctx, kbID, updates)
+			if len(updates) == 0 {
+				return false, "", false, nil
+			}
+			if err = s.checkWikiTaskAuthorization(ctx); err != nil {
+				return false, "", false, err
+			}
+			batchCtx = s.wikiPageRetryContext(kbID, batchCtx)
+		}
+		changed, affectedType, additionFailed, err = s.reduceSlugUpdatesOnce(
+			ctx, chatModel, kbID, slug, updates, tenantID, batchCtx, &page)
+		if !errors.Is(err, apprepo.ErrWikiPageConflict) || attempt >= wikiPageConflictMaxAttempts {
+			if err != nil {
+				changed = false
+			}
+			return changed, affectedType, additionFailed, err
+		}
+		if err = waitWikiPageConflictRetry(ctx, attempt); err != nil {
+			return false, "", false, err
+		}
+	}
+}
+
+// Each retry reloads the page and repeats only this page's merge, never document Map.
+func (s *wikiIngestService) reduceSlugUpdatesOnce(
+	ctx context.Context, chatModel chat.Chat, kbID, slug string, updates []SlugUpdate,
+	tenantID uint64, batchCtx *WikiBatchContext, pageResult **types.WikiPage,
+) (changed bool, affectedType string, additionFailed bool, err error) {
+	page, err := s.wikiService.GetPageBySlug(ctx, kbID, slug)
+	if ctx.Err() != nil {
+		return false, "", false, ctx.Err()
+	}
 	exists := (err == nil && page != nil)
 
 	if !exists {
@@ -1923,6 +1994,8 @@ func (s *wikiIngestService) reduceSlugUpdates(
 		// anyway, but be explicit.
 		err = nil
 	}
+
+	*pageResult = page
 
 	affectedType = "ingest"
 
@@ -1955,6 +2028,9 @@ func (s *wikiIngestService) reduceSlugUpdates(
 		page.ChunkRefs = types.StringArray{}
 		changed = true
 
+		if err = s.checkWikiPageRetrySources(ctx, kbID, updates); err != nil {
+			return false, "", false, err
+		}
 		if exists {
 			_, err = s.wikiService.UpdatePage(ctx, page)
 		} else {
@@ -2161,6 +2237,9 @@ func (s *wikiIngestService) reduceSlugUpdates(
 			"InstructionScope":        "wiki_content",
 		})
 
+		if ctx.Err() != nil {
+			return false, "", false, ctx.Err()
+		}
 		if err == nil && updatedContent != "" {
 			// Translate request-local handles (ref-N) the model copied from the
 			// encoded context back to their real slugs BEFORE the content is
@@ -2205,6 +2284,9 @@ func (s *wikiIngestService) reduceSlugUpdates(
 	}
 
 	if changed {
+		if err = s.checkWikiPageRetrySources(ctx, kbID, updates); err != nil {
+			return false, "", false, err
+		}
 		// Refresh chunk refs in-place on the page so they persist alongside
 		// the rest of the row. Retract-only updates (no additions) preserve
 		// the existing refs; addition rounds append the newly-cited chunks

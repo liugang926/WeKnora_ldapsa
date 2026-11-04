@@ -79,6 +79,21 @@ func (s *KnowledgeInputProvenanceStore) SealKnowledgeAutoTagCompletionInTx(
 	if err != nil {
 		return err
 	}
+	// Match the worker's no-work rule before consuming candidate tag inputs.
+	// Already-tagged documents need no candidate origins or model snapshot;
+	// their completed document proof above is still verified normally.
+	if kb.AutoTagConfig.ShouldSkipIfTagged() {
+		var tagged int64
+		if err := tx.Table("knowledge_tag_relations AS r").
+			Joins("JOIN knowledge_tags AS t ON t.id = r.tag_id").
+			Where("r.knowledge_id = ? AND t.tenant_id = ? AND t.knowledge_base_id = ?", k.ID, k.TenantID, kb.ID).
+			Count(&tagged).Error; err != nil {
+			return err
+		}
+		if tagged > 0 {
+			return nil
+		}
+	}
 	snapshot, err := s.captureKnowledgeAutoTagInTx(tx, actual.Proof)
 	if err != nil {
 		return err
