@@ -132,16 +132,40 @@ type client struct {
 	// minInterval spaces authenticated API calls apart so parallel data
 	// source syncs sharing one app key stay under DingTalk's QPS limit.
 	// Zero disables the throttle (tests).
-	minInterval  time.Duration
-	throttleMu   sync.Mutex
-	throttleNext time.Time
-	appKey       string
-	appSecret    string
-	http         *http.Client
-	sleep        func(context.Context, time.Duration) error
+	minInterval time.Duration
+	appKey      string
+	appSecret   string
+	http        *http.Client
+	sleep       func(context.Context, time.Duration) error
 
-	token       string
-	tokenExpiry time.Time
+	// creds is shared by every data source configured with the same
+	// appKey/appSecret: one access token and one API throttle budget per
+	// DingTalk app instead of per data source.
+	creds *dingTalkCredentials
+}
+
+// dingTalkCredentials carries the per-app access token cache and the global
+// API throttle. All data sources sharing one app key share one instance.
+type dingTalkCredentials struct {
+	appKey    string
+	appSecret string
+
+	mu           sync.Mutex
+	token        string
+	tokenExpiry  time.Time
+	throttleNext time.Time
+}
+
+var sharedDingTalkCredentials sync.Map // appKey + "\x00" + appSecret → *dingTalkCredentials
+
+func dingTalkCredentialsFor(appKey, appSecret string) *dingTalkCredentials {
+	key := appKey + "\x00" + appSecret
+	if v, ok := sharedDingTalkCredentials.Load(key); ok {
+		return v.(*dingTalkCredentials)
+	}
+	fresh := &dingTalkCredentials{appKey: appKey, appSecret: appSecret}
+	actual, _ := sharedDingTalkCredentials.LoadOrStore(key, fresh)
+	return actual.(*dingTalkCredentials)
 }
 
 func newClient(cfg *config) *client {
@@ -151,6 +175,7 @@ func newClient(cfg *config) *client {
 		operator:    cfg.OperatorID,
 		appKey:      cfg.ClientID,
 		appSecret:   cfg.ClientSecret,
+		creds:       dingTalkCredentialsFor(cfg.ClientID, cfg.ClientSecret),
 		http:        datasource.NewConnectorHTTPClient(apiTimeout),
 		sleep:       sleepContext,
 	}
@@ -162,8 +187,10 @@ type accessTokenResponse struct {
 }
 
 func (c *client) accessToken(ctx context.Context) (string, error) {
-	if c.token != "" && time.Now().Before(c.tokenExpiry) {
-		return c.token, nil
+	c.creds.mu.Lock()
+	defer c.creds.mu.Unlock()
+	if c.creds.token != "" && time.Now().Before(c.creds.tokenExpiry) {
+		return c.creds.token, nil
 	}
 
 	var response accessTokenResponse
@@ -186,9 +213,9 @@ func (c *client) accessToken(ctx context.Context) (string, error) {
 	if ttl > 5*time.Minute {
 		ttl -= 5 * time.Minute
 	}
-	c.token = response.AccessToken
-	c.tokenExpiry = time.Now().Add(ttl)
-	return c.token, nil
+	c.creds.token = response.AccessToken
+	c.creds.tokenExpiry = time.Now().Add(ttl)
+	return c.creds.token, nil
 }
 
 func (c *client) doJSON(
@@ -254,9 +281,9 @@ func (c *client) doJSON(
 		}
 
 		if authenticated && resp.StatusCode == http.StatusUnauthorized && !refreshed {
-			if c.token == token {
-				c.token = ""
-				c.tokenExpiry = time.Time{}
+			if c.creds.token == token {
+				c.creds.token = ""
+				c.creds.tokenExpiry = time.Time{}
 			}
 			refreshed = true
 			continue
@@ -316,7 +343,7 @@ func (c *client) doJSON(
 
 func (c *client) redactAPIError(err error) error {
 	message := err.Error()
-	for _, sensitive := range []string{c.appKey, c.appSecret, c.operator, c.token} {
+	for _, sensitive := range []string{c.appKey, c.appSecret, c.operator, c.creds.token} {
 		if sensitive != "" {
 			message = strings.ReplaceAll(message, sensitive, "[REDACTED]")
 		}
@@ -626,16 +653,16 @@ func (c *client) throttle(ctx context.Context) error {
 	if c.minInterval <= 0 {
 		return nil
 	}
-	c.throttleMu.Lock()
+	c.creds.mu.Lock()
 	now := time.Now()
 	wait := time.Duration(0)
-	if c.throttleNext.After(now) {
-		wait = c.throttleNext.Sub(now)
-		c.throttleNext = c.throttleNext.Add(c.minInterval)
+	if c.creds.throttleNext.After(now) {
+		wait = c.creds.throttleNext.Sub(now)
+		c.creds.throttleNext = c.creds.throttleNext.Add(c.minInterval)
 	} else {
-		c.throttleNext = now.Add(c.minInterval)
+		c.creds.throttleNext = now.Add(c.minInterval)
 	}
-	c.throttleMu.Unlock()
+	c.creds.mu.Unlock()
 	if wait > 0 {
 		return c.wait(ctx, wait)
 	}
