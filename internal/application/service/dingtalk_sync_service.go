@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
@@ -31,6 +32,18 @@ type dingTalkQueueInspector interface {
 }
 
 const dingTalkRunTTL = 2 * time.Minute
+
+// isSerializationConflict reports Postgres serialization/concurrent-update
+// failures that are safe to retry immediately.
+func isSerializationConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "SQLSTATE 40001") ||
+		strings.Contains(msg, "could not serialize access") ||
+		strings.Contains(msg, "concurrent update")
+}
 
 func dingTalkSyncFailure(result *types.SyncResult, title, code string, err error) {
 	result.Failed++
@@ -187,6 +200,29 @@ func (s *DataSourceService) processDingTalkSync(ctx context.Context, ds *types.D
 			continue
 		}
 		k, outcome, err := s.ingestDingTalkItem(ctx, ds, item, tagIDs)
+		if err != nil && isSerializationConflict(err) {
+			// Postgres SERIALIZABLE / concurrent-update conflicts are a normal
+			// part of ingesting a large batch while enrichment fan-out writes
+			// the same rows. A short bounded retry rescues the item instead
+			// of failing a 200-document sync over a transient collision.
+			recovered := false
+			for attempt := 1; attempt <= 3; attempt++ {
+				select {
+				case <-ctx.Done():
+					recovered = false
+				case <-time.After(time.Duration(attempt) * 250 * time.Millisecond):
+				}
+				k, outcome, err = s.ingestDingTalkItem(ctx, ds, item, tagIDs)
+				if err == nil || !isSerializationConflict(err) {
+					recovered = err == nil
+					break
+				}
+			}
+			if !recovered && err != nil {
+				dingTalkSyncFailure(result, item.Title, "dingtalk_import_failed", err)
+				continue
+			}
+		}
 		if err != nil {
 			dingTalkSyncFailure(result, item.Title, "dingtalk_import_failed", err)
 			continue
