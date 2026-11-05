@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/datasource"
@@ -126,12 +127,18 @@ type dingTalkAPI interface {
 }
 
 type client struct {
-	baseURL   string
-	operator  string
-	appKey    string
-	appSecret string
-	http      *http.Client
-	sleep     func(context.Context, time.Duration) error
+	baseURL  string
+	operator string
+	// minInterval spaces authenticated API calls apart so parallel data
+	// source syncs sharing one app key stay under DingTalk's QPS limit.
+	// Zero disables the throttle (tests).
+	minInterval  time.Duration
+	throttleMu   sync.Mutex
+	throttleNext time.Time
+	appKey       string
+	appSecret    string
+	http         *http.Client
+	sleep        func(context.Context, time.Duration) error
 
 	token       string
 	tokenExpiry time.Time
@@ -139,12 +146,13 @@ type client struct {
 
 func newClient(cfg *config) *client {
 	return &client{
-		baseURL:   apiBaseURL,
-		operator:  cfg.OperatorID,
-		appKey:    cfg.ClientID,
-		appSecret: cfg.ClientSecret,
-		http:      datasource.NewConnectorHTTPClient(apiTimeout),
-		sleep:     sleepContext,
+		baseURL:     apiBaseURL,
+		minInterval: dingTalkAPIMinInterval,
+		operator:    cfg.OperatorID,
+		appKey:      cfg.ClientID,
+		appSecret:   cfg.ClientSecret,
+		http:        datasource.NewConnectorHTTPClient(apiTimeout),
+		sleep:       sleepContext,
 	}
 }
 
@@ -220,6 +228,9 @@ func (c *client) doJSON(
 				return err
 			}
 			req.Header.Set("x-acs-dingtalk-access-token", token)
+			if err := c.throttle(ctx); err != nil {
+				return err
+			}
 		}
 
 		resp, err := c.http.Do(req)
@@ -249,6 +260,26 @@ func (c *client) doJSON(
 			}
 			refreshed = true
 			continue
+		}
+
+		if resp.StatusCode == http.StatusForbidden && bytes.Contains(responseBody, []byte("QpsLimitForApi")) {
+			// App-level QPS limit: transient by nature. Back off and retry a
+			// few times before surfacing; concurrent data source syncs share
+			// one app key and trip this regularly.
+			if retryAttempt+1 < maxAttempts {
+				delay := retryDelay(retryAttempt)
+				if extra := parseRetryAfter(resp.Header.Get("Retry-After"), 0); extra > delay {
+					delay = extra
+				}
+				if delay < 2*time.Second {
+					delay = 2 * time.Second
+				}
+				retryAttempt++
+				if err := c.wait(ctx, delay); err != nil {
+					return err
+				}
+				continue
+			}
 		}
 
 		if isTransient(resp.StatusCode) {
@@ -586,6 +617,29 @@ func (c *client) downloadWikiNode(ctx context.Context, workspaceID, nodeID strin
 		return nil, fmt.Errorf("DingTalk file exceeds %d bytes", maxWikiNodeDownloadBytes)
 	}
 	return data, nil
+}
+
+// dingTalkAPIMinInterval keeps well below the documented wiki QPS ceiling.
+const dingTalkAPIMinInterval = 300 * time.Millisecond
+
+func (c *client) throttle(ctx context.Context) error {
+	if c.minInterval <= 0 {
+		return nil
+	}
+	c.throttleMu.Lock()
+	now := time.Now()
+	wait := time.Duration(0)
+	if c.throttleNext.After(now) {
+		wait = c.throttleNext.Sub(now)
+		c.throttleNext = c.throttleNext.Add(c.minInterval)
+	} else {
+		c.throttleNext = now.Add(c.minInterval)
+	}
+	c.throttleMu.Unlock()
+	if wait > 0 {
+		return c.wait(ctx, wait)
+	}
+	return nil
 }
 
 func (c *client) wait(ctx context.Context, delay time.Duration) error {

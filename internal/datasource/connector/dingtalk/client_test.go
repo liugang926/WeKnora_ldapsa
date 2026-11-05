@@ -21,12 +21,13 @@ func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) 
 
 func testClient(server *httptest.Server) *client {
 	return &client{
-		baseURL:   server.URL,
-		operator:  "union/user",
-		appKey:    "app",
-		appSecret: "secret",
-		http:      server.Client(),
-		sleep:     func(context.Context, time.Duration) error { return nil },
+		baseURL:     server.URL,
+		minInterval: 0,
+		operator:    "union/user",
+		appKey:      "app",
+		appSecret:   "secret",
+		http:        server.Client(),
+		sleep:       func(context.Context, time.Duration) error { return nil },
 	}
 }
 
