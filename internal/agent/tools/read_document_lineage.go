@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/application/readlease"
@@ -247,6 +248,14 @@ func validateDocumentChunkProjection(
 		(c.ChunkType == types.ChunkTypeSummary && snapshot.ProducerMaterialVerified)
 	if !supported || (strings.TrimSpace(c.ImageInfo) != "" && strings.TrimSpace(c.ImageInfo) != "[]") ||
 		(len(c.Metadata) > 0 && strings.TrimSpace(string(c.Metadata)) != "{}") {
+		if access.UseWeKnoraReadAuthority() {
+			// WeKnora owns read authorization (the deployment-wide opt-in):
+			// parser-produced enrichment chunks (PPT slide captions, image
+			// OCR, metadata-bearing text from PDF/Office parsing) are
+			// first-party pipeline outputs, not external materials, and must
+			// stay citable instead of failing the whole agent turn.
+			return nil
+		}
 		return errors.New("document chunk enrichment lineage adapter is unavailable")
 	}
 	return nil
