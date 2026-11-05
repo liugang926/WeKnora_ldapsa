@@ -142,8 +142,17 @@ func batchEmbedWithBackoff(ctx context.Context, embedder embedding.Embedder, con
 		}
 		logger.Errorf(ctx, "BatchEmbedWithPool attempt %d/%d failed: %v", attempt+1, embedRetryAttempts, err)
 		if attempt+1 < embedRetryAttempts {
+			// Rate-limit replies need a longer floor: the embedding gateway
+			// sheds load precisely when a large batch is being indexed, and
+			// sub-second retries only add to the stampede.
+			wait := delay
+			if strings.Contains(err.Error(), "429") || strings.Contains(strings.ToLower(err.Error()), "rate_limit") {
+				if wait < 2*time.Second {
+					wait = 2 * time.Second
+				}
+			}
 			select {
-			case <-time.After(delay):
+			case <-time.After(wait):
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			}
