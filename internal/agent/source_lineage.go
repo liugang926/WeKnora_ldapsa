@@ -122,6 +122,21 @@ func (e *AgentEngine) rememberLineageFailure(err error) error {
 	if err == nil {
 		return nil
 	}
+	// A dead context is an infrastructure timeout, not an authorization
+	// decision: the verifier's revalidation queries cannot run on an expired
+	// context, and recording a denial here misreports every LLM-stall timeout
+	// as "source lineage is unavailable or unauthorized" (production
+	// 2026-11-05: a gateway brownout surfaced exactly that way, masking the
+	// real failure). Cancel lineage waiters and propagate the raw cause so
+	// the caller's original error stays authoritative.
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		e.lineageMu.Lock()
+		if e.lineageCancel != nil {
+			e.lineageCancel()
+		}
+		e.lineageMu.Unlock()
+		return err
+	}
 	e.lineageMu.Lock()
 	defer e.lineageMu.Unlock()
 	if e.lineageErr == nil {

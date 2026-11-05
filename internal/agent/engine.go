@@ -440,7 +440,12 @@ func (e *AgentEngine) Execute(
 	})
 
 	_, err := e.executeLoop(ctx, state, query, messages, tools, sessionID, messageID)
-	if boundaryErr := e.lineageFailure(); boundaryErr != nil {
+	// A lineage boundary failure recorded mid-flight only becomes the
+	// turn's error when the loop itself did not fail: when both exist the
+	// loop error is the root cause (the recorded denial is usually a
+	// downstream artifact of the same stall), and overriding it hid the
+	// real failure behind "lineage unavailable or unauthorized".
+	if boundaryErr := e.lineageFailure(); boundaryErr != nil && err == nil {
 		err = boundaryErr
 	}
 	state.SourceLineage = e.SourceLineageSnapshot()
