@@ -16,7 +16,7 @@ import logging
 import os
 import re
 import uuid
-from typing import Dict, List, Match, Optional, Tuple
+from typing import Callable, Dict, List, Match, Optional, Tuple
 
 from docreader.models.document import Document
 from docreader.parser.base_parser import BaseParser
@@ -27,9 +27,45 @@ from docreader.utils import endecode
 logger = logging.getLogger(__name__)
 
 _SEPARATOR_CELL = re.compile(r"^:?-{3,}:?$")
+# A backslash escape, or a bare pipe. Scanning both keeps an escaped pipe
+# (``\|``) out of the cell delimiters without a lookbehind, in linear time.
+_ESCAPE_OR_PIPE = re.compile(r"\\.|\|", re.DOTALL)
 # Cells of a GFM alignment row as matched by the previous ``align_pattern``.
 # Looser than ``_SEPARATOR_CELL``: any non-empty run of ``:``/``-`` qualifies.
 _ALIGNMENT_CELL = re.compile(r"^[:-]+$")
+_CODE_FENCE = re.compile(r" {0,3}(`{3,}|~{3,})(.*)$")
+
+
+def _transform_outside_fences(content: str, transform: Callable[[str], str]) -> str:
+    """Transform prose while leaving fenced code and its line endings intact."""
+    out: List[str] = []
+    pending: List[str] = []
+    fence: Optional[str] = None
+
+    def flush_pending() -> None:
+        if pending:
+            out.append(transform("\n".join(pending)))
+            pending.clear()
+
+    for line in content.split("\n"):
+        marker = _CODE_FENCE.fullmatch(line.removesuffix("\r"))
+        if fence is not None:
+            out.append(line)
+            if (
+                marker
+                and marker[1][0] == fence[0]
+                and len(marker[1]) >= len(fence)
+                and not marker[2].strip(" \t")
+            ):
+                fence = None
+        elif marker and (marker[1][0] != "`" or "`" not in marker[2]):
+            flush_pending()
+            fence = marker[1]
+            out.append(line)
+        else:
+            pending.append(line)
+    flush_pending()
+    return "\n".join(out)
 
 
 class MarkdownTableUtil:
@@ -53,11 +89,21 @@ class MarkdownTableUtil:
 
     @staticmethod
     def _split_row_cells(row_line: str) -> List[str]:
-        """Split a markdown table row into cells, preserving empty cells."""
+        """Split a markdown table row into cells, preserving empty cells.
+
+        As in GFM, a pipe escaped as ``\\|`` is text inside its cell rather
+        than a cell delimiter.
+        """
         inner = row_line.strip()
         if not inner.startswith("|"):
             return []
-        parts = inner.split("|")
+        parts: List[str] = []
+        start = 0
+        for match in _ESCAPE_OR_PIPE.finditer(inner):
+            if match.group() == "|":
+                parts.append(inner[start:match.start()])
+                start = match.end()
+        parts.append(inner[start:])
         if parts and parts[0].strip() == "":
             parts = parts[1:]
         if parts and parts[-1].strip() == "":
@@ -128,6 +174,11 @@ class MarkdownTableUtil:
         return "\n".join(out)
 
     def format_table(self, content: str) -> str:
+        """Normalize tables outside fenced code blocks, preserving code examples."""
+        unified = content.replace("\r\n", "\n").replace("\r", "\n")
+        return _transform_outside_fences(unified, self._format_table_block)
+
+    def _format_table_block(self, content: str) -> str:
         """Format all Markdown tables in the content.
 
         Line-based and regex-free: only well-formed rows (leading *and*
@@ -324,7 +375,7 @@ class MarkdownImageUtil:
         path_prefix: Optional[str] = None,
         replace: bool = True,
     ) -> Tuple[str, Dict[str, bytes]]:
-        """Extract and decode base64 embedded images from Markdown.
+        """Extract and decode base64 embedded images outside fenced code.
 
         This method finds all base64-encoded images in the Markdown content,
         decodes them to binary format, generates unique filenames, and
@@ -375,7 +426,9 @@ class MarkdownImageUtil:
             # Replace base64 data with file path reference
             return f"![{title}]({image_path})"
 
-        text = self.b64_pattern.sub(repl, content)
+        text = _transform_outside_fences(
+            content, lambda prose: self.b64_pattern.sub(repl, prose)
+        )
         logger.debug(f"Extracted {len(images)} base64 images from markdown")
         return text, images
 
