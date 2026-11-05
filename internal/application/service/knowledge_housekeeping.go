@@ -167,7 +167,23 @@ func (h *HousekeepingService) runSweep(ctx context.Context) {
 	// positive users hit under heavy upload bursts. Drop any candidate
 	// that still has a queued/active task referencing it; only rows with
 	// nothing left in the queue are treated as genuinely orphaned.
-	stuck, queueSkipped := h.filterOutQueued(ctx, stuck)
+	// Hard grace cap for the queue gate below: filterOutQueued protects any
+	// row whose subtasks sit queued or in asynq retry backoff. Under a
+	// sustained gateway brownout that protection masked stalls for 5-17
+	// hours in production (2026-10-27 / 11-03: retries exhausted slowly
+	// while the row sat in processing). Once a row is twice the stale
+	// threshold old it is failed regardless of queue state, so the stall
+	// surfaces for operator retry instead of hiding behind backoff.
+	hardCutoff := now.Add(-2 * threshold)
+	var withinGrace, beyondGrace []types.Knowledge
+	for _, k := range stuck {
+		if k.UpdatedAt.Before(hardCutoff) {
+			beyondGrace = append(beyondGrace, k)
+		} else {
+			withinGrace = append(withinGrace, k)
+		}
+	}
+	stuck, queueSkipped := h.filterOutQueued(ctx, withinGrace)
 
 	if len(stuck) > 0 {
 		stuckIDs := make([]string, 0, len(stuck))
@@ -187,6 +203,27 @@ func (h *HousekeepingService) runSweep(ctx context.Context) {
 		} else if res.RowsAffected > 0 {
 			logger.Infof(ctx, "[Housekeeping] recovered %d stuck knowledge rows (threshold=%s)",
 				res.RowsAffected, threshold)
+		}
+	}
+	if len(beyondGrace) > 0 {
+		hardIDs := make([]string, 0, len(beyondGrace))
+		for _, k := range beyondGrace {
+			hardIDs = append(hardIDs, k.ID)
+		}
+		res := repository.ExcludeDurableDingTalkGraphPlans(h.db.WithContext(ctx).Model(&types.Knowledge{})).
+			Where("id IN ? AND parse_status IN ?", hardIDs,
+				[]string{types.ParseStatusPending, types.ParseStatusProcessing, types.ParseStatusFinalizing}).
+			Updates(map[string]interface{}{
+				"parse_status":           types.ParseStatusFailed,
+				"error_message":          "task stuck in processing > " + (2 * threshold).String() + " despite queued retries, recovered by housekeeping",
+				"pending_subtasks_count": 0,
+			})
+		if res.Error != nil {
+			logger.Warnf(ctx, "[Housekeeping] hard-grace sweep update failed: %v", res.Error)
+		} else if res.RowsAffected > 0 {
+			logger.Warnf(ctx,
+				"[Housekeeping] failed %d knowledge row(s) stuck beyond %s despite queued retries — inspect queue backoff and gateway health",
+				res.RowsAffected, 2*threshold)
 		}
 	}
 	if spanSkipped > 0 {

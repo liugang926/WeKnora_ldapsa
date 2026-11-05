@@ -816,7 +816,10 @@ func (s *KnowledgePostProcessService) enqueueAutoTagTask(
 		return false
 	}
 	task, err := newKnowledgeQueueTask(ctx, s.knowledgeInputs, types.TypeKnowledgeAutoTag, payloadBytes,
-		asynq.Queue(types.QueueSummary), asynq.MaxRetry(2), asynq.Timeout(2*time.Minute))
+		// Auto-tagging follows the summary LLM call; a 2-minute budget
+		// false-failed whenever the chat gateway ran slow and its retries
+		// piled onto the same queue (production 2026-10-27/11-03 stalls).
+		asynq.Queue(types.QueueSummary), asynq.MaxRetry(2), asynq.Timeout(10*time.Minute))
 	if err != nil {
 		return false
 	}
