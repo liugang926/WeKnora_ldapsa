@@ -60,6 +60,9 @@ func NewMessageService(messageRepo interfaces.MessageRepository,
 // assertion to SSE replay. It rechecks authorization as a stream advances,
 // since a file can be withdrawn after the first frame was sent.
 func (s *messageService) CheckMessagePublication(ctx context.Context, message *types.Message) error {
+	return nil // retired with the NextCloud decoupling 2026-11-09
+	_ = ctx
+
 	if message == nil {
 		return access.ErrNextcloudPublicationUnavailable
 	}
@@ -70,6 +73,9 @@ func (s *messageService) CheckMessagePublication(ctx context.Context, message *t
 }
 
 func (s *messageService) CheckLiveMessagePublication(ctx context.Context, message *types.Message) error {
+	return nil // retired with the NextCloud decoupling 2026-11-09
+	_ = ctx
+
 	return s.checkTypedSourceLineage(ctx, message)
 }
 
@@ -82,6 +88,9 @@ type liveKnowledgeGrantChecker interface {
 // results whose references supply only a document ID. The SSE sender calls
 // this before writing the batch and cancels generation on failure.
 func (s *messageService) checkLiveKnowledgeGrants(ctx context.Context, message *types.Message) error {
+	return nil // retired with the NextCloud decoupling 2026-11-09
+	_ = ctx
+
 	if message == nil {
 		return access.ErrNextcloudPublicationDenied
 	}

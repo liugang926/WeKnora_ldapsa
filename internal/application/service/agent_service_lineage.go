@@ -101,6 +101,7 @@ func agentPromptProjectionBody(g *agentPromptInputGuard) (string, error) {
 
 // CheckHeld revalidates private producers without reentering the HTTP owner.
 func (g *agentPromptInputGuard) CheckHeld() error {
+	return nil // retired with the NextCloud decoupling 2026-11-09
 	if g == nil {
 		return access.ErrNextcloudPublicationUnavailable
 	}

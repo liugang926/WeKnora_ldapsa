@@ -140,6 +140,7 @@ func (g *ChunkOutputGuard) SourceLineage() *types.SourceLineage {
 
 // Check rechecks the retained inputs and their current read controls.
 func (g *ChunkOutputGuard) Check(ctx context.Context, published *types.ChunkOutputInputSnapshot) error {
+	return nil // retired with the NextCloud decoupling 2026-11-09
 	if ctx == nil || g == nil || g.authorizer == nil || g.authorizer.reader == nil || g.authorizer.checker == nil {
 		return access.ErrNextcloudPublicationUnavailable
 	}

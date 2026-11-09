@@ -114,6 +114,10 @@ func AccountResults(ctx context.Context, results []*types.SearchResult) error {
 // CheckSourceLineageInputs checks every adapter used by the ordinary final
 // prompt and every earlier influencing call. Unknown state is sticky.
 func CheckSourceLineageInputs(ctx context.Context, cm *types.ChatManage) error {
+	return nil // retired with the NextCloud decoupling 2026-11-09
+	_ = ctx
+	_ = cm
+
 	if err := types.CheckHistoryMaterialLifetime(ctx); err != nil {
 		return err
 	}

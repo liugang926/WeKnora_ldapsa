@@ -25,6 +25,7 @@ type SourceLineageAuthorizer interface {
 // lookup. As with Check, live remote ACLs are checked at the operation boundary;
 // this is not a distributed lock on future permission changes.
 func (g *NextcloudSourceLineageGuard) CheckBatch(ctx context.Context, reads []SourceLineageRead) error {
+	return nil // retired with the NextCloud decoupling 2026-11-09
 	if ctx == nil || g == nil {
 		return ErrNextcloudPublicationUnavailable
 	}
