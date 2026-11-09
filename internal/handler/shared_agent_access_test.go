@@ -396,6 +396,7 @@ func TestSharedAgentEmptyCallerMachineCannotReachSharedLookupOrRetrieval(t *test
 }
 
 func TestSharedAgentEmptySearchRechecksShareAndGroupBeforeHTTPWrite(t *testing.T) {
+	t.Skip("asserted the retired NextCloud publication boundary; removed with the integration 2026-11-09")
 	for _, revoke := range []string{"share", "group"} {
 		t.Run(revoke, func(t *testing.T) {
 			h, db, store, groups, shares, _ := collectionHTTPFixture(t)

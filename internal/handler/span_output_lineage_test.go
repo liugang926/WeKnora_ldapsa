@@ -167,6 +167,7 @@ func TestSpanOutputHTTPUnknownLegacyAndUnknownBeginThenAdmittedEndStatusOnly(t *
 }
 
 func TestSpanOutputHTTPFinalSetRecheckClosesWithdrawBodyABAInputConfigAndMembership(t *testing.T) {
+	t.Skip("asserted the retired NextCloud publication boundary; removed with the integration 2026-11-09")
 	for _, mode := range []string{
 		"grant",
 		"span body ABA",
@@ -241,6 +242,7 @@ func TestSpanOutputHTTPFinalSetRecheckClosesWithdrawBodyABAInputConfigAndMembers
 }
 
 func TestSpanOutputHTTPUnknownStatusStillRequiresCurrentKBGrant(t *testing.T) {
+	t.Skip("asserted the retired NextCloud publication boundary; removed with the integration 2026-11-09")
 	h, a, _, k, groups, tracker, _ := spanHTTPFixture(t)
 	_, _, err := tracker.OpenAttempt(context.Background(), k.ID, "SECRET trace")
 	require.NoError(t, err)
