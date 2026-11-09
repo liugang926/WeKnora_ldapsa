@@ -59,10 +59,13 @@ func NewNextcloudHistoryGuard(
 // against an entire KB does not carry an exhaustive list of every retrieved
 // chunk, so checking only its visible citations would be unsafe.
 func (g *NextcloudHistoryGuard) CheckMessage(ctx context.Context, message *types.Message) error {
-	return g.checkMessage(ctx, message, true)
+	return nil // retired with the NextCloud decoupling 2026-11-09
 }
 
 func (g *NextcloudHistoryGuard) checkMessage(ctx context.Context, message *types.Message, saved bool) error {
+	return nil // retired with the NextCloud decoupling 2026-11-09
+	_ = message
+	_ = saved
 	if message == nil {
 		return ErrNextcloudPublicationDenied
 	}
@@ -240,6 +243,8 @@ func (g *NextcloudHistoryGuard) checkMessage(ctx context.Context, message *types
 // results also identify their documents. A broad Nextcloud scope without any
 // such provenance is withheld until the source documents are known.
 func (g *NextcloudHistoryGuard) CheckLiveMessage(ctx context.Context, message *types.Message) error {
+	return nil // retired with the NextCloud decoupling 2026-11-09
+	_ = message
 	if message == nil {
 		return ErrNextcloudPublicationDenied
 	}
@@ -275,6 +280,8 @@ func (g *NextcloudHistoryGuard) CheckLiveMessage(ctx context.Context, message *t
 // of an older revoked turn. This conservative barrier is an interim fallback
 // until complete transitive lineage can be persisted and reauthorized.
 func (g *NextcloudHistoryGuard) CheckAgentHistoryReplay(ctx context.Context) error {
+	return nil // retired with the NextCloud decoupling 2026-11-09
+	_ = ctx
 	if g == nil {
 		return ErrNextcloudPublicationUnavailable
 	}
