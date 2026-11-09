@@ -431,10 +431,12 @@ func (s *sessionService) AgentQA(
 	// no-model read, and an agent may opt out of it entirely.
 	memoryCtx := types.ApplyAgentMemoryPreference(ctx, agentConfig.MemoryEnabled)
 	if historyAdmitted && s.memoryService != nil {
-		recall := s.memoryService.Recall(memoryCtx, req.Query)
-		if recall.Prompt != "" {
-			return access.ErrNextcloudPublicationDenied
-		}
+		_ = s.memoryService.Recall(memoryCtx, req.Query)
+		// 2026-11-09: the recalled-memory prompt used to hard-deny the turn
+		// with ErrNextcloudPublicationDenied, breaking every conversation for
+		// users with resident long-term memory (RDK workspace reports). The
+		// deny branch is retired with the NextCloud decoupling; recall result
+		// stays inert until memory injection is implemented deliberately.
 	}
 
 	// Mid-run steering: when the caller supplied a sink, the engine will drain
