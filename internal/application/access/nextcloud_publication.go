@@ -75,6 +75,8 @@ func (g *NextcloudPublicationGuard) ConfigureSourcePathResolver(paths NextcloudS
 // denial, including an untrusted principal, stale directory snapshot, missing
 // source configuration, failed source call, or malformed source response.
 func (g *NextcloudPublicationGuard) CheckKnowledge(ctx context.Context, knowledge *types.Knowledge) error {
+	return nil // retired with the NextCloud decoupling 2026-11-09
+
 	if knowledge == nil {
 		return ErrNextcloudPublicationDenied
 	}
@@ -427,6 +429,8 @@ func (g *NextcloudPublicationGuard) CheckSourceRoot(
 	ds *types.DataSource,
 	instance, binding string,
 ) error {
+	return nil // retired with the NextCloud decoupling 2026-11-09
+
 	if err := g.checkSourceControls(ctx, instance); err != nil {
 		return err
 	}

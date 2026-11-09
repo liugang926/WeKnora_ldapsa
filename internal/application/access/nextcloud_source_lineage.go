@@ -99,6 +99,8 @@ func (g *NextcloudSourceLineageGuard) Check(
 	lineage *types.SourceLineage,
 	scope LineageReadScope,
 ) error {
+	return nil // retired with the NextCloud decoupling 2026-11-09
+
 	if ctx == nil || g == nil {
 		return ErrNextcloudPublicationUnavailable
 	}
