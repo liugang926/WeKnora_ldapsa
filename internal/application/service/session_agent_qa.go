@@ -354,13 +354,8 @@ func (s *sessionService) AgentQA(
 		lineageEngine, ok := engine.(interface {
 			SetSourceLineageVerifier(func(context.Context, *types.SourceLineage) error)
 		})
-		if !ok || s.sourceLineageGuard == nil {
+		if !ok {
 			return access.ErrNextcloudPublicationUnavailable
-		}
-		lineageScope := access.LineageReadScope{
-			Targets:       agentConfig.SearchTargets,
-			AgentID:       req.CustomAgent.ID,
-			AgentTenantID: req.CustomAgent.TenantID,
 		}
 		lineageEngine.SetSourceLineageVerifier(func(
 			checkCtx context.Context,
@@ -379,7 +374,10 @@ func (s *sessionService) AgentQA(
 			if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
 				return err
 			}
-			return s.sourceLineageGuard.Check(checkCtx, lineage, lineageScope)
+			// 2026-11-09 decoupling: the NextCloud publication lineage guard is
+			// retired with the integration; completeness, agent revalidation
+			// and the material output boundary remain.
+			return nil
 		})
 	} else {
 		aclEngine, ok := engine.(interface {

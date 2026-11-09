@@ -10,7 +10,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -81,12 +80,6 @@ func messageHistoryReadError(err error) error {
 		return errors.NewServiceUnavailableError("Saved message original material is unavailable")
 	}
 
-	if stderrors.Is(err, access.ErrNextcloudPublicationUnavailable) {
-		return errors.NewServiceUnavailableError("Cannot verify current Nextcloud file access")
-	}
-	if stderrors.Is(err, access.ErrNextcloudPublicationDenied) {
-		return errors.NewForbiddenError("Current Nextcloud file access is required")
-	}
 	if stderrors.Is(err, types.ErrVectorCandidateRetrievalUnavailable) || messageHistoryStorageUnavailable(err) {
 		return errors.NewServiceUnavailableError("Saved message storage is unavailable")
 	}

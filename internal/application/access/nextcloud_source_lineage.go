@@ -484,7 +484,10 @@ func (g *NextcloudSourceLineageGuard) checkCurrentKBReads(
 			return ErrNextcloudPublicationDenied
 		}
 		_, sourceControlled := controlled[kb.ID]
-		if (sourceControlled || kb.EverHadNextcloudSource) && g.groups == nil {
+		// 2026-11-09 decoupling: only a live saved-source control entry makes
+		// group revalidation mandatory; the historical provenance marker
+		// alone no longer blocks conversation lineage.
+		if sourceControlled && g.groups == nil {
 			return ErrNextcloudPublicationUnavailable
 		}
 		if g.groups != nil {

@@ -69,12 +69,7 @@ func (h *WikiPageHandler) validateWikiKB(c *gin.Context) (string, uint64, error)
 	if !kb.IsWikiEnabled() {
 		return "", 0, errors.NewBadRequestError("Wiki feature is not enabled for this knowledge base")
 	}
-	if h.knowledgeRepo != nil && h.dataSourceRepo != nil {
-		if err := service.RejectNextcloudDerivedKB(ctx, kb, h.knowledgeRepo, h.dataSourceRepo); err != nil {
-			return "", 0, errors.NewForbiddenError("Wiki is unavailable for knowledge bases with Nextcloud content")
-		}
-	}
-
+	// NextCloud-derived wiki prohibition removed with the integration.
 	return kbID, tenantID, nil
 }
 

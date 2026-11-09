@@ -1440,10 +1440,12 @@ func (s *sessionService) buildKBDocumentListing(ctx context.Context, chatManage 
 			break
 		}
 		kb, err := s.knowledgeBaseService.GetKnowledgeBaseByID(ctx, kbID)
-		if err != nil || kb == nil || kb.EverHadNextcloudSource {
-			// Generic fallback prompts cannot prove per-file AD authorization.
+		if err != nil || kb == nil {
 			continue
 		}
+		// 2026-11-09 decoupling: the historical EverHadNextcloudSource marker
+		// no longer excludes a KB from document listings — unbound KBs list
+		// like native ones so retrieval prompts keep full coverage.
 		knowledges, err := s.knowledgeService.ListKnowledgeByKnowledgeBaseID(ctx, kbID)
 		if err != nil {
 			logger.Warnf(ctx, "buildKBDocumentListing: failed to list knowledge for KB %s: %v", kbID, err)

@@ -12,7 +12,6 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
-	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/errors"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
@@ -50,8 +49,6 @@ type KnowledgeBaseHandler struct {
 	groupAccess         interfaces.GroupAccessService
 	dataSourceRepo      interfaces.DataSourceRepository
 	contentLeases       nextcloudHTTPReadLeaseStore
-	sourceMetadataGuard *access.NextcloudPublicationGuard
-	sourceMetadataPairs *repository.NextcloudSourcePairingRepository
 }
 
 // NewKnowledgeBaseHandler creates a new knowledge base handler instance
@@ -96,9 +93,6 @@ func (h *KnowledgeBaseHandler) filterGroupAccessibleKBs(
 	filtered := make([]*types.KnowledgeBase, 0, len(kbs))
 	for _, kb := range kbs {
 		if kb == nil {
-			continue
-		}
-		if _, err := h.checkSourceKBMetadata(ctx, kb); err != nil {
 			continue
 		}
 		if h.groupAccess == nil {
@@ -226,11 +220,6 @@ func (h *KnowledgeBaseHandler) buildKBListResponse(
 			}
 		}
 		response := buildKBResponse(kb, view, nil)
-		if source, err := h.checkSourceKBMetadata(ctx, kb); err != nil {
-			continue
-		} else if source {
-			response = sourceKBStatsUnverified(response)
-		}
 		out = append(out, response)
 	}
 	return out
@@ -642,9 +631,6 @@ func (h *KnowledgeBaseHandler) validateAndGetKnowledgeBase(
 	if err != nil {
 		return nil, id, 0, "", err
 	}
-	if _, err := h.checkSourceKBMetadata(c.Request.Context(), grant.KnowledgeBase); err != nil {
-		return nil, id, 0, "", apperrors.NewForbiddenError("Nextcloud source metadata unavailable")
-	}
 	return grant.KnowledgeBase, id, grant.EffectiveTenantID, grant.Permission, nil
 }
 
@@ -686,12 +672,6 @@ func (h *KnowledgeBaseHandler) GetKnowledgeBase(c *gin.Context) {
 		extras = map[string]interface{}{"my_permission": permission}
 	}
 	response := buildKBResponse(kb, storeView, extras)
-	if source, err := h.checkSourceKBMetadata(c.Request.Context(), kb); err != nil {
-		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "source_metadata_unavailable"})
-		return
-	} else if source {
-		response = sourceKBStatsUnverified(response)
-	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": response})
 }
 
@@ -1152,13 +1132,8 @@ func (h *KnowledgeBaseHandler) CopyKnowledgeBase(c *gin.Context) {
 		_ = c.Error(errors.NewForbiddenError("No permission to copy this knowledge base"))
 		return
 	}
-	if h.dataSourceRepo != nil && h.knowledgeService != nil {
-		if err := service.RejectNextcloudDerivedKB(ctx, sourceKB, h.knowledgeService.GetRepository(),
-			h.dataSourceRepo); err != nil {
-			_ = c.Error(errors.NewForbiddenError("Nextcloud source content cannot be copied"))
-			return
-		}
-	}
+	// NextCloud-derived copy prohibition removed with the integration: content
+	// copies like any native knowledge base.
 	taskID := req.TaskID
 	if taskID == "" {
 		taskID = utils.GenerateTaskID("kb_clone", caller.TenantID, req.SourceID)
@@ -1501,11 +1476,6 @@ func (h *KnowledgeBaseHandler) ListMoveTargets(c *gin.Context) {
 		return
 	}
 
-	if !h.ordinaryKBMetadataAllowed(ctx, sourceKB) {
-		_ = c.Error(errors.NewForbiddenError("Managed source knowledge bases cannot be moved manually"))
-		return
-	}
-
 	// Get all knowledge bases
 	allKBs, err := h.service.ListKnowledgeBases(ctx)
 	if err != nil {
@@ -1516,9 +1486,6 @@ func (h *KnowledgeBaseHandler) ListMoveTargets(c *gin.Context) {
 	// Filter eligible targets
 	targets := make([]*types.KnowledgeBase, 0)
 	for _, kb := range allKBs {
-		if !h.ordinaryKBMetadataAllowed(ctx, kb) {
-			continue
-		}
 		if kb.ID == sourceKBID {
 			continue
 		}

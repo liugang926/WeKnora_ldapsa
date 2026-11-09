@@ -34,7 +34,6 @@ type OrganizationHandler struct {
 	knowledgeRepo  interfaces.KnowledgeRepository
 	chunkRepo      interfaces.ChunkRepository
 	groupAccess    interfaces.GroupAccessService
-	sourceMetadata *KnowledgeBaseHandler
 }
 
 // NewOrganizationHandler creates a new organization handler
@@ -102,23 +101,6 @@ func (h *OrganizationHandler) mayListSharedKnowledgeBase(
 	kb *types.KnowledgeBase,
 	kbID string,
 ) bool {
-	if h.sourceMetadata != nil {
-		if kb == nil {
-			if h.kbService == nil {
-				return false
-			}
-			var err error
-			kb, err = h.kbService.GetKnowledgeBaseByIDOnly(ctx, kbID)
-			if err != nil {
-				return false
-			}
-		}
-		if !h.sourceMetadata.ordinaryKBMetadataAllowed(ctx, kb) {
-			return false
-		}
-	} else if kb != nil && kb.EverHadNextcloudSource {
-		return false
-	}
 	if kb != nil {
 		kbID = kb.ID
 		if kb.TenantID != 0 {
@@ -317,9 +299,6 @@ func (h *OrganizationHandler) buildResourceCountsByOrg(
 	tenantKBCache := make(map[uint64][]string) // cache ListKnowledgeBasesByTenantID by tenantID
 	allowedCache := map[string]bool{}
 	mayCountKB := func(id string) bool {
-		if h.sourceMetadata == nil {
-			return true
-		}
 		if allowed, ok := allowedCache[id]; ok {
 			return allowed
 		}
@@ -327,6 +306,8 @@ func (h *OrganizationHandler) buildResourceCountsByOrg(
 		if h.kbService != nil {
 			kb, err := h.kbService.GetKnowledgeBaseByIDOnly(ctx, id)
 			allowed = err == nil && kb != nil && h.mayListSharedKnowledgeBase(ctx, kb.TenantID, kb, id)
+		} else {
+			allowed = true
 		}
 		allowedCache[id] = allowed
 		return allowed

@@ -791,7 +791,6 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(handler.NewTenantInvitationHandler))
 	must(container.Provide(handler.NewAuditLogHandler))
 	must(container.Provide(handler.NewKnowledgeBaseHandler))
-	must(container.Invoke(handler.ConfigureKnowledgeBaseSourceMetadataGuard))
 	must(container.Provide(handler.NewKnowledgeHandler))
 	must(container.Provide(handler.NewChunkHandler))
 	must(container.Provide(handler.NewFAQHandler))
@@ -870,7 +869,6 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	}))
 	must(container.Provide(handler.NewOrganizationHandler))
 	must(container.Invoke(handler.ConfigureOrganizationGroupAccess))
-	must(container.Invoke(handler.ConfigureOrganizationSourceMetadataGuard))
 	must(container.Provide(handler.NewMemoryHandler))
 
 	// Data source handler

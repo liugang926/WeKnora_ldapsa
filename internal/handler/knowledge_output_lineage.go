@@ -5,7 +5,6 @@ import (
 	stderrors "errors"
 	"io"
 
-	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
@@ -42,8 +41,7 @@ func knowledgeOutputHTTPError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if stderrors.Is(err, access.ErrNextcloudPublicationDenied) ||
-		stderrors.Is(err, repository.ErrKnowledgeInputChanged) ||
+	if stderrors.Is(err, repository.ErrKnowledgeInputChanged) ||
 		stderrors.Is(err, types.ErrSourceLineageUnknown) ||
 		stderrors.Is(err, types.ErrSourceLineageInvalid) ||
 		stderrors.Is(err, types.ErrSourceLineageLimit) ||
