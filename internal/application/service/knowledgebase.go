@@ -582,6 +582,14 @@ func (s *knowledgeBaseService) UpdateKnowledgeBase(ctx context.Context,
 		}
 		kb.ChunkingConfig = config.ChunkingConfig
 		kb.ImageProcessingConfig = config.ImageProcessingConfig
+		// Optional full replacement of the multimodal (VLM) configuration.
+		// Applies only when the update payload carries it, mirroring the
+		// create-time top-level vlm_config semantics. This is the only way
+		// to toggle opt-in features (e.g. image classification) on an
+		// existing knowledge base.
+		if config.VLMConfig != nil {
+			kb.VLMConfig = *config.VLMConfig
+		}
 		if config.FAQConfig != nil {
 			kb.FAQConfig = config.FAQConfig
 		}

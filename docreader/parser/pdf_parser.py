@@ -18,6 +18,7 @@ self-sufficient using pypdfium2 + the Go-side OCR that already exists.
 
 import base64
 from collections import Counter, deque
+from itertools import chain
 import io
 import json
 import logging
@@ -139,6 +140,29 @@ MAX_FIGURE_HEIGHT_RATIO = _env_float("DOCREADER_PDF_MAX_FIGURE_HEIGHT_RATIO", 0.
 # Can be overridden per-upload via parser_engine_overrides.pdf_force_scanned.
 FORCE_SCANNED_PDF = _env_bool("DOCREADER_PDF_FORCE_SCANNED", False)
 
+# --- Vector-drawing pages (CAD exports) --------------------------------------
+# A page with (almost) no extractable text and no embedded images but with
+# substantial vector drawing content is an engineering-drawing export
+# (CAD -> PDF): the glyph text was converted to outlines, so there is nothing
+# for a text extractor to read and the old classifier dropped the page as an
+# empty "text" page — the whole document then parsed to nothing. Render such
+# pages as images (class "vector") so the Go App's VLM OCR can recover the
+# title block (drawing name / drawing number) and the sheet annotations.
+RENDER_VECTOR_PAGES = _env_bool("DOCREADER_PDF_RENDER_VECTOR_PAGES", True)
+# Minimum count of vector path objects for the drawing heuristic. Real CAD
+# sheets carry hundreds of path objects; decorative dividers and rules stay
+# in single digits.
+VECTOR_MIN_PATHS = _env_int("DOCREADER_PDF_VECTOR_MIN_PATHS", 40)
+# Vector sheets (A0/A1) carry small title-block text, so allow a larger
+# rendered long edge than the raster-scan cap while staying VLM-safe.
+VECTOR_RENDER_MAX_EDGE = _env_int("DOCREADER_PDF_VECTOR_RENDER_MAX_EDGE", 3072)
+
+# --- Product imagery documents ------------------------------------------------
+# NOTE: which images are product imagery is a CONTENT decision, not a parse
+# fact — it is deliberately NOT guessed here (no filename heuristics). The
+# Go App offers a per-knowledge-base opt-in that routes images through a VLM
+# classification step; see ImageMultimodalService and buildVLMOCRPrompt.
+
 # --- Source locators ---------------------------------------------------------
 # Record where each paragraph of a native text page sits on the page, so a
 # citation can open the PDF there and outline the paragraph. Costs one glyph
@@ -191,39 +215,52 @@ def _normalize_image_quality(quality: int) -> int:
     return min(95, max(1, quality))
 
 
-def _classify_page(image_area_ratio: float, text_len: int) -> str:
-    """Classify a page as ``"scanned"`` or ``"text"``.
+def _classify_page(image_area_ratio: float, text_len: int, path_count: int = 0) -> str:
+    """Classify a page as ``"scanned"``, ``"vector"`` or ``"text"``.
 
     Image-area coverage is the primary signal; a sparse text layer combined with
-    some image content is the secondary signal.
+    some image content is the secondary signal. A text-less page whose content
+    is vector paths (CAD export: glyphs converted to outlines) is classified
+    ``"vector"`` so it is rendered and OCR'd instead of dropped as empty text.
     """
     if image_area_ratio >= SCAN_IMAGE_AREA_RATIO:
         return "scanned"
     if text_len < SCAN_MIN_CHARS_PER_PAGE and image_area_ratio >= _LOW_TEXT_IMAGE_RATIO:
         return "scanned"
+    if (
+        RENDER_VECTOR_PAGES
+        and text_len < SCAN_MIN_CHARS_PER_PAGE
+        and path_count >= VECTOR_MIN_PATHS
+    ):
+        return "vector"
     return "text"
 
 
-def _page_image_area_ratio(page, raw) -> float:
-    """Return the fraction of the page area covered by image objects.
+def _page_object_stats(page, raw) -> tuple:
+    """Return ``(image_area_ratio, path_count)`` for one page.
 
-    Overlapping images can push the ratio above 1.0; callers only compare it
-    against a threshold so that is harmless.
+    ``image_area_ratio`` is the fraction of the page area covered by image
+    objects (overlapping images can push it above 1.0; callers only compare it
+    against a threshold so that is harmless). ``path_count`` is the number of
+    vector path objects, the signal for CAD-exported drawing sheets.
     """
     width, height = page.get_size()
     page_area = float(width) * float(height)
     if page_area <= 0:
-        return 0.0
+        return 0.0, 0
 
     image_area = 0.0
+    path_count = 0
     for obj in page.get_objects():
         try:
             if obj.type == raw.FPDF_PAGEOBJ_IMAGE:
                 left, bottom, right, top = obj.get_bounds()
                 image_area += abs((right - left) * (top - bottom))
+            elif obj.type == raw.FPDF_PAGEOBJ_PATH:
+                path_count += 1
         except Exception:
             continue
-    return image_area / page_area
+    return image_area / page_area, path_count
 
 
 def _extract_page_text(page) -> str:
@@ -2176,6 +2213,10 @@ class PDFParser(BaseParser):
       * native text page  -> keep its text layer (fast, pypdfium2)
       * scanned page      -> render to JPEG, tag ``image_source_type=scanned_pdf``
                              so the Go App OCRs it
+      * vector page       -> text-less page dominated by vector paths (CAD
+                             export): render to JPEG, tag
+                             ``image_source_type=vector_pdf`` so the Go App
+                             OCRs it with the engineering-drawing prompt
 
     Hybrid documents interleave both in reading order. On any unexpected error
     the parser falls back to rendering all pages as images (safe last resort).
@@ -2212,6 +2253,7 @@ class PDFParser(BaseParser):
             page_count = doc.metadata.get("page_count", 0)
             doc.metadata.update({
                 "scanned_page_count": page_count,
+                "vector_page_count": 0,
                 "text_page_count": 0,
                 "embedded_image_count": 0,
                 "vector_figure_count": 0,
@@ -2240,6 +2282,7 @@ class PDFParser(BaseParser):
             stream.document.metadata.update(
                 {
                     "scanned_page_count": page_count,
+                    "vector_page_count": 0,
                     "text_page_count": 0,
                     "embedded_image_count": 0,
                     "vector_figure_count": 0,
@@ -2270,21 +2313,55 @@ class PDFParser(BaseParser):
         quality = _normalize_image_quality(CONFIG.pdf_jpeg_quality)
         base_name = os.path.splitext(self.file_name or "document")[0]
 
+        # Split the render set so vector sheets render under their larger
+        # long-edge cap while raster scans keep the normal one. The vector
+        # page numbers ride in their own metadata key so the render split
+        # never depends on how image_source_types routes OCR prompts.
+        try:
+            vector_pages = {
+                int(p) - 1
+                for p in json.loads(
+                    document.metadata.get("vector_render_pages") or "[]"
+                )
+            }
+        except Exception:
+            vector_pages = set()
+        raster_indices: list = []
+        vector_indices: list = []
+        for i in scanned_indices:
+            if i in vector_pages:
+                vector_indices.append(i)
+            else:
+                raster_indices.append(i)
+
         # Use a temporary source file for every stream mode so each fixed-size
         # batch can close its PdfDocument before the next batch starts. This
         # bounds PDFium's decoded-page cache independently of document length.
+        # Both generators read the same temp file lazily; the single cleanup
+        # unlink covers both.
         pdf_path = _write_pdf_temp_file(content)
         return ParsedDocumentStream(
             document=document,
             image_count=image_count,
-            images=_iter_scanned_pages_from_path(
-                pdf_path,
-                scanned_indices,
-                base_name,
-                scale,
-                quality,
-                CONFIG.pdf_render_max_edge,
-                CONFIG.pdf_render_parallelism,
+            images=chain(
+                _iter_scanned_pages_from_path(
+                    pdf_path,
+                    raster_indices,
+                    base_name,
+                    scale,
+                    quality,
+                    CONFIG.pdf_render_max_edge,
+                    CONFIG.pdf_render_parallelism,
+                ),
+                _iter_scanned_pages_from_path(
+                    pdf_path,
+                    vector_indices,
+                    base_name,
+                    scale,
+                    quality,
+                    max(CONFIG.pdf_render_max_edge, VECTOR_RENDER_MAX_EDGE),
+                    CONFIG.pdf_render_parallelism,
+                ),
             ),
             _cleanup=lambda: _unlink_pdf_temp_file(pdf_path),
         )
@@ -2324,8 +2401,8 @@ class PDFParser(BaseParser):
                 try:
                     geometries[i] = _page_geometry(page)
                     plain = _extract_page_text(page)
-                    ratio = _page_image_area_ratio(page, pdfium_r)
-                    cls = _classify_page(ratio, len(plain.strip()))
+                    ratio, path_count = _page_object_stats(page, pdfium_r)
+                    cls = _classify_page(ratio, len(plain.strip()), path_count)
                     # Layout reconstruction only pays off (and is only spent) on
                     # native text pages; scanned pages are rendered, not read.
                     if cls == "text" and LAYOUT_ORDERING:
@@ -2381,22 +2458,40 @@ class PDFParser(BaseParser):
 
             texts = _strip_repeating_lines(texts, classes)
             scanned_indices = [i for i, c in enumerate(classes) if c == "scanned"]
+            vector_indices = [i for i, c in enumerate(classes) if c == "vector"]
 
-            # Pass 2: render only the scanned pages (heavy work, rate-limited).
-            # ReadStream defers this work until after its metadata frame and
-            # renders pages incrementally; unary Read keeps the materialized
-            # response path for compatibility.
-            if scanned_indices and include_scanned_images:
+            # Pass 2: render only the scanned / vector pages (heavy work,
+            # rate-limited). ReadStream defers this work until after its
+            # metadata frame and renders pages incrementally; unary Read keeps
+            # the materialized response path for compatibility. Vector sheets
+            # render under a larger long-edge cap so small title-block text on
+            # A0/A1 exports stays legible for OCR.
+            if include_scanned_images:
                 with parser_worker_limit("pdf_render", CONFIG.pdf_render_max_workers):
-                    rendered = _render_scanned_pages(
-                        pdf,
-                        content,
-                        scanned_indices,
-                        scale,
-                        quality,
-                        CONFIG.pdf_render_max_edge,
-                    )
-                images.update(_encode_rendered_page_images(rendered, base_name))
+                    if scanned_indices:
+                        rendered = _render_scanned_pages(
+                            pdf,
+                            content,
+                            scanned_indices,
+                            scale,
+                            quality,
+                            CONFIG.pdf_render_max_edge,
+                        )
+                        images.update(
+                            _encode_rendered_page_images(rendered, base_name)
+                        )
+                    if vector_indices:
+                        rendered = _render_scanned_pages(
+                            pdf,
+                            content,
+                            vector_indices,
+                            scale,
+                            quality,
+                            max(CONFIG.pdf_render_max_edge, VECTOR_RENDER_MAX_EDGE),
+                        )
+                        images.update(
+                            _encode_rendered_page_images(rendered, base_name)
+                        )
 
             # Pass 3: extract embedded figures from native text pages so the Go
             # App can OCR/caption them (logos/watermarks/tiny images filtered).
@@ -2431,9 +2526,12 @@ class PDFParser(BaseParser):
 
         for i in range(page_count):
             page_only = {"type": "pdf", "page": i + 1, "mapping": "exact"}
-            if classes[i] == "scanned":
+            if classes[i] in ("scanned", "vector"):
                 page_filename = f"{base_name}_page_{i+1}.jpg"
-                image_source_types[f"images/{page_filename}"] = "scanned_pdf"
+                if classes[i] == "vector":
+                    image_source_types[f"images/{page_filename}"] = "vector_pdf"
+                else:
+                    image_source_types[f"images/{page_filename}"] = "scanned_pdf"
                 part = f"![{page_filename}](images/{page_filename})"
                 start = place(part)
                 source_blocks.append(
@@ -2474,20 +2572,32 @@ class PDFParser(BaseParser):
         metadata = {
             "page_count": page_count,
             "scanned_page_count": len(scanned_indices),
-            "text_page_count": page_count - len(scanned_indices),
+            "vector_page_count": len(vector_indices),
+            "text_page_count": page_count - len(scanned_indices) - len(vector_indices),
             "embedded_image_count": embedded_count,
             "vector_figure_count": vector_figure_count,
-            "image_source_type": "scanned_pdf" if scanned_indices else "pdf_text_layer",
+            "image_source_type": (
+                "scanned_pdf"
+                if scanned_indices
+                else ("vector_pdf" if vector_indices else "pdf_text_layer")
+            ),
             "image_source_types": json.dumps(image_source_types, ensure_ascii=False),
+            # 1-based numbers of the pages that must render under the vector
+            # long-edge cap. Kept as its own key so the render split never
+            # depends on the prompt-routing source type.
+            "vector_render_pages": json.dumps(
+                [i + 1 for i in vector_indices], ensure_ascii=False
+            ),
         }
 
         logger.info(
-            "PDFParser: %s -> %d pages (%d scanned, %d text), "
+            "PDFParser: %s -> %d pages (%d scanned, %d vector, %d text), "
             "embedded_images=%d, content_len=%d",
             self.file_name,
             page_count,
             len(scanned_indices),
-            page_count - len(scanned_indices),
+            len(vector_indices),
+            page_count - len(scanned_indices) - len(vector_indices),
             embedded_count,
             len(content_text),
         )
@@ -2497,4 +2607,4 @@ class PDFParser(BaseParser):
             metadata=metadata,
             source_blocks=source_blocks,
         )
-        return document, scanned_indices
+        return document, sorted(scanned_indices + vector_indices)

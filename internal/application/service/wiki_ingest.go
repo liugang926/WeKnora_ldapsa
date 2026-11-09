@@ -3278,6 +3278,72 @@ func realTextRuneCount(content string) int {
 	return utf8.RuneCountInString(extractRealText(content))
 }
 
+// maxWikiFallbackImages caps how many document images the deterministic
+// fallback appends to a wiki summary page. Image-heavy documents (scanned CAD
+// sets, catalog PDFs) can carry dozens of pages; the fallback exists to
+// guarantee presence, not to mirror the whole gallery.
+const maxWikiFallbackImages = 12
+
+// collectWikiImageRefs returns the Markdown image references found in the
+// document's text chunks, de-duplicated, in first-seen order, capped at
+// maxWikiFallbackImages. Chunk contents (not the truncated wiki input) are
+// scanned because maxContentForWiki may cut the tail of very long documents,
+// which is exactly where late image references live.
+func collectWikiImageRefs(chunks []*types.Chunk) []string {
+	var refs []string
+	seen := make(map[string]bool)
+	for _, c := range chunks {
+		if c == nil {
+			continue
+		}
+		for _, ref := range mdImageRefRE.FindAllString(c.Content, -1) {
+			if seen[ref] {
+				continue
+			}
+			seen[ref] = true
+			refs = append(refs, ref)
+			if len(refs) >= maxWikiFallbackImages {
+				return refs
+			}
+		}
+	}
+	return refs
+}
+
+// wikiImageFallbackHeading returns a language-appropriate section heading for
+// the deterministically appended image section.
+func wikiImageFallbackHeading(lang string) string {
+	switch {
+	case strings.HasPrefix(strings.ToLower(lang), "zh"):
+		return "相关图片"
+	case strings.HasPrefix(strings.ToLower(lang), "ja"):
+		return "関連画像"
+	case strings.HasPrefix(strings.ToLower(lang), "ko"):
+		return "관련 이미지"
+	default:
+		return "Related Images"
+	}
+}
+
+// ensureWikiSummaryImages guarantees that a document's images appear on its
+// wiki summary page even when the summarizing LLM ignored the prompt's image
+// rule (it says SHOULD, not MUST). When the body already embeds at least one
+// Markdown image it is returned unchanged; otherwise the collected image
+// references are appended verbatim under a dedicated section. References are
+// treated as opaque tokens — URLs are copied exactly, never rebuilt.
+func ensureWikiSummaryImages(body string, refs []string, lang string) string {
+	if strings.Contains(body, "![") || len(refs) == 0 {
+		return body
+	}
+	var b strings.Builder
+	b.WriteString(strings.TrimRight(body, "\n"))
+	b.WriteString("\n\n## ")
+	b.WriteString(wikiImageFallbackHeading(lang))
+	b.WriteString("\n\n")
+	b.WriteString(strings.Join(refs, "\n\n"))
+	return b.String()
+}
+
 // cleanLLMJSON strips markdown code-fence wrappers and sanitizes control characters
 // from LLM-generated JSON output so it can be safely unmarshalled.
 func cleanLLMJSON(s string) string {

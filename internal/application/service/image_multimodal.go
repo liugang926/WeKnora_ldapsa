@@ -50,7 +50,89 @@ const (
 		"5. Output ONLY the extracted text content. Do NOT include any HTML tags, reasoning, or unrelated comments.\n" +
 		"6. If there is absolutely no recognizable text content in the image, reply ONLY with: No text content.\n" +
 		"</instructions>"
+	vlmOCRVectorSheetPrompt = "<system_prompt>\n" +
+		"You are an OCR assistant for engineering drawing sheets. The input image is one sheet rendered from a vector (CAD-exported) PDF: the text may be drawn as outlines anywhere on the sheet, and the title block is usually a framed table in the lower-right corner of the sheet.\n" +
+		"Your task is to extract the text content of the sheet in pure Markdown format.\n" +
+		"</system_prompt>\n\n" +
+		"<instructions>\n" +
+		"1. Start with a '## 图纸信息' section containing one '- <label>: <value>' line for every title-block field you can read (for example: 图纸名称, 图号, 图幅, 比例, 版本/阶段, 材料, 重量, 设计, 审核, 日期, 单位). Copy labels and values exactly as printed on the drawing; omit any field you cannot read clearly. Never invent values.\n" +
+		"2. Follow with a '## 图面文字' section listing every other readable text on the sheet (technical requirements / 技术要求, general notes, annotations, callouts, tables) in a sensible reading order. Use Markdown table syntax for tabular content.\n" +
+		"3. Do not describe or interpret the drawing geometry; extract text only.\n" +
+		"4. Output ONLY the extracted text content in Markdown. Do NOT include any HTML tags, reasoning, or unrelated comments.\n" +
+		"5. If there is absolutely no recognizable text content in the image, reply ONLY with: No text content.\n" +
+		"</instructions>"
+	vlmOCRProductImagePrompt = "<system_prompt>\n" +
+		"You are an OCR assistant for product imagery: catalog pages, sample-book sheets and product photos exported from PDF.\n" +
+		"Your task is to extract the printed text and the key product identification fields in pure Markdown format.\n" +
+		"</system_prompt>\n\n" +
+		"<instructions>\n" +
+		"1. Start with a '## 产品信息' section: one '- <label>: <value>' line per product field you can actually read (for example: 产品名称, 型号, 品牌, 系列, 规格, 颜色/材质, 关键参数). Copy labels and values exactly as printed; omit any field you cannot read clearly. Never invent values.\n" +
+		"2. Follow with a '## 页面文字' section with every other readable text on the page (product descriptions, specification tables, notes, contact information) in a sensible reading order. Use Markdown table syntax for tabular content.\n" +
+		"3. Do not describe the visual appearance of the product here; that belongs to the image caption. Extract printed, engraved or watermarked text only.\n" +
+		"4. Output ONLY the extracted text content in Markdown. Do NOT include any HTML tags, reasoning, or unrelated comments.\n" +
+		"5. If there is absolutely no recognizable text content in the image, reply ONLY with: No text content.\n" +
+		"</instructions>"
+	vlmImageClassifyPrompt = "<system_prompt>\n" +
+		"You are an image classifier for a document processing pipeline. Look at the image and decide which category it belongs to.\n" +
+		"</system_prompt>\n\n" +
+		"<categories>\n" +
+		"- drawing_sheet: An engineering drawing / CAD sheet — a technical line drawing with dimension callouts, annotations and usually a title block (图框): mechanical parts, assemblies, electrical schematics, construction plans.\n" +
+		"- product_image: A product photo or a catalog / sample-book page — a physical product (or a layout of product photos) presented with product names, models, brands, prices or specification tables.\n" +
+		"- document: Anything else — text documents, slides, screenshots, charts, diagrams, illustrations, scanned report pages.\n" +
+		"</categories>\n\n" +
+		"<instructions>\n" +
+		"1. Judge ONLY by what is visually present in the image; do not guess from quality or style alone.\n" +
+		"2. Reply with EXACTLY one category label: drawing_sheet, product_image, or document.\n" +
+		"3. Output the label only — no explanation, no punctuation, no other text.\n" +
+		"</instructions>"
 )
+
+// Image classification outcomes (see vlmImageClassifyPrompt). These are
+// CONTENT decisions made per-image by the VLM when the knowledge base opts
+// in via VLMConfig.EnableImageClassification — deliberately distinct from the
+// parse-time image SOURCE types (scanned_pdf / vector_pdf / pdf_text_layer),
+// which are objective facts about how the image was produced.
+const (
+	imageClassDrawingSheet = "drawing_sheet"
+	imageClassProduct      = "product_image"
+	imageClassDocument     = "document"
+)
+
+// parseImageClass extracts the classification label from a VLM reply,
+// tolerating code fences, surrounding prose and stray punctuation. Returns
+// "" when no recognized label is present — callers then keep the
+// source-type default prompt.
+func parseImageClass(reply string) string {
+	t := strings.ToLower(strings.TrimSpace(reply))
+	t = strings.TrimPrefix(t, "```")
+	if i := strings.Index(t, "```"); i >= 0 {
+		t = t[:i]
+	}
+	t = strings.NewReplacer("`", "", "\"", "", "'", "", ".", "", "。", "", "\n", " ", "\r", " ").Replace(t)
+	t = strings.TrimSpace(t)
+	switch {
+	case strings.Contains(t, imageClassDrawingSheet):
+		return imageClassDrawingSheet
+	case strings.Contains(t, imageClassProduct):
+		return imageClassProduct
+	case strings.Contains(t, imageClassDocument):
+		return imageClassDocument
+	}
+	return ""
+}
+
+// ocrPromptForClass maps a confirmed image classification to its fixed,
+// system-owned OCR prompt. A plain "document" verdict (or an unrecognized
+// label) keeps the source-type default from buildVLMOCRPrompt.
+func ocrPromptForClass(class, sourceType string) string {
+	switch class {
+	case imageClassDrawingSheet:
+		return vlmOCRVectorSheetPrompt
+	case imageClassProduct:
+		return vlmOCRProductImagePrompt
+	}
+	return buildVLMOCRPrompt(sourceType, types.VLMConfig{})
+}
 
 func buildVLMCaptionPrompt(ctx context.Context, cfg types.VLMConfig) string {
 	language := strings.TrimSpace(cfg.DescriptionLanguage)
@@ -69,8 +151,14 @@ func buildVLMCaptionPrompt(ctx context.Context, cfg types.VLMConfig) string {
 // guidance, if ever needed, deserves a dedicated OCR instruction field rather
 // than reusing CustomInstructions.
 func buildVLMOCRPrompt(sourceType string, _ types.VLMConfig) string {
-	if sourceType == "scanned_pdf" {
+	switch sourceType {
+	case "scanned_pdf":
 		return vlmOCRScannedPDFPrompt
+	case "vector_pdf":
+		// CAD-exported drawing sheet (objective parse fact: text-less page
+		// dominated by vector paths): prioritize the title block so the
+		// drawing name / number reliably reach the OCR text.
+		return vlmOCRVectorSheetPrompt
 	}
 	return vlmOCRPrompt
 }
@@ -301,11 +389,49 @@ func (s *ImageMultimodalService) Handle(ctx context.Context, task *asynq.Task) e
 
 	if payload.EnableOCR {
 		prompt := buildVLMOCRPrompt(payload.ImageSourceType, vlmCfg)
-		if payload.ImageSourceType == "scanned_pdf" {
+		promptLabel := "default"
+		switch payload.ImageSourceType {
+		case "scanned_pdf":
 			logger.Infof(ctx, "[ImageMultimodal] Using scanned PDF prompt for OCR: %s", payload.ImageURL)
-			imgOut["ocr_prompt"] = "scanned_pdf"
-		} else {
-			imgOut["ocr_prompt"] = "default"
+			promptLabel = "scanned_pdf"
+		case "vector_pdf":
+			logger.Infof(ctx, "[ImageMultimodal] Using vector sheet (CAD) prompt for OCR: %s", payload.ImageURL)
+			promptLabel = "vector_pdf"
+		}
+		imgOut["ocr_prompt"] = promptLabel
+
+		// Optional KB opt-in: let the VLM look at the image first and decide
+		// what it IS (drawing sheet / product imagery / plain document). Only
+		// a confirmed specialized type switches OCR to its fixed dedicated
+		// prompt; anything else keeps the source-type default. A failed or
+		// unrecognized classification never blocks OCR.
+		if vlmCfg.EnableImageClassification {
+			if err := requireActualKnowledgeBuildInput(ctx); err != nil {
+				handleErr = err
+				return err
+			}
+			classReply, classErr := vlmModel.Predict(ctx, [][]byte{imgBytes}, vlmImageClassifyPrompt)
+			if err := requireActualKnowledgeBuildInput(ctx); err != nil {
+				handleErr = err
+				return err
+			}
+			if classErr != nil {
+				logger.Warnf(ctx, "[ImageMultimodal] Image classification failed for %s: %v", payload.ImageURL, classErr)
+				imgOut["image_class"] = "unavailable"
+				imgOut["image_class_error"] = classErr.Error()
+			} else {
+				class := parseImageClass(classReply)
+				imgOut["image_class"] = class
+				if class == imageClassDrawingSheet || class == imageClassProduct {
+					prompt = ocrPromptForClass(class, payload.ImageSourceType)
+					imgOut["ocr_prompt"] = class
+					logger.Infof(ctx, "[ImageMultimodal] Classified %s as %s; using dedicated OCR prompt", payload.ImageURL, class)
+				} else if class == imageClassDocument {
+					logger.Infof(ctx, "[ImageMultimodal] Classified %s as plain document; keeping %s prompt", payload.ImageURL, promptLabel)
+				} else {
+					logger.Warnf(ctx, "[ImageMultimodal] Unrecognized classification reply for %s: %q", payload.ImageURL, previewText(classReply, 80))
+				}
+			}
 		}
 
 		if err := requireActualKnowledgeBuildInput(ctx); err != nil {

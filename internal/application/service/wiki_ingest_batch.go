@@ -1575,6 +1575,13 @@ func (s *wikiIngestService) mapOneDocument(
 	if strings.TrimSpace(docSummary) == "" {
 		docSummary = sumLine
 	}
+	// Deterministic image guarantee: the summary prompt only asks the LLM to
+	// include images ("SHOULD"), so image-first documents (CAD sheets, product
+	// photos) can end up with a text-only wiki page. If the LLM embedded no
+	// image at all, append the document's image references verbatim. The
+	// summary page is overwritten (not merged) on every ingest, so this stays
+	// idempotent.
+	pageBody := ensureWikiSummaryImages(sumBody, collectWikiImageRefs(chunks), lang)
 	updates = append(updates, SlugUpdate{
 		Slug:        summarySlug,
 		Type:        types.WikiPageTypeSummary,
@@ -1583,7 +1590,7 @@ func (s *wikiIngestService) mapOneDocument(
 		SourceRef:   sourceRef,
 		Language:    lang,
 		SummaryLine: sumLine,
-		SummaryBody: sumBody,
+		SummaryBody: pageBody,
 	})
 	extractedPages = append(extractedPages, wikiIngestPageRef{Slug: summarySlug, Title: docTitle})
 

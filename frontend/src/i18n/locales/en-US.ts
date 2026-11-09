@@ -3710,7 +3710,9 @@ export default {
         descriptionLanguageAuto: 'Follow document language',
         customInstructionsLabel: 'Image Processing Instructions',
         customInstructionsDescription: 'Add visual priorities while OCR and Markdown output contracts remain fixed',
-        customInstructionsPlaceholder: 'For example: prioritize nameplates, model numbers, alarm codes, and table units…'
+        customInstructionsPlaceholder: 'For example: prioritize nameplates, model numbers, alarm codes, and table units…',
+        imageClassificationLabel: 'Image type classification',
+        imageClassificationDescription: 'Before OCR, the vision model classifies each image (drawing sheet / product image / plain page); confirmed drawings and product images switch to dedicated extraction prompts (drawing name / number, or product name / model first). Adds one model call per image'
       }
     }
   },

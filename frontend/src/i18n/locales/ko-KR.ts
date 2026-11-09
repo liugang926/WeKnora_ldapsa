@@ -4048,7 +4048,9 @@ export default {
         descriptionLanguageAuto: '문서 언어 자동 사용',
         customInstructionsLabel: '이미지 처리 지침',
         customInstructionsDescription: 'OCR 및 Markdown 형식은 유지하면서 시각적 우선순위를 추가합니다',
-        customInstructionsPlaceholder: '예: 명판, 모델 번호, 경고 코드 및 표 단위를 중점적으로 인식…'
+        customInstructionsPlaceholder: '예: 명판, 모델 번호, 경고 코드 및 표 단위를 중점적으로 인식…',
+        imageClassificationLabel: '이미지 유형 분류',
+        imageClassificationDescription: 'OCR 전에 비전 모델이 각 이미지를 분류합니다(도면·제품 이미지·일반 페이지). 도면 또는 제품 이미지로 확인된 경우에만 전용 프롬프트(도면명/도면번호, 제품명/모델 우선)를 사용합니다. 이미지당 모델 호출이 한 번 추가됩니다'
       },
       tableMetadataInstructions: {
         label: '테이블 메타데이터 지침',

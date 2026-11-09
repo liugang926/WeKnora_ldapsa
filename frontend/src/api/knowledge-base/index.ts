@@ -101,6 +101,10 @@ export function createKnowledgeBase(data: {
     model_id?: string;
     description_language?: string;
     custom_instructions?: string;
+    // KB opt-in: classify each image with the VLM (drawing sheet / product
+    // imagery / plain document) before OCR and route confirmed specialized
+    // types to their dedicated extraction prompts.
+    enable_image_classification?: boolean;
   };
   storage_provider_config?: { provider: string };
   storage_config?: any; // legacy, kept for backward compat (dual-write)
@@ -143,6 +147,19 @@ export function updateKnowledgeBase(id: string, data: {
   config?: {
     chunking_config?: any;
     image_processing_config?: any;
+    // Full replacement of the multimodal configuration. Omit to keep the
+    // current one; this is the only update channel for VLM settings on an
+    // existing knowledge base.
+    vlm_config?: {
+      enabled: boolean;
+      model_id?: string;
+      description_language?: string;
+      custom_instructions?: string;
+      // KB opt-in: classify each image with the VLM (drawing sheet /
+      // product imagery / plain document) before OCR and route confirmed
+      // specialized types to their dedicated extraction prompts.
+      enable_image_classification?: boolean;
+    };
     faq_config?: any;
     wiki_config?: {
       synthesis_model_id?: string;

@@ -169,6 +169,12 @@ type KnowledgeBaseConfig struct {
 	ChunkingConfig ChunkingConfig `yaml:"chunking_config"         json:"chunking_config"`
 	// Image processing configuration
 	ImageProcessingConfig ImageProcessingConfig `yaml:"image_processing_config" json:"image_processing_config"`
+	// VLM (multimodal) configuration. nil means "no change" when updating —
+	// this is the only update channel for VLM settings on an existing
+	// knowledge base (create accepts vlm_config at the top level instead).
+	// Needed so an existing KB can opt into e.g. image classification
+	// without being recreated.
+	VLMConfig *VLMConfig `yaml:"vlm_config,omitempty" json:"vlm_config,omitempty"`
 	// FAQ configuration (only for FAQ type knowledge bases)
 	FAQConfig *FAQConfig `yaml:"faq_config"              json:"faq_config"`
 	// Wiki configuration (only for wiki-enabled knowledge bases)
@@ -587,6 +593,14 @@ type VLMConfig struct {
 	// CustomInstructions adds KB-specific image interpretation guidance without
 	// replacing the system-owned OCR and Markdown output contract.
 	CustomInstructions string `yaml:"custom_instructions,omitempty" json:"custom_instructions,omitempty"`
+	// EnableImageClassification opts this knowledge base into VLM-based image
+	// type classification: before OCR, the multimodal model looks at each
+	// image and decides whether it is an engineering drawing sheet (图纸),
+	// product imagery (产品图/图册页), or a plain document page. Only a
+	// confirmed specialized type switches OCR to its fixed dedicated prompt;
+	// anything else keeps the source-type default. Costs one extra VLM call
+	// per image. Off by default — existing knowledge bases are unchanged.
+	EnableImageClassification bool `yaml:"enable_image_classification,omitempty" json:"enable_image_classification,omitempty"`
 
 	// 兼容老版本
 	// Model Name

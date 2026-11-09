@@ -65,6 +65,167 @@ class ClassifyPageTest(unittest.TestCase):
         # No image, no text -> not rendered as an image.
         self.assertEqual(_classify_page(0.0, 0), "text")
 
+    def test_textless_path_heavy_page_is_vector(self):
+        # CAD export: glyphs converted to outlines -> no text objects, but the
+        # sheet is full of vector paths.
+        self.assertEqual(_classify_page(0.0, 0, path_count=60), "vector")
+        self.assertEqual(_classify_page(0.0, 9, path_count=40), "vector")
+
+    def test_vector_classification_needs_path_density(self):
+        # A couple of decorative vector rules do not make a drawing sheet.
+        self.assertEqual(_classify_page(0.0, 0, path_count=5), "text")
+
+    def test_vector_classification_requires_near_no_text(self):
+        # A page with a real (if short) text layer keeps its text route.
+        self.assertEqual(_classify_page(0.0, 10, path_count=60), "text")
+
+    def test_vector_classification_can_be_disabled(self):
+        with patch.object(pdf_parser, "RENDER_VECTOR_PAGES", False):
+            self.assertEqual(_classify_page(0.0, 0, path_count=60), "text")
+
+
+def _make_vector_sheet_pdf(
+    num_pages: int = 1, paths_per_page: int = 80, with_text_page: bool = False
+) -> bytes:
+    """Build a CAD-like PDF: pure vector paths, no text objects.
+
+    With ``with_text_page=True`` the first page carries a real Helvetica text
+    line (hybrid document: one text page + ``num_pages`` vector sheets).
+    """
+    from docreader.tests.test_pdf_embedded_images import _pdf_from_objects
+
+    kids = []
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Count 0 /Kids [] >>",  # patched below
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    next_id = 4
+    if with_text_page:
+        stream = b"BT /F1 14 Tf 60 700 Td (Visible title block text page.) Tj ET"
+        objects.append(
+            (
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] "
+                b"/Resources << /Font << /F1 3 0 R >> >> /Contents %d 0 R >>"
+                % next_id
+            )
+        )
+        objects.append(
+            b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream"
+        )
+        kids.append(f"{next_id} 0 R")
+        next_id += 2
+
+    for _ in range(num_pages):
+        ops = []
+        for k in range(paths_per_page):
+            x = 20 + (k % 10) * 55
+            y = 20 + (k // 10) * 45
+            ops.append(f"{x} {y} 45 35 re S")
+        stream = "\n".join(ops).encode()
+        objects.append(
+            (
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] "
+                b"/Contents %d 0 R >>" % next_id
+            )
+        )
+        objects.append(
+            b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream"
+        )
+        kids.append(f"{next_id} 0 R")
+        next_id += 2
+
+    objects[1] = (
+        "<< /Type /Pages /Count %d /Kids [%s] >>" % (len(kids), " ".join(kids))
+    ).encode()
+    return _pdf_from_objects(objects)
+
+
+class VectorSheetRoutingTest(unittest.TestCase):
+    """CAD-exported PDFs must render their sheets instead of parsing to nothing."""
+
+    def test_vector_only_pdf_routes_to_vector_pages(self):
+        import base64
+        import json as json_mod
+
+        content = _make_vector_sheet_pdf(num_pages=2)
+        doc = PDFParser(file_name="cad.pdf", file_type="pdf").parse_into_text(content)
+
+        self.assertEqual(doc.metadata["image_source_type"], "vector_pdf")
+        self.assertEqual(doc.metadata["page_count"], 2)
+        self.assertEqual(doc.metadata["vector_page_count"], 2)
+        self.assertEqual(doc.metadata["scanned_page_count"], 0)
+        self.assertEqual(doc.metadata["text_page_count"], 0)
+        self.assertEqual(len(doc.images), 2)
+        self.assertIn("images/cad_page_1.jpg", doc.images)
+        self.assertIn("![cad_page_1.jpg](images/cad_page_1.jpg)", doc.content)
+        self.assertIn("![cad_page_2.jpg](images/cad_page_2.jpg)", doc.content)
+        self.assertTrue(
+            base64.b64decode(doc.images["images/cad_page_1.jpg"]).startswith(
+                b"\xff\xd8"
+            )
+        )
+        per_page = json_mod.loads(doc.metadata["image_source_types"])
+        self.assertEqual(per_page.get("images/cad_page_1.jpg"), "vector_pdf")
+
+    def test_sparse_vector_page_stays_text(self):
+        # Below the path threshold the page is not worth an image render.
+        content = _make_vector_sheet_pdf(num_pages=1, paths_per_page=5)
+        doc = PDFParser(file_name="light.pdf", file_type="pdf").parse_into_text(content)
+        self.assertEqual(doc.metadata["image_source_type"], "pdf_text_layer")
+        self.assertEqual(doc.metadata["vector_page_count"], 0)
+        self.assertEqual(doc.images, {})
+
+    def test_vector_render_disabled_falls_back_to_empty_text(self):
+        content = _make_vector_sheet_pdf(num_pages=1)
+        with patch.object(pdf_parser, "RENDER_VECTOR_PAGES", False):
+            doc = PDFParser(file_name="cad.pdf", file_type="pdf").parse_into_text(
+                content
+            )
+        self.assertEqual(doc.metadata["image_source_type"], "pdf_text_layer")
+        self.assertEqual(doc.images, {})
+        self.assertEqual(doc.content.strip(), "")
+
+    def test_hybrid_text_plus_vector_document(self):
+        content = _make_vector_sheet_pdf(num_pages=1, with_text_page=True)
+        doc = PDFParser(file_name="hybrid.pdf", file_type="pdf").parse_into_text(
+            content
+        )
+
+        self.assertEqual(doc.metadata["image_source_type"], "vector_pdf")
+        self.assertEqual(doc.metadata["vector_page_count"], 1)
+        self.assertEqual(doc.metadata["text_page_count"], 1)
+        self.assertEqual(len(doc.images), 1)
+        self.assertIn("Visible title block text page.", doc.content)
+        self.assertIn("![hybrid_page_2.jpg](images/hybrid_page_2.jpg)", doc.content)
+
+    def test_vector_pages_stream_lazily(self):
+        from dataclasses import replace
+
+        content = _make_vector_sheet_pdf(num_pages=3)
+        real_render = pdf_parser._render_page_to_jpeg
+        with patch.object(
+            pdf_parser,
+            "CONFIG",
+            replace(pdf_parser.CONFIG, pdf_render_parallelism=1),
+        ):
+            with patch.object(
+                pdf_parser,
+                "_render_page_to_jpeg",
+                wraps=real_render,
+            ) as render:
+                stream = PDFParser(file_name="cad.pdf").parse_stream(content)
+                try:
+                    self.assertEqual(stream.image_count, 3)
+                    self.assertEqual(stream.document.images, {})
+                    self.assertEqual(render.call_count, 0)
+                    image = next(stream.images)
+                    self.assertEqual(image.ref_path, "images/cad_page_1.jpg")
+                    self.assertTrue(image.image_data.startswith(b"\xff\xd8"))
+                    self.assertEqual(render.call_count, 1)
+                finally:
+                    stream.close()
+
 
 class RenderedPageEncodingTest(unittest.TestCase):
     def test_encoding_releases_raw_pages_as_it_builds_response_images(self):

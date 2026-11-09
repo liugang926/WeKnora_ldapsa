@@ -3710,7 +3710,9 @@ export default {
         descriptionLanguageAuto: 'ドキュメントの言語に従う',
         customInstructionsLabel: '画像処理の指示',
         customInstructionsDescription: 'OCRとMarkdown出力の仕様は固定したまま、視覚的に優先する対象を追加できます',
-        customInstructionsPlaceholder: '例: 銘板、型番、アラームコード、表の単位を優先する…'
+        customInstructionsPlaceholder: '例: 銘板、型番、アラームコード、表の単位を優先する…',
+        imageClassificationLabel: '画像タイプ分類',
+        imageClassificationDescription: 'OCR の前にビジョンモデルが各画像を分類（図面・製品画像・通常ページ）します。図面または製品画像と判定された場合のみ専用プロンプト（図面名称/番号、製品名称/型番を優先）に切り替えます。画像ごとにモデル呼び出しが1回増えます'
       }
     }
   },

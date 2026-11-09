@@ -4086,7 +4086,9 @@ export default {
         descriptionLanguageAuto: '自动跟随文档语言',
         customInstructionsLabel: '图片解析要求',
         customInstructionsDescription: '补充需要重点识别的视觉信息，OCR 和 Markdown 格式协议保持不变',
-        customInstructionsPlaceholder: '例如：重点识别设备铭牌、型号、告警代码和表格中的单位…'
+        customInstructionsPlaceholder: '例如：重点识别设备铭牌、型号、告警代码和表格中的单位…',
+        imageClassificationLabel: '图像类型识别',
+        imageClassificationDescription: '识别图片前先由视觉模型判断类型（工程图纸/产品图/普通页面），确认为图纸或产品图时改用专用提取提示词（优先提取图纸名称/图号或产品名称/型号）；每张图片增加一次模型调用'
       },
       tableMetadataInstructions: {
         label: '表格元数据生成要求',
