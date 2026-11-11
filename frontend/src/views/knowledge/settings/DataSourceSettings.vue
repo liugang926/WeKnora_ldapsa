@@ -184,6 +184,14 @@ function isSyncRunning(ds: DataSource) {
   return ds.latest_sync_log?.status === 'running'
 }
 
+function syncProgress(ds: DataSource): { done: number; total: number; pct: number } | null {
+  const log = ds.latest_sync_log
+  if (!log || log.status !== 'running' || !log.items_total || log.items_total <= 0) return null
+  const done = (log.items_created || 0) + (log.items_updated || 0) + (log.items_skipped || 0) + (log.items_failed || 0)
+  const pct = Math.min(100, Math.round((done / log.items_total) * 100))
+  return { done, total: log.items_total, pct }
+}
+
 function onEditorSaved() {
   editorVisible.value = false
   loadList()
@@ -317,6 +325,12 @@ onBeforeUnmount(stopPolling)
                   :class="`ds-card__sync-result--${ds.latest_sync_log.status}`"
                 >
                   {{ lastSyncStatusLabel(ds) }}
+                </span>
+                <span
+                  v-if="syncProgress(ds)"
+                  class="ds-card__metric ds-card__metric--progress"
+                >
+                  {{ t('datasource.syncProgress', { done: syncProgress(ds)!.done, total: syncProgress(ds)!.total, pct: syncProgress(ds)!.pct }) }}
                 </span>
                 <span
                   v-for="pill in syncResultPills(ds)"

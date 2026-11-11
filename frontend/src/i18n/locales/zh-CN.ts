@@ -1188,6 +1188,7 @@ export default {
       failed: '失败'
     },
     logStatus: {
+      syncProgress: '已同步 {done} / 共 {total}（{pct}%）',
       running: '同步中',
       success: '成功',
       partial: '部分成功',

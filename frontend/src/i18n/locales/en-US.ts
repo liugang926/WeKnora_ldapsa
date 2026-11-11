@@ -6721,6 +6721,7 @@ export default {
     refreshLogs: 'Refresh logs',
     noLogs: 'No sync records yet',
     logStatus: {
+      syncProgress: 'Synced {done} / {total} ({pct}%)',
       running: 'Syncing',
       success: 'Success',
       partial: 'Partial',

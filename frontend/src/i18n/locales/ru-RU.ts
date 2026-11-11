@@ -1148,6 +1148,7 @@ export default {
       failed: 'ошибок'
     },
     logStatus: {
+      syncProgress: 'Синхронизировано {done} / {total} ({pct}%)',
       running: 'Синхронизация',
       success: 'Успешно',
       partial: 'Частично',

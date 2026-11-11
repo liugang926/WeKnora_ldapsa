@@ -1148,6 +1148,7 @@ export default {
       failed: '실패'
     },
     logStatus: {
+      syncProgress: '동기화됨 {done} / {total} ({pct}%)',
       running: '동기화 중',
       success: '성공',
       partial: '부분 성공',

@@ -6721,6 +6721,7 @@ export default {
     refreshLogs: 'ログを更新',
     noLogs: '同期記録はまだありません',
     logStatus: {
+      syncProgress: '同期済み {done} / {total}（{pct}%）',
       running: '同期中',
       success: '成功',
       partial: '一部成功',
