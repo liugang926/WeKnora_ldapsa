@@ -492,12 +492,41 @@ const prereqExpanded = ref(false)
 const tempDsId = ref('')
 
 // Schedule presets
+const DAILY_CUSTOM = '__daily_custom__'
+const dailyCustomTime = ref('01:00')
+
+function dailyCustomCron(time: string): string {
+  const [h, m] = (time || '01:00').split(':').map((x) => parseInt(x, 10) || 0)
+  return `0 ${m} ${h} * * *`
+}
+
+function parseDailyCustomCron(cron: string): string | null {
+  const m = /^0 (\d{1,2}) (\d{1,2}) \* \* \*$/.exec(cron || '')
+  if (!m) return null
+  const minute = parseInt(m[1], 10)
+  const hour = parseInt(m[2], 10)
+  if (minute > 59 || hour > 23) return null
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+}
+
+function onScheduleChange(value: unknown) {
+  if (value === DAILY_CUSTOM) {
+    form.value.sync_schedule = dailyCustomCron(dailyCustomTime.value)
+  }
+}
+
+function onDailyTimeChange(value: string) {
+  dailyCustomTime.value = value
+  form.value.sync_schedule = dailyCustomCron(value)
+}
+
 const schedulePresets = computed(() => [
   { label: t('datasource.schedule30min'), value: '0 */30 * * * *' },
   { label: t('datasource.schedule1h'), value: '0 0 * * * *' },
   { label: t('datasource.schedule6h'), value: '0 0 */6 * * *' },
   { label: t('datasource.schedule12h'), value: '0 0 */12 * * *' },
   { label: t('datasource.schedule24h'), value: '0 0 2 * * *' },
+  { label: t('datasource.scheduleDailyCustom'), value: '__daily_custom__' },
 ])
 
 // --- Connector definitions ---
@@ -755,6 +784,7 @@ watch(visible, async (v) => {
           : (editConfig.settings || {}),
       },
       sync_schedule: props.dataSource.sync_schedule,
+    ...(props.dataSource.sync_schedule ? (() => { const t = parseDailyCustomCron(props.dataSource.sync_schedule); if (t) dailyCustomTime.value = t; return {}; })() : {}),
       sync_mode: props.dataSource.sync_mode,
       conflict_strategy: props.dataSource.conflict_strategy,
       sync_deletions: props.dataSource.sync_deletions,
@@ -788,6 +818,7 @@ watch(visible, async (v) => {
       type: '',
       config: { credentials: {}, resource_ids: [], settings: {} },
       sync_schedule: '0 0 */6 * * *',
+    dailyCustomTime.value = '01:00'
       sync_mode: 'incremental',
       conflict_strategy: 'overwrite',
       sync_deletions: true,
@@ -1830,9 +1861,21 @@ const drawerConfirmText = computed(() => {
     <template v-if="step === 3">
       <section class="setting-drawer__section">
         <h4 class="setting-drawer__section-title">{{ t('datasource.syncScheduleLabel') }}</h4>
-        <t-select v-model="form.sync_schedule">
+        <t-select
+          :value="parseDailyCustomCron(form.sync_schedule) ? DAILY_CUSTOM : form.sync_schedule"
+          @change="onScheduleChange"
+        >
           <t-option v-for="p in schedulePresets" :key="p.value" :value="p.value" :label="p.label" />
         </t-select>
+        <t-time-picker
+          v-if="form.sync_schedule === dailyCustomCron(dailyCustomTime) || parseDailyCustomCron(form.sync_schedule)"
+          :value="dailyCustomTime"
+          :label="t('datasource.scheduleDailyTime')"
+          format="HH:mm"
+          :allow-input="false"
+          style="margin-left: 8px; width: 130px"
+          @change="onDailyTimeChange"
+        />
       </section>
 
       <section class="setting-drawer__section">

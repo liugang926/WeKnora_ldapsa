@@ -6876,6 +6876,8 @@ export default {
     schedule6h: 'Every 6 hours',
     schedule12h: 'Every 12 hours',
     schedule24h: 'Daily',
+      scheduleDailyCustom: 'Daily at fixed time (custom)',
+      scheduleDailyTime: 'Time',
     scheduleHuman: {
       '30min': 'Every 30 min',
       '1h': 'Hourly',

@@ -1061,6 +1061,8 @@ export default {
     schedule6h: '6시간마다',
     schedule12h: '12시간마다',
     schedule24h: '매일',
+      scheduleDailyCustom: '매일 고정 시간(사용자 지정)',
+      scheduleDailyTime: '시간',
     neverSynced: '동기화되지 않음',
     justNow: '방금',
     minutesAgo: '{n}분 전',

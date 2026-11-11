@@ -1061,6 +1061,8 @@ export default {
     schedule6h: 'Каждые 6 часов',
     schedule12h: 'Каждые 12 часов',
     schedule24h: 'Ежедневно',
+      scheduleDailyCustom: 'Ежедневно в заданное время',
+      scheduleDailyTime: 'Время',
     neverSynced: 'Не синхронизировано',
     justNow: 'Только что',
     minutesAgo: '{n} мин назад',

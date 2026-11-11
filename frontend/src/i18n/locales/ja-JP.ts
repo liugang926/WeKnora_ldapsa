@@ -6876,6 +6876,8 @@ export default {
     schedule6h: '6時間ごと',
     schedule12h: '12時間ごと',
     schedule24h: '毎日',
+      scheduleDailyCustom: '毎日固定時刻（カスタム）',
+      scheduleDailyTime: '時刻',
     scheduleHuman: {
       '30min': '30分ごと',
       '1h': '1時間ごと',

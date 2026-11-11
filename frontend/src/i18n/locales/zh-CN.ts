@@ -1101,6 +1101,8 @@ export default {
     schedule6h: '每 6 小时',
     schedule12h: '每 12 小时',
     schedule24h: '每天',
+      scheduleDailyCustom: '每天固定时间（自选时刻）',
+      scheduleDailyTime: '同步时刻',
     neverSynced: '未同步',
     justNow: '刚刚',
     minutesAgo: '{n} 分钟前',
