@@ -143,7 +143,9 @@ func (s *KnowledgeInputProvenanceStore) RenewDingTalkRun(ctx context.Context, tt
 // FinalizeDingTalkRun atomically records the result and cursor. Failed/partial
 // attempts never acknowledge a cursor. Config changes only allow failed/canceled
 // log cleanup; they cannot overwrite the newly configured source's state.
-func (s *KnowledgeInputProvenanceStore) FinalizeDingTalkRun(ctx context.Context, status string, result *types.SyncResult, cursor types.JSON) error {
+// message, when non-empty, is persisted as the log's error_message (used to
+// surface why a run was canceled, e.g. a concurrent configuration update).
+func (s *KnowledgeInputProvenanceStore) FinalizeDingTalkRun(ctx context.Context, status string, result *types.SyncResult, cursor types.JSON, message string) error {
 	c, ok := ctx.Value(dingTalkExecutionKey{}).(dingTalkRunClaim)
 	if !ok || result == nil {
 		return ErrDingTalkRunExpired
@@ -185,7 +187,7 @@ func (s *KnowledgeInputProvenanceStore) FinalizeDingTalkRun(ctx context.Context,
 			return dingTalkCAS(tx.Model(&dingTalkRunClaim{}).Where("data_source_id = ? AND token = ? AND active = ?", c.DataSourceID, c.Token, true).Update("active", false))
 		}
 		now := time.Now().UTC()
-		values := map[string]any{"status": status, "finished_at": now, "items_total": result.Total, "items_created": result.Created, "items_updated": result.Updated, "items_deleted": result.Deleted, "items_skipped": result.Skipped, "items_failed": result.Failed, "result": encoded, "error_message": ""}
+		values := map[string]any{"status": status, "finished_at": now, "items_total": result.Total, "items_created": result.Created, "items_updated": result.Updated, "items_deleted": result.Deleted, "items_skipped": result.Skipped, "items_failed": result.Failed, "result": encoded, "error_message": message}
 		if e := dingTalkCAS(tx.Model(&types.SyncLog{}).Where("id = ? AND data_source_id = ? AND status = ?", c.SyncLogID, c.DataSourceID, types.SyncLogStatusRunning).Updates(values)); e != nil {
 			return e
 		}

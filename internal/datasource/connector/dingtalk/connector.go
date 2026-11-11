@@ -444,6 +444,14 @@ func (c *Connector) sync(
 	failedDocuments := 0
 	complete := len(failures) == 0
 	seenDocuments := make(map[string]struct{})
+	fetchSeen := 0
+	fetchDone := 0
+	reportFetch := func() {
+		datasource.ReportFetchProgress(ctx, datasource.FetchProgress{
+			Enumerated: fetchSeen,
+			Processed:  fetchDone,
+		})
+	}
 	type deletionCandidate struct {
 		resourceID string
 		documentID string
@@ -488,10 +496,13 @@ func (c *Connector) sync(
 			}
 			seenDocuments[document.ID] = struct{}{}
 			currentDocuments[document.ID] = struct{}{}
+			fetchSeen++
 			revision := document.revision()
 			oldRevision, existed := oldRevisions[document.ID]
 			if mode.skipUnchanged && revision != "" && existed && revision == oldRevision {
 				newRevisions[document.ID] = revision
+				fetchDone++
+				reportFetch()
 				continue
 			}
 
@@ -502,6 +513,8 @@ func (c *Connector) sync(
 					sealFetchedArtifact(ctx, &item, scope, document, configDigest)
 					items = append(items, item)
 					newRevisions[document.ID] = revision
+					fetchDone++
+					reportFetch()
 					continue
 				}
 				if isContextError(derr) {
@@ -511,6 +524,8 @@ func (c *Connector) sync(
 					scope.ResourceID, scope.Reference.WorkspaceID, document, derr,
 				))
 				failedDocuments++
+				fetchDone++
+				reportFetch()
 				if existed {
 					newRevisions[document.ID] = oldRevision
 				}
@@ -526,6 +541,8 @@ func (c *Connector) sync(
 					scope.ResourceID, scope.Reference.WorkspaceID, document, err,
 				))
 				failedDocuments++
+				fetchDone++
+				reportFetch()
 				if existed {
 					// Do not advance failed documents. The next incremental run
 					// must retry them even if modifiedTime remains unchanged.
@@ -538,6 +555,8 @@ func (c *Connector) sync(
 			sealFetchedArtifact(ctx, &item, scope, document, configDigest)
 			items = append(items, item)
 			newRevisions[document.ID] = revision
+			fetchDone++
+			reportFetch()
 		}
 
 		if mode.reconcileDeletions {

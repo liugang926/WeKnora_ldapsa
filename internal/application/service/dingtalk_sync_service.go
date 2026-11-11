@@ -7,6 +7,7 @@ import (
 	"io"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
@@ -14,6 +15,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/datasource/connector/dingtalk"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/hibiken/asynq"
 )
 
@@ -33,6 +35,83 @@ type dingTalkQueueInspector interface {
 
 const dingTalkRunTTL = 2 * time.Minute
 
+// dingTalkProgressFlushInterval throttles live sync_log progress writes so a
+// 200-document sync cannot hammer the database on every item.
+const dingTalkProgressFlushInterval = 5 * time.Second
+
+// syncProgressWriter turns connector fetch reports and import-loop outcomes
+// into throttled sync_log progress updates (items_total plus an in-flight
+// progress payload inside the result column). Terminal state remains owned by
+// FinalizeDingTalkRun, which overwrites these values authoritatively.
+type syncProgressWriter struct {
+	repo   interfaces.SyncLogRepository
+	logID  string
+	mu     sync.Mutex
+	last   time.Time
+	total  int
+	phase  string
+	fields map[string]any
+}
+
+func newSyncProgressWriter(repo interfaces.SyncLogRepository, logID string) *syncProgressWriter {
+	return &syncProgressWriter{repo: repo, logID: logID, phase: "fetch"}
+}
+
+// reportFetch records connector-side enumeration/processing counts.
+func (w *syncProgressWriter) reportFetch(p datasource.FetchProgress) {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	w.total = max(w.total, p.Enumerated)
+	payload := map[string]any{"phase": "fetch", "fetched": p.Processed, "enumerated": p.Enumerated}
+	w.fields = map[string]any{
+		"items_total": w.total,
+		"result":      types.JSON(mustMarshalJSON(payload)),
+	}
+	w.flushLocked()
+	w.mu.Unlock()
+}
+
+// reportImport records import-loop counters (authoritative item outcomes so
+// far, with fetch-phase failures carried in failed).
+func (w *syncProgressWriter) reportImport(total, created, updated, skipped, failed, done int) {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	w.phase = "import"
+	payload := map[string]any{"phase": "import", "done": done, "total": total}
+	w.fields = map[string]any{
+		"items_total":   total,
+		"items_created": created,
+		"items_updated": updated,
+		"items_skipped": skipped,
+		"items_failed":  failed,
+		"result":        types.JSON(mustMarshalJSON(payload)),
+	}
+	w.flushLocked()
+	w.mu.Unlock()
+}
+
+func (w *syncProgressWriter) flushLocked() {
+	now := time.Now()
+	if now.Sub(w.last) < dingTalkProgressFlushInterval {
+		return
+	}
+	w.last = now
+	// Progress writes are best-effort; a failed flush must never fail the sync.
+	_ = w.repo.UpdateProgress(context.Background(), w.logID, w.fields)
+}
+
+func mustMarshalJSON(v any) []byte {
+	encoded, err := json.Marshal(v)
+	if err != nil {
+		return []byte(`{}`)
+	}
+	return encoded
+}
+
 // isSerializationConflict reports Postgres serialization/concurrent-update
 // failures that are safe to retry immediately.
 func isSerializationConflict(err error) bool {
@@ -50,6 +129,20 @@ func dingTalkSyncFailure(result *types.SyncResult, title, code string, err error
 	recordSyncError(result, types.SyncItemError{Title: title, Code: code,
 		Message: "DingTalk synchronization could not complete; retry and check the server log"})
 	logger.Errorf(context.Background(), "DingTalk sync stage=%s: %v", code, err)
+}
+
+// dingTalkCancelMessage renders the finalize error_message for a canceled
+// run. The dominant cause is a concurrent configuration update invalidating
+// the run claim (RenewDingTalkRun/ErrDingTalkRunExpired): without this the
+// sync page used to show a bare "canceled" with no explanation.
+func dingTalkCancelMessage(cause error) string {
+	if cause == nil {
+		return ""
+	}
+	if errors.Is(cause, repository.ErrDingTalkRunExpired) {
+		return "同步已取消：数据源配置已更新（下个调度窗口将使用新配置重试）"
+	}
+	return "同步已取消：" + cause.Error()
 }
 
 func (s *DataSourceService) processDingTalkSync(ctx context.Context, ds *types.DataSource, kb *types.KnowledgeBase, payload types.DataSourceSyncPayload) (runErr error) {
@@ -88,21 +181,24 @@ func (s *DataSourceService) processDingTalkSync(ctx context.Context, ds *types.D
 	}(ctx)
 	result := &types.SyncResult{}
 	status := types.SyncLogStatusFailed
+	progress := newSyncProgressWriter(s.syncLogRepo, payload.SyncLogID)
 	var cursorJSON types.JSON
 	defer func() {
 		cause := context.Cause(ctx)
 		cancel(nil)
 		<-done
+		finalMessage := ""
 		if cause != nil {
 			runErr = errors.Join(runErr, cause)
 			status = types.SyncLogStatusCanceled
+			finalMessage = dingTalkCancelMessage(cause)
 		}
 		if runErr != nil && result.Failed == 0 {
 			dingTalkSyncFailure(result, "", "dingtalk_sync_failed", runErr)
 		}
 		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(claimCtx), 10*time.Second)
 		defer finishCancel()
-		runErr = errors.Join(runErr, s.sourceInputs.FinalizeDingTalkRun(finishCtx, status, result, cursorJSON))
+		runErr = errors.Join(runErr, s.sourceInputs.FinalizeDingTalkRun(finishCtx, status, result, cursorJSON, finalMessage))
 	}()
 
 	knowledge, ok := s.knowledgeService.(*knowledgeService)
@@ -146,6 +242,11 @@ func (s *DataSourceService) processDingTalkSync(ctx context.Context, ds *types.D
 	if err != nil {
 		return err
 	}
+	// Live fetch progress: the connector reports enumerated/processed counts
+	// through the context so the sync page can render a percentage during
+	// the (potentially hour-long) download phase. The values only wrap the
+	// existing context chain; cancellation semantics are unchanged.
+	ctx = datasource.WithFetchProgress(ctx, progress.reportFetch)
 	full, tombstones, err := s.sourceInputs.DingTalkRefetchState(ctx)
 	if err != nil {
 		return err
@@ -187,16 +288,20 @@ func (s *DataSourceService) processDingTalkSync(ctx context.Context, ds *types.D
 	result.Total = len(items)
 	tagIDs := s.resolveAutoTagIDs(ctx, ds)
 	selected := map[string]*types.Knowledge{}
+	importDone := 0
 	for i := range items {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		item := &items[i]
 		if item.IsDeleted {
+			importDone++
 			continue
 		}
 		if failure := item.Metadata["error"]; failure != "" {
 			dingTalkSyncFailure(result, item.Title, "dingtalk_document_fetch_failed", errors.New(failure))
+			importDone++
+			progress.reportImport(result.Total, result.Created, result.Updated, result.Skipped, result.Failed, importDone)
 			continue
 		}
 		k, outcome, err := s.ingestDingTalkItem(ctx, ds, item, tagIDs)
@@ -220,11 +325,15 @@ func (s *DataSourceService) processDingTalkSync(ctx context.Context, ds *types.D
 			}
 			if !recovered && err != nil {
 				dingTalkSyncFailure(result, item.Title, "dingtalk_import_failed", err)
+				importDone++
+				progress.reportImport(result.Total, result.Created, result.Updated, result.Skipped, result.Failed, importDone)
 				continue
 			}
 		}
 		if err != nil {
 			dingTalkSyncFailure(result, item.Title, "dingtalk_import_failed", err)
+			importDone++
+			progress.reportImport(result.Total, result.Created, result.Updated, result.Skipped, result.Failed, importDone)
 			continue
 		}
 		selected[item.ExternalID] = k
@@ -236,6 +345,8 @@ func (s *DataSourceService) processDingTalkSync(ctx context.Context, ds *types.D
 		default:
 			result.Skipped++
 		}
+		importDone++
+		progress.reportImport(result.Total, result.Created, result.Updated, result.Skipped, result.Failed, importDone)
 	}
 	// A partial traversal is never evidence of absence. Successful complete
 	// connector tombstones retain its existing union-of-selections semantics.

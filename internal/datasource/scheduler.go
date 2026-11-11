@@ -52,12 +52,13 @@ func NewScheduler(
 	}
 }
 
-// Start loads all active data sources from the database and registers their
-// cron schedules. Then starts the cron runner in the background.
+// Start loads all schedulable data sources (active, plus error-status ones
+// so they keep retrying with backoff) and registers their cron schedules.
+// Then starts the cron runner in the background.
 func (s *Scheduler) Start(ctx context.Context) error {
-	dataSources, err := s.dsRepo.FindActive(ctx)
+	dataSources, err := s.dsRepo.FindSchedulable(ctx)
 	if err != nil {
-		return fmt.Errorf("load active data sources: %w", err)
+		return fmt.Errorf("load schedulable data sources: %w", err)
 	}
 
 	for _, ds := range dataSources {
@@ -91,7 +92,7 @@ func (s *Scheduler) AddOrUpdate(ds *types.DataSource) error {
 		delete(s.entries, ds.ID)
 	}
 
-	if ds.Status != types.DataSourceStatusActive || ds.SyncSchedule == "" {
+	if !schedulableStatus(ds.Status) || ds.SyncSchedule == "" {
 		return nil
 	}
 
@@ -130,7 +131,33 @@ func (s *Scheduler) addEntryLocked(ds *types.DataSource) error {
 	return nil
 }
 
+// schedulableStatus reports whether a source status participates in cron
+// scheduling. Error-state sources stay scheduled so a transient failure can
+// never permanently silence a source (the pre-2026-11 behavior); admission
+// applies per-window backoff instead.
+func schedulableStatus(status string) bool {
+	return status == types.DataSourceStatusActive || status == types.DataSourceStatusError
+}
+
+// retryBackoff returns how long an error-state source must wait after its
+// last failed sync before the scheduler admits it again. The first failure
+// retries at the next window; repeated failures back off linearly, capped at
+// 24 hours.
+func retryBackoff(consecutiveFailures int) time.Duration {
+	if consecutiveFailures <= 1 {
+		return 0
+	}
+	backoff := time.Duration(consecutiveFailures) * 6 * time.Hour
+	if backoff > 24*time.Hour {
+		backoff = 24 * time.Hour
+	}
+	return backoff
+}
+
 // triggerSync is called by the cron runner on each tick.
+//
+// Layer 0 — backoff: error-state sources are admitted only after their retry
+// window opens; active sources are always admitted.
 //
 // Layer 1 — DB: if a previous sync is still running, skip. This prevents
 // overlap when a sync takes longer than the cron interval.
@@ -141,9 +168,25 @@ func (s *Scheduler) triggerSync(dataSourceID string, tenantID uint64) {
 	ctx := context.Background()
 
 	ds, err := s.dsRepo.FindByID(ctx, dataSourceID)
-	if err != nil || ds == nil || ds.Status != types.DataSourceStatusActive {
-		logger.Infof(ctx, "[Scheduler] skipping sync for ds=%s (not active or not found)", dataSourceID)
+	if err != nil || ds == nil || !schedulableStatus(ds.Status) {
+		logger.Infof(ctx, "[Scheduler] skipping sync for ds=%s (not schedulable or not found)", dataSourceID)
 		return
+	}
+
+	// Layer 0: error-state sources retry with linear backoff so a broken
+	// source cannot hammer the connector every window, yet never gets
+	// permanently excluded from scheduling.
+	if ds.Status == types.DataSourceStatusError {
+		failures, lastFailedAt, failErr := s.syncLogRepo.ConsecutiveFailures(ctx, dataSourceID)
+		if failErr != nil {
+			logger.Warnf(ctx, "[Scheduler] could not read failure history for ds=%s: %v", dataSourceID, failErr)
+			return
+		}
+		if eligibleAt := lastFailedAt.Add(retryBackoff(failures)); time.Now().UTC().Before(eligibleAt) {
+			logger.Infof(ctx, "[Scheduler] deferring sync for ds=%s (error backoff, failures=%d, eligible at %s)",
+				dataSourceID, failures, eligibleAt.Format(time.RFC3339))
+			return
+		}
 	}
 
 	// Layer 1: prevent overlap with a still-running sync

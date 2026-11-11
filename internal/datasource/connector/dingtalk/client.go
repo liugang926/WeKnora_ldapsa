@@ -552,6 +552,11 @@ func parseRetryAfter(value string, fallback time.Duration) time.Duration {
 // platform limit cannot be ingested anyway).
 const maxWikiNodeDownloadBytes = 100 << 20
 
+// wikiNodeFileDownloadTimeout bounds the signed-URL file transfer (headers
+// and body) independently of the client-wide API timeout, so one stalled
+// download costs at most this much of the sync's budget.
+const wikiNodeFileDownloadTimeout = 15 * time.Second
+
 // downloadWikiNode fetches the raw bytes of a binary wiki node (PDF, Office
 // documents, plain text) through the documented three-step chain, entirely
 // under the already-granted knowledge-base scopes:
@@ -621,7 +626,15 @@ func (c *client) downloadWikiNode(ctx context.Context, workspaceID, nodeID strin
 		return nil, errors.New("DingTalk download info returned no resource url")
 	}
 
-	fileReq, err := http.NewRequestWithContext(ctx, http.MethodGet, info.HeaderSignatureInfo.ResourceUrls[0], nil)
+	// The signed-URL download is the step that observably stalls (production
+	// 2026-11: a few hundred wiki files each eating the full 30s client
+	// timeout turned the fetch phase into a 1.5h+ crawl that the task
+	// deadline then killed). Give the file transfer its own tighter budget —
+	// headers plus body — so a stalled download fails fast, becomes a
+	// per-document failure, and the sync moves on.
+	fileCtx, cancelFile := context.WithTimeout(ctx, wikiNodeFileDownloadTimeout)
+	defer cancelFile()
+	fileReq, err := http.NewRequestWithContext(fileCtx, http.MethodGet, info.HeaderSignatureInfo.ResourceUrls[0], nil)
 	if err != nil {
 		return nil, fmt.Errorf("create DingTalk file request: %w", err)
 	}
@@ -638,7 +651,7 @@ func (c *client) downloadWikiNode(ctx context.Context, workspaceID, nodeID strin
 	}
 	data, err := io.ReadAll(io.LimitReader(fileResp.Body, maxWikiNodeDownloadBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("read DingTalk file body: %w", err)
+		return nil, fmt.Errorf("read DingTalk file body: %w", redactRequestError(err))
 	}
 	if len(data) > maxWikiNodeDownloadBytes {
 		return nil, fmt.Errorf("DingTalk file exceeds %d bytes", maxWikiNodeDownloadBytes)

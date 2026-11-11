@@ -45,7 +45,7 @@ func TestFinalizeDingTalkRunCurrentError(t *testing.T) {
 			store := NewKnowledgeInputProvenanceStore(db)
 			ctx, err := store.ClaimDingTalkRun(context.Background(), ds, "current-run", "current-task", 0, time.Minute)
 			require.NoError(t, err)
-			require.NoError(t, store.FinalizeDingTalkRun(ctx, tc.status, &tc.result, tc.cursor))
+			require.NoError(t, store.FinalizeDingTalkRun(ctx, tc.status, &tc.result, tc.cursor, ""))
 			var actual types.DataSource
 			require.NoError(t, db.Where("id = ?", ds.ID).Take(&actual).Error)
 			if tc.cleared {
