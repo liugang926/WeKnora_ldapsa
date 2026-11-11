@@ -818,11 +818,11 @@ watch(visible, async (v) => {
       type: '',
       config: { credentials: {}, resource_ids: [], settings: {} },
       sync_schedule: '0 0 */6 * * *',
-    dailyCustomTime.value = '01:00'
       sync_mode: 'incremental',
       conflict_strategy: 'overwrite',
       sync_deletions: true,
     }
+    dailyCustomTime.value = '01:00'
   }
 })
 
