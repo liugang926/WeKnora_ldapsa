@@ -309,7 +309,18 @@ func (s *KnowledgeInputProvenanceStore) LoadDingTalkWork(ctx context.Context, in
 			return err
 		}
 		if a.OriginKind != dingTalkOriginalKind && !local {
-			return ErrKnowledgeInputChanged
+			// A later derived build (summary/wiki generations) leaves the
+			// latest admission as 'derived'; documents with dingtalk-original
+			// provenance history remain dingtalk documents — allow the
+			// handoff instead of failing the whole sync (2026-11-11
+			// production forensics: every affected doc had dt history).
+			var history int64
+			if err := tx.Model(&knowledgeInputAdmission{}).
+				Where("knowledge_id = ? AND knowledge_base_id = ? AND tenant_id = ? AND origin_kind = ?",
+					k.ID, f.KB, f.Tenant, dingTalkOriginalKind).
+				Count(&history).Error; err != nil || history == 0 {
+				return ErrKnowledgeInputChanged
+			}
 		}
 		proof = &types.KnowledgeBuildInputProof{Version: 1, TenantID: f.Tenant, KnowledgeBaseID: f.KB, KnowledgeID: k.ID, AdmissionID: a.AdmissionID, BuildGeneration: a.BuildGeneration, InputDigest: a.InputDigest, ConfigDigest: a.ConfigDigest, SourceLineage: lineage}
 		return nil
