@@ -14,26 +14,62 @@ import (
 )
 
 type dingTalkGraphRepository interface {
-	SeedDingTalkGraphFinalizing(context.Context, string, int, []types.ExtractChunkPayload, *types.TaskPendingOp) (bool, error)
+	SeedDingTalkGraphFinalizing(context.Context,
+		string,
+		int,
+		[]types.ExtractChunkPayload,
+		*types.TaskPendingOp) (bool,
+		error)
 	DingTalkGraphState(context.Context, types.ExtractChunkPayload) (string, *types.GraphData, string, error)
 	PrepareDingTalkGraph(context.Context, types.ExtractChunkPayload, *types.GraphData) (*types.GraphData, error)
 	MarkDingTalkGraphOutcome(context.Context, types.ExtractChunkPayload, bool, string, string) error
 }
 
-func (s *KnowledgePostProcessService) planDingTalkGraphs(ctx context.Context, kb *types.KnowledgeBase, id string, tenant uint64, attempt int, chunks []*types.Chunk) ([]types.ExtractChunkPayload, error) {
+func (s *KnowledgePostProcessService) planDingTalkGraphs(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+	id string,
+	tenant uint64,
+	attempt int,
+	chunks []*types.Chunk) ([]types.ExtractChunkPayload,
+	error,
+) {
 	var tasks []types.ExtractChunkPayload
 	if s.knowledgeInputs == nil {
 		return nil, types.ErrGraphSourceReceiptUnknown
 	}
 	for i, c := range chunks {
-		snapshot, err := s.knowledgeInputs.CaptureKnowledgeBuildInputs(ctx, types.KnowledgeBuildInputCaptureRequest{Projection: types.KnowledgeBuildProjectionGraph, TenantID: tenant, KnowledgeBaseID: kb.ID, KnowledgeID: id, ChunkIDs: []string{c.ID}, Expected: repository.KnowledgeBuildInputProofFromContext(ctx)})
+		snapshot,
+			err := s.knowledgeInputs.CaptureKnowledgeBuildInputs(
+			ctx,
+			types.KnowledgeBuildInputCaptureRequest{
+				Projection:      types.KnowledgeBuildProjectionGraph,
+				TenantID:        tenant,
+				KnowledgeBaseID: kb.ID,
+				KnowledgeID:     id,
+				ChunkIDs: []string{
+					c.ID,
+				},
+				Expected: repository.KnowledgeBuildInputProofFromContext(
+					ctx),
+			})
 		if err != nil {
 			return nil, err
 		}
 		if snapshot == nil || snapshot.Proof == nil {
 			return nil, types.ErrGraphSourceReceiptUnknown
 		}
-		p := types.ExtractChunkPayload{OriginalInput: snapshot.Proof, TenantID: tenant, KnowledgeID: id, ChunkID: c.ID, Attempt: attempt, ChunkIndex: i, ModelID: kb.SummaryModelID, Initiator: types.TaskInitiatorFromContext(ctx)}
+		p := types.ExtractChunkPayload{
+			OriginalInput: snapshot.Proof,
+			TenantID:      tenant,
+			KnowledgeID:   id,
+			ChunkID:       c.ID,
+			Attempt:       attempt,
+			ChunkIndex:    i,
+			ModelID:       kb.SummaryModelID,
+			Initiator: types.TaskInitiatorFromContext(
+				ctx),
+		}
 		langfuse.InjectTracing(ctx, &p)
 		p.GraphTaskID = repository.DingTalkGraphTaskID(p)
 		tasks = append(tasks, p)
@@ -55,7 +91,15 @@ func enqueueDingTalkGraph(ctx context.Context, queue interfaces.TaskEnqueuer, p 
 	if p.GraphSettlementOnly {
 		uniqueFor = time.Minute
 	}
-	task, err := newKnowledgeQueueTask(ctx, nil, types.TypeChunkExtract, raw, asynq.Queue(types.QueueGraph), asynq.MaxRetry(3), asynq.Timeout(30*time.Minute), asynq.Unique(uniqueFor))
+	task,
+		err := newKnowledgeQueueTask(ctx,
+		nil,
+		types.TypeChunkExtract,
+		raw,
+		asynq.Queue(types.QueueGraph),
+		asynq.MaxRetry(3),
+		asynq.Timeout(30*time.Minute),
+		asynq.Unique(uniqueFor))
 	if err != nil {
 		return err
 	}
@@ -66,7 +110,13 @@ func enqueueDingTalkGraph(ctx context.Context, queue interfaces.TaskEnqueuer, p 
 	return err
 }
 
-func RecoverDingTalkGraphs(ctx context.Context, store *repository.KnowledgeInputProvenanceStore, queue interfaces.TaskEnqueuer, id string) (int, error) {
+// RecoverDingTalkGraphs redelivers durable pending graph tasks.
+func RecoverDingTalkGraphs(ctx context.Context,
+	store *repository.KnowledgeInputProvenanceStore,
+	queue interfaces.TaskEnqueuer,
+	id string) (int,
+	error,
+) {
 	if store == nil || queue == nil {
 		return 0, nil
 	}
@@ -78,12 +128,20 @@ func RecoverDingTalkGraphs(ctx context.Context, store *repository.KnowledgeInput
 	var errs []error
 	for _, row := range rows {
 		var saved repository.DingTalkGraphRecord
-		if json.Unmarshal(row.Payload, &saved) != nil || saved.Payload.OriginalInput == nil || saved.Payload.GraphTaskID != row.DedupKey || row.TenantID != saved.Payload.TenantID || row.ScopeID != saved.Payload.KnowledgeID {
+		if json.Unmarshal(row.Payload,
+			&saved) != nil ||
+			saved.Payload.OriginalInput == nil ||
+			saved.Payload.GraphTaskID != row.DedupKey ||
+			row.TenantID != saved.Payload.TenantID ||
+			row.ScopeID != saved.Payload.KnowledgeID {
+
 			errs = append(errs, types.ErrGraphSourceReceiptUnknown, store.NoteDingTalkGraphDelivery(ctx, row.ID, false))
 			continue
 		}
 		p := saved.Payload
-		p.GraphSettlementOnly = row.Op == "result_committed" || row.Op == "terminal_failed" || row.Op == "result_skipped"
+		p.GraphSettlementOnly = row.Op == "result_committed" ||
+			row.Op == "terminal_failed" ||
+			row.Op == "result_skipped"
 		// Full input and current actor verification is repeated by the worker and
 		// inside every write transaction. A queue delivery never creates evidence.
 		taskCtx := types.WithTaskAuthorization(ctx, p.TenantID, p.Initiator)

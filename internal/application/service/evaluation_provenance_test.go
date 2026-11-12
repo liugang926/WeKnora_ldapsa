@@ -16,11 +16,16 @@ type evaluationProvenanceKB struct {
 	store *repository.KnowledgeInputProvenanceStore
 }
 
-func (s evaluationProvenanceKB) CreateKnowledgeBase(ctx context.Context, kb *types.KnowledgeBase) (*types.KnowledgeBase, error) {
+func (s evaluationProvenanceKB) CreateKnowledgeBase(
+	ctx context.Context,
+	kb *types.KnowledgeBase) (*types.KnowledgeBase,
+	error,
+) {
 	kb.ID = "evaluation-" + kb.EmbeddingModelID
 	kb.TenantID = 7
 	return kb, s.store.CreateKnowledgeBaseWithInput(ctx, kb)
 }
+
 func TestEvaluationConfigurationAdmitsOnlyFreshFixedConfiguration(t *testing.T) {
 	_, store, db, ctx, _, _, _ := historyActorIntegrationFixture(t, "web")
 	ddl, err := os.ReadFile("../../../migrations/sqlite/000059_knowledge_collection_display_inputs.up.sql")
@@ -37,7 +42,10 @@ func TestEvaluationConfigurationAdmitsOnlyFreshFixedConfiguration(t *testing.T) 
 			OriginKind    string
 			SourceLineage string
 		}
-		require.NoError(t, db.Table("knowledge_config_input_origins").Where("knowledge_base_id = ?", kb.ID).Take(&origin).Error)
+		require.NoError(t,
+			db.Table("knowledge_config_input_origins").Where(
+				"knowledge_base_id = ?",
+				kb.ID).Take(&origin).Error)
 		require.Equal(t, "derived", origin.OriginKind)
 	}
 	raw := evaluationKnowledgeBase("unadmitted", "chat")

@@ -3,14 +3,22 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
+
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
-	"time"
 )
 
 // waitForEvaluationKnowledge reads persisted state; indexing alone does not
 // satisfy the strict snapshot reader while background enrichment is pending.
-func waitForEvaluationKnowledge(ctx context.Context, repo interfaces.KnowledgeRepository, tenant uint64, kbID, id string, timeout, interval time.Duration) error {
+func waitForEvaluationKnowledge(ctx context.Context,
+	repo interfaces.KnowledgeRepository,
+	tenant uint64,
+	kbID,
+	id string,
+	timeout,
+	interval time.Duration,
+) error {
 	if ctx == nil || repo == nil || tenant == 0 || kbID == "" || id == "" || timeout <= 0 || interval <= 0 {
 		return fmt.Errorf("invalid evaluation readiness scope")
 	}

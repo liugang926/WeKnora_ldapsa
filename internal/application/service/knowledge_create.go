@@ -275,7 +275,11 @@ func (s *knowledgeService) CreateKnowledgeFromFile(
 	var createErr error
 	if isDingTalkPublication {
 		if publication.rebuild {
-			publication.result, createErr = publication.store.PublishDingTalkConfigurationRebuild(ctx, knowledge, artifact)
+			publication.result,
+				createErr = publication.store.PublishDingTalkConfigurationRebuild(
+				ctx,
+				knowledge,
+				artifact)
 		} else {
 			publication.result, createErr = publication.store.PublishDingTalkOriginal(ctx, knowledge, artifact)
 		}

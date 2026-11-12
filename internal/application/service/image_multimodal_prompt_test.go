@@ -134,7 +134,13 @@ func TestVLMImageClassification(t *testing.T) {
 		if got := vlmOCRVectorSheetPrompt; !strings.Contains(got, "图纸名称") || !strings.Contains(got, "图号") {
 			t.Fatalf("drawing prompt lost the title-block instructions: %s", got)
 		}
-		if got := vlmOCRProductImagePrompt; !strings.Contains(got, "产品名称") || !strings.Contains(got, "型号") || !strings.Contains(got, "品牌") {
+		if got := vlmOCRProductImagePrompt; !strings.Contains(got,
+			"产品名称") ||
+			!strings.Contains(got,
+				"型号") ||
+			!strings.Contains(got,
+				"品牌") {
+
 			t.Fatalf("product prompt lost the product-field instructions: %s", got)
 		}
 	})

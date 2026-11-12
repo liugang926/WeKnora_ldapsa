@@ -3,6 +3,9 @@ package service
 import (
 	"context"
 	"errors"
+	"testing"
+	"time"
+
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	chatpipeline "github.com/Tencent/WeKnora/internal/application/service/chat_pipeline"
@@ -10,15 +13,20 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/require"
-	"testing"
-	"time"
 )
 
 func TestIMOriginalSyntheticIdentityFailure(t *testing.T) {
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(10000))
 	ctx = context.WithValue(ctx, types.UserIDContextKey, "system-10000")
 	ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalIMUser, ID: "10000:channel:dingtalk:sender"})
-	groups := &groupAccessService{now: time.Now, userEligibility: func(context.Context, string) error { return errors.New("load executing user: user not found") }}
+	groups := &groupAccessService{
+		now: time.Now,
+		userEligibility: func(context.Context,
+			string,
+		) error {
+			return errors.New("load executing user: user not found")
+		},
+	}
 	svc := &sessionService{groupAccess: groups}
 	_, err := svc.CreateSession(ctx, &types.Session{TenantID: 10000})
 	require.EqualError(t, err, "load executing user: user not found")
@@ -33,16 +41,41 @@ func (r *imSessionRepo) Create(_ context.Context, s *types.Session) (*types.Sess
 	r.created++
 	return s, nil
 }
+
 func imScopeContext() context.Context {
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(10000))
 	ctx = context.WithValue(ctx, types.UserIDContextKey, "system-10000")
 	ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalIMUser, ID: "10000:channel:dingtalk:sender"})
-	return types.WithIMChannelScope(ctx, types.IMChannelScope{TenantID: 10000, AgentID: "agent", KnowledgeBases: map[string]uint64{"kb": 10000}, Verify: func(context.Context, uint64, types.ResourceType, string, types.ResourceAction) error { return nil }})
+	return types.WithIMChannelScope(ctx,
+		types.IMChannelScope{
+			TenantID: 10000,
+			AgentID:  "agent",
+			KnowledgeBases: map[string]uint64{
+				"kb": 10000,
+			},
+			Verify: func(context.Context,
+				uint64,
+				types.ResourceType,
+				string,
+				types.ResourceAction,
+			) error {
+				return nil
+			},
+		})
 }
+
 func TestIMTrustedChannelCreatesSessionAndConstrainedRead(t *testing.T) {
 	ctx := imScopeContext()
 	users := 0
-	groups := &groupAccessService{now: time.Now, userEligibility: func(context.Context, string) error { users++; return errors.New("load executing user: user not found") }}
+	groups := &groupAccessService{
+		now: time.Now,
+		userEligibility: func(context.Context,
+			string,
+		) error {
+			users++
+			return errors.New("load executing user: user not found")
+		},
+	}
 	repo := &imSessionRepo{}
 	svc := &sessionService{groupAccess: groups, sessionRepo: repo}
 	_, err := svc.CreateSession(ctx, &types.Session{ID: "session", TenantID: 10000})
@@ -50,10 +83,30 @@ func TestIMTrustedChannelCreatesSessionAndConstrainedRead(t *testing.T) {
 	require.Equal(t, 1, repo.created)
 	require.Zero(t, users)
 	for _, clone := range []context.Context{ctx, logger.CloneContext(ctx)} {
-		require.NoError(t, groups.Authorize(clone, 10000, types.GroupResourceTypeKnowledgeBase, "kb", types.ResourceActionRead))
-		require.Error(t, groups.Authorize(clone, 10000, types.GroupResourceTypeKnowledgeBase, "other", types.ResourceActionRead))
-		require.Error(t, groups.Authorize(clone, 10001, types.GroupResourceTypeKnowledgeBase, "kb", types.ResourceActionRead))
-		require.Error(t, groups.Authorize(clone, 10000, types.GroupResourceTypeKnowledgeBase, "kb", types.ResourceActionEdit))
+		require.NoError(t,
+			groups.Authorize(clone,
+				10000,
+				types.GroupResourceTypeKnowledgeBase,
+				"kb",
+				types.ResourceActionRead))
+		require.Error(t,
+			groups.Authorize(clone,
+				10000,
+				types.GroupResourceTypeKnowledgeBase,
+				"other",
+				types.ResourceActionRead))
+		require.Error(t,
+			groups.Authorize(clone,
+				10001,
+				types.GroupResourceTypeKnowledgeBase,
+				"kb",
+				types.ResourceActionRead))
+		require.Error(t,
+			groups.Authorize(clone,
+				10000,
+				types.GroupResourceTypeKnowledgeBase,
+				"kb",
+				types.ResourceActionEdit))
 		require.Error(t, groups.Authorize(clone, 10000, types.GroupResourceTypeAgent, "other", types.ResourceActionUse))
 		require.Error(t, types.AuthorizeTenantAPIKeyKnowledgeBases(clone, "other"))
 	}
@@ -78,6 +131,7 @@ func (f imScopeKBs) ListKnowledgeBases(ctx context.Context) ([]*types.KnowledgeB
 	}
 	return rows, nil
 }
+
 func (f imScopeKBs) GetKnowledgeBaseByIDOnly(_ context.Context, id string) (*types.KnowledgeBase, error) {
 	for _, k := range f.kbs {
 		if k.ID == id {
@@ -86,16 +140,35 @@ func (f imScopeKBs) GetKnowledgeBaseByIDOnly(_ context.Context, id string) (*typ
 	}
 	return nil, errors.New("missing")
 }
+
 func TestIMAgentKnowledgeScopeModesAndDeletedResource(t *testing.T) {
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(10000))
 	ctx = context.WithValue(ctx, types.UserIDContextKey, "system-10000")
 	svc := &sessionService{knowledgeBaseService: imScopeKBs{kbs: []*types.KnowledgeBase{{ID: "kb", TenantID: 10000}}}}
 	for _, mode := range []string{"none", "selected", ""} {
-		ids, err := svc.ResolveIMChannelKnowledgeBases(ctx, &types.CustomAgent{ID: "agent", TenantID: 10000, Config: types.CustomAgentConfig{KBSelectionMode: mode}})
+		ids,
+			err := svc.ResolveIMChannelKnowledgeBases(
+			ctx,
+			&types.CustomAgent{
+				ID:       "agent",
+				TenantID: 10000,
+				Config: types.CustomAgentConfig{
+					KBSelectionMode: mode,
+				},
+			})
 		require.NoError(t, err)
 		require.Empty(t, ids)
 	}
-	agent := &types.CustomAgent{ID: "agent", TenantID: 10000, Config: types.CustomAgentConfig{KBSelectionMode: "selected", KnowledgeBases: []string{"kb"}}}
+	agent := &types.CustomAgent{
+		ID:       "agent",
+		TenantID: 10000,
+		Config: types.CustomAgentConfig{
+			KBSelectionMode: "selected",
+			KnowledgeBases: []string{
+				"kb",
+			},
+		},
+	}
 	ids, err := svc.ResolveIMChannelKnowledgeBases(ctx, agent)
 	require.NoError(t, err)
 	require.Equal(t, map[string]uint64{"kb": 10000}, ids)
@@ -118,7 +191,12 @@ type imManagedKB struct{ NextcloudScopedGrantReader }
 func (imManagedKB) ManagedKB(context.Context, uint64, string) (bool, error) { return true, nil }
 func TestIMChannelDoesNotBypassDisabledNextcloudDirectory(t *testing.T) {
 	group := &groupAccessService{now: time.Now, directoryRuntime: imDisabledDirectory{}, nextcloudScopes: imManagedKB{}}
-	require.Error(t, group.Authorize(imScopeContext(), 10000, types.GroupResourceTypeKnowledgeBase, "kb", types.ResourceActionRead))
+	require.Error(t,
+		group.Authorize(imScopeContext(),
+			10000,
+			types.GroupResourceTypeKnowledgeBase,
+			"kb",
+			types.ResourceActionRead))
 }
 
 // Runs the real session repository, user eligibility, retrieval and generation
@@ -128,7 +206,16 @@ func TestIMChannelActualSessionAndRAGPipeline(t *testing.T) {
 	f := NewNormalReferencesHTTPFixtureForTest(t, false, model)
 	svc := f.Sessions.(normalReferencesSessionForTest).SessionService.(*sessionService)
 	ConfigureGroupAccessUserEligibility(svc.groupAccess, &userService{userRepo: repository.NewUserRepository(f.DB)})
-	chatpipeline.NewPluginSearch(svc.eventManager, f.KBs, svc.knowledgeService, svc.chunkService, f.Config, nil, svc.tenantService, nil, nil, nil)
+	chatpipeline.NewPluginSearch(svc.eventManager,
+		f.KBs,
+		svc.knowledgeService,
+		svc.chunkService,
+		f.Config,
+		nil,
+		svc.tenantService,
+		nil,
+		nil,
+		nil)
 	chatpipeline.NewPluginChatCompletion(svc.eventManager, f.Models)
 	ctx := types.WithCaller(f.Ctx, types.Caller{TenantID: 7, UserID: "system-7", Role: types.TenantRoleViewer})
 	ctx = context.WithValue(ctx, types.UserIDContextKey, "system-7")
@@ -136,29 +223,62 @@ func TestIMChannelActualSessionAndRAGPipeline(t *testing.T) {
 	_, err := svc.CreateSession(ctx, &types.Session{TenantID: 7})
 	require.ErrorContains(t, err, "load executing user")
 	channelAllowed := true
-	ctx = types.WithIMChannelScope(ctx, types.IMChannelScope{TenantID: 7, AgentID: "agent", OwnerID: "im_session:fixture", KnowledgeBases: map[string]uint64{"kb": 7}, Verify: func(context.Context, uint64, types.ResourceType, string, types.ResourceAction) error {
-		if !channelAllowed {
-			return errors.New("IM channel binding revoked")
-		}
-		return nil
-	}})
+	ctx = types.WithIMChannelScope(ctx,
+		types.IMChannelScope{
+			TenantID: 7,
+			AgentID:  "agent",
+			OwnerID:  "im_session:fixture",
+			KnowledgeBases: map[string]uint64{
+				"kb": 7,
+			},
+			Verify: func(context.Context,
+				uint64,
+				types.ResourceType,
+				string,
+				types.ResourceAction,
+			) error {
+				if !channelAllowed {
+					return errors.New("IM channel binding revoked")
+				}
+				return nil
+			},
+		})
 	session, err := svc.CreateSession(ctx, &types.Session{TenantID: 7})
 	require.NoError(t, err)
 	require.NotEmpty(t, session.ID)
 	var users int64
 	require.NoError(t, f.DB.Model(&types.User{}).Where("id = ?", "system-7").Count(&users).Error)
 	require.Zero(t, users)
-	require.NoError(t, f.DB.Model(&types.Knowledge{}).Where("knowledge_base_id = ?", "kb").Updates(map[string]any{"parse_status": types.ParseStatusCompleted, "pending_subtasks_count": 0, "enable_status": "enabled"}).Error)
+	require.NoError(t,
+		f.DB.Model(&types.Knowledge{}).Where("knowledge_base_id = ?",
+			"kb").Updates(map[string]any{
+			"parse_status":           types.ParseStatusCompleted,
+			"pending_subtasks_count": 0,
+			"enable_status":          "enabled",
+		}).Error)
 	cm := &types.ChatManage{}
 	cm.Query = "What is the current employee policy?"
 	cm.RewriteQuery = cm.Query
 	cm.ChatModelID = "normal-reference-model"
 	cm.KnowledgeBaseIDs = []string{"kb"}
-	cm.SearchTargets = types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}}
+	cm.SearchTargets = types.SearchTargets{
+		{
+			Type:            types.SearchTargetTypeKnowledgeBase,
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+		},
+	}
 	cm.EmbeddingTopK = 2
 	cm.RerankTopK = 2
 	cm.SummaryConfig.ContextTemplate = "{{query}}\n{{contexts}}"
-	ctx, err = svc.eventManager.BeginSourceLineage(ctx, cm, access.LineageReadScope{Targets: cm.SearchTargets}, svc.knowledgeQAAuthorizer(session))
+	ctx,
+		err = svc.eventManager.BeginSourceLineage(
+		ctx,
+		cm,
+		access.LineageReadScope{
+			Targets: cm.SearchTargets,
+		},
+		svc.knowledgeQAAuthorizer(session))
 	require.NoError(t, err)
 	require.NoError(t, svc.KnowledgeQAByEvent(ctx, cm, types.Pipline["rag"]))
 	// The Nextcloud publication guard was retired; authorized IM retrieval now
@@ -189,7 +309,17 @@ func TestIMChannelActualSessionAndRAGPipeline(t *testing.T) {
 	}{
 		{name: "other tenant", ctx: ctx, tenant: 8, kb: "kb"},
 		{name: "other knowledge base", ctx: ctx, tenant: 7, kb: "other"},
-		{name: "other IM sender", ctx: types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalIMUser, ID: "7:channel:dingtalk:other"}), tenant: 7, kb: "kb"},
+		{
+			name: "other IM sender",
+			ctx: types.WithPrincipal(ctx,
+				types.Principal{
+					Type: types.PrincipalIMUser,
+					ID:   "7:channel:dingtalk:other",
+				}),
+			tenant: 7,
+			kb:     "kb",
+		},
+
 		{name: "revoked channel", ctx: ctx, tenant: 7, kb: "kb", revoke: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -199,8 +329,20 @@ func TestIMChannelActualSessionAndRAGPipeline(t *testing.T) {
 			denied := &types.ChatManage{}
 			denied.Query = cm.Query
 			denied.ChatModelID = cm.ChatModelID
-			denied.SearchTargets = types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: tc.tenant, KnowledgeBaseID: tc.kb}}
-			err := svc.KnowledgeQAByEvent(tc.ctx, denied, []types.EventType{types.INTO_CHAT_MESSAGE, types.CHAT_COMPLETION})
+			denied.SearchTargets = types.SearchTargets{
+				{
+					Type:            types.SearchTargetTypeKnowledgeBase,
+					TenantID:        tc.tenant,
+					KnowledgeBaseID: tc.kb,
+				},
+			}
+			err := svc.KnowledgeQAByEvent(
+				tc.ctx,
+				denied,
+				[]types.EventType{
+					types.INTO_CHAT_MESSAGE,
+					types.CHAT_COMPLETION,
+				})
 			require.ErrorContains(t, err, "revalidate knowledge base")
 			require.Nil(t, denied.ChatResponse)
 			require.Equal(t, before, model.calls())
@@ -213,19 +355,37 @@ type imScopeShares struct {
 	shared *types.KnowledgeBase
 }
 
-func (f imScopeShares) ListSharedKnowledgeBases(context.Context, uint64, types.TenantRole) ([]*types.SharedKnowledgeBaseInfo, error) {
+func (f imScopeShares) ListSharedKnowledgeBases(
+	context.Context,
+	uint64,
+	types.TenantRole) ([]*types.SharedKnowledgeBaseInfo,
+	error,
+) {
 	if !f.allowedKBs[f.shared.ID] {
 		return nil, nil
 	}
 	return []*types.SharedKnowledgeBaseInfo{{KnowledgeBase: f.shared}}, nil
 }
+
 func TestIMAllPreservesOnlyLiveShares(t *testing.T) {
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(10000))
 	ctx = context.WithValue(ctx, types.UserIDContextKey, "system-10000")
 	shared := &types.KnowledgeBase{ID: "shared", TenantID: 10001}
 	unshared := &types.KnowledgeBase{ID: "unshared", TenantID: 10002}
 	shares := imScopeShares{&fakeKBShareService{allowedKBs: map[string]bool{"shared": true}}, shared}
-	svc := &sessionService{kbShareService: shares, knowledgeBaseService: imScopeKBs{kbs: []*types.KnowledgeBase{{ID: "own", TenantID: 10000}, shared, unshared}}}
+	svc := &sessionService{
+		kbShareService: shares,
+		knowledgeBaseService: imScopeKBs{
+			kbs: []*types.KnowledgeBase{
+				{
+					ID:       "own",
+					TenantID: 10000,
+				},
+				shared,
+				unshared,
+			},
+		},
+	}
 	agent := &types.CustomAgent{ID: "agent", TenantID: 10000, Config: types.CustomAgentConfig{KBSelectionMode: "all"}}
 	ids, err := svc.ResolveIMChannelKnowledgeBases(ctx, agent)
 	require.NoError(t, err)
@@ -238,7 +398,11 @@ func TestIMAllPreservesOnlyLiveShares(t *testing.T) {
 	require.Equal(t, map[string]uint64{"own": 10000}, ids)
 }
 
-func (f imScopeKBs) GetKnowledgeBaseAuthorizationMetadata(ctx context.Context, id string) (*types.KnowledgeBaseAuthorizationMetadata, error) {
+func (f imScopeKBs) GetKnowledgeBaseAuthorizationMetadata(
+	ctx context.Context,
+	id string) (*types.KnowledgeBaseAuthorizationMetadata,
+	error,
+) {
 	kb, err := f.GetKnowledgeBaseByIDOnly(ctx, id)
 	if err != nil {
 		return nil, err

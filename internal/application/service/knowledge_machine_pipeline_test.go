@@ -581,6 +581,13 @@ func newMachinePipelineFixtureWithSource(
 	ConfigureNextcloudPostProcessLedger(f.post, repository.NewNextcloudProcessingStateStore(f.db))
 	registry := datasource.NewConnectorRegistry()
 	require.NoError(t, registry.Register(nextcloud.NewConnector()))
+	// These pipeline fixtures write only tiny temporary documents. Use an explicit
+	// fixture policy so unrelated host disk occupancy cannot pause their real
+	// ingestion; absolute available-byte and durable quota checks remain active.
+	require.NoError(t, repository.NewNextcloudCapacityStore(f.db).SetPolicy(f.ctx,
+		repository.NextcloudCapacityPolicy{
+			TenantID: 7, KnowledgeBaseID: "kb", WarningPercent: 99, PausePercent: 100,
+		}))
 	admission := NewNextcloudCapacityAdmission(
 		repository.NewNextcloudCapacityStore(f.db),
 		func(context.Context, *types.KnowledgeBase) (interfaces.FileService, error) { return files, nil },

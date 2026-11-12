@@ -20,35 +20,72 @@ func (r *progressRecorder) Create(context.Context, *types.SyncLog) error { retur
 func (r *progressRecorder) FindByID(context.Context, string) (*types.SyncLog, error) {
 	return nil, nil
 }
+
 func (r *progressRecorder) FindByDataSource(context.Context, string, int, int) ([]*types.SyncLog, error) {
 	return nil, nil
 }
+
 func (r *progressRecorder) FindLatest(context.Context, string) (*types.SyncLog, error) {
 	return nil, nil
 }
+
 func (r *progressRecorder) HasRunningSync(context.Context, string) (bool, error) {
 	return false, nil
 }
+
 func (r *progressRecorder) ConsecutiveFailures(context.Context, string) (int, time.Time, error) {
 	return 0, time.Time{}, nil
 }
+
 func (r *progressRecorder) UpdateProgress(_ context.Context, _ string, updates map[string]any) error {
 	r.calls = append(r.calls, updates)
 	return nil
 }
-func (r *progressRecorder) ClaimNextcloudSyncStart(context.Context, string, string, uint64, string, string, int) (string, error) {
+
+func (r *progressRecorder) ClaimNextcloudSyncStart(
+	context.Context,
+	string,
+	string,
+	uint64,
+	string,
+	string,
+	int) (string,
+	error,
+) {
 	return "", nil
 }
-func (r *progressRecorder) FinishNextcloudSyncAttempt(context.Context, string, string, uint64, string, string, string, bool, string) (bool, error) {
+
+func (r *progressRecorder) FinishNextcloudSyncAttempt(
+	context.Context,
+	string,
+	string,
+	uint64,
+	string,
+	string,
+	string,
+	bool,
+	string) (bool,
+	error,
+) {
 	return false, nil
 }
-func (r *progressRecorder) MarkNextcloudEnqueueUncertain(context.Context, string, string, uint64, string, string) (bool, error) {
+
+func (r *progressRecorder) MarkNextcloudEnqueueUncertain(
+	context.Context,
+	string,
+	string,
+	uint64,
+	string,
+	string) (bool,
+	error,
+) {
 	return false, nil
 }
 func (r *progressRecorder) Update(context.Context, *types.SyncLog) error { return nil }
 func (r *progressRecorder) UpdateResult(context.Context, *types.SyncLog) error {
 	return nil
 }
+
 func (r *progressRecorder) CancelPendingByDataSource(context.Context, string) error {
 	return nil
 }

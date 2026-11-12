@@ -80,7 +80,7 @@ func (r *kbDeleteDSRepo) Delete(_ context.Context, id string) error {
 }
 
 func (r *kbDeleteDSRepo) FindSchedulable(_ context.Context) ([]*types.DataSource, error) {
-	return r.FindActive(nil)
+	return r.FindActive(context.Background())
 }
 
 func (r *kbDeleteDSRepo) FindActive(_ context.Context) ([]*types.DataSource, error) {

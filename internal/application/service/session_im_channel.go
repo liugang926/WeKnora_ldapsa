@@ -3,13 +3,18 @@ package service
 import (
 	"context"
 	"fmt"
+
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
 // ResolveIMChannelKnowledgeBases uses the same agent selection and capability
 // rules as QA. It grants neither writes nor new cross-workspace shares.
-func (s *sessionService) ResolveIMChannelKnowledgeBases(ctx context.Context, agent *types.CustomAgent) (map[string]uint64, error) {
+func (s *sessionService) ResolveIMChannelKnowledgeBases(
+	ctx context.Context,
+	agent *types.CustomAgent) (map[string]uint64,
+	error,
+) {
 	if agent == nil {
 		return nil, fmt.Errorf("IM agent is unavailable")
 	}

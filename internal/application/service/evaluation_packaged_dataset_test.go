@@ -2,9 +2,10 @@ package service
 
 import (
 	"context"
-	"github.com/stretchr/testify/require"
 	"os"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The packaging smoke test must use files extracted from the built image.

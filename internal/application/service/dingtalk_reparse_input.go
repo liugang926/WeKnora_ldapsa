@@ -12,7 +12,14 @@ import (
 // prepareDingTalkReparseInput runs after the caller's normal write authorization
 // and before opening an attempt or removing any existing output. It reuses the
 // admitted source bytes; it never substitutes the original actor for the caller.
-func (s *knowledgeService) prepareDingTalkReparseInput(ctx context.Context, k *types.Knowledge, kb *types.KnowledgeBase, overrides *types.KnowledgeProcessOverrides) (*types.KnowledgeBuildInputProof, error) {
+func (s *knowledgeService) prepareDingTalkReparseInput(
+	ctx context.Context,
+	k *types.Knowledge,
+	kb *types.KnowledgeBase,
+	overrides *types.KnowledgeProcessOverrides) (
+	*types.KnowledgeBuildInputProof,
+	error,
+) {
 	if k.Channel != types.ConnectorTypeDingTalk {
 		return nil, nil
 	}
@@ -62,12 +69,24 @@ func (s *knowledgeService) prepareDingTalkReparseInput(ctx context.Context, k *t
 // admitDingTalkLocalReparseInput runs after the caller's normal write authorization
 // and before opening an attempt or removing output. It binds the retained local
 // bytes and current controls without substituting another actor.
-func (s *knowledgeService) admitDingTalkLocalReparseInput(ctx context.Context, k *types.Knowledge, kb *types.KnowledgeBase, overrides *types.KnowledgeProcessOverrides) (*types.KnowledgeBuildInputProof, error) {
+func (s *knowledgeService) admitDingTalkLocalReparseInput(
+	ctx context.Context,
+	k *types.Knowledge,
+	kb *types.KnowledgeBase,
+	overrides *types.KnowledgeProcessOverrides) (
+	*types.KnowledgeBuildInputProof,
+	error,
+) {
 	if k.Channel != types.ConnectorTypeDingTalk {
 		return nil, nil
 	}
 	store, ok := s.knowledgeInputs.(interface {
-		AdmitDingTalkLocalReparse(context.Context, *types.Knowledge, *types.Knowledge, *types.KnowledgeBase, []byte) (*types.KnowledgeBuildInputProof, error)
+		AdmitDingTalkLocalReparse(context.Context,
+			*types.Knowledge,
+			*types.Knowledge,
+			*types.KnowledgeBase,
+			[]byte) (*types.KnowledgeBuildInputProof,
+			error)
 	})
 	if !ok || k.FilePath == "" {
 		return nil, fmt.Errorf("钉钉文档缺少本地原文，无法重新解析: %w", types.ErrSourceLineageUnknown)

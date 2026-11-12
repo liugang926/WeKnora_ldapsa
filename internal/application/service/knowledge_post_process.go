@@ -386,7 +386,10 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 	// A finalizing legacy document is deliberately never backfilled from count.
 	var dingGraphs []types.ExtractChunkPayload
 	if knowledge.Channel == types.ConnectorTypeDingTalk {
-		if store, ok := s.knowledgeInputs.(*repository.KnowledgeInputProvenanceStore); ok && knowledge.ParseStatus == types.ParseStatusFinalizing {
+		if store,
+			ok := s.knowledgeInputs.(*repository.KnowledgeInputProvenanceStore); ok &&
+			knowledge.ParseStatus == types.ParseStatusFinalizing {
+
 			if _, err := RecoverDingTalkGraphs(ctx, store, s.taskEnqueuer, payload.KnowledgeID); err != nil {
 				return err
 			}
@@ -462,12 +465,23 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 			}
 			var wiki *types.TaskPendingOp
 			if willSpawnWiki {
-				wiki, err = newWikiIngestPendingOp(ctx, payload.TenantID, payload.KnowledgeBaseID, payload.KnowledgeID, attempt)
+				wiki,
+					err = newWikiIngestPendingOp(ctx,
+					payload.TenantID,
+					payload.KnowledgeBaseID,
+					payload.KnowledgeID,
+					attempt)
 				if err != nil {
 					return err
 				}
 			}
-			promoted, err = ledger.SeedDingTalkGraphFinalizing(ctx, payload.KnowledgeID, expectedSubtasks, dingGraphs, wiki)
+			promoted,
+				err = ledger.SeedDingTalkGraphFinalizing(
+				ctx,
+				payload.KnowledgeID,
+				expectedSubtasks,
+				dingGraphs,
+				wiki)
 			if err != nil {
 				return err
 			}
