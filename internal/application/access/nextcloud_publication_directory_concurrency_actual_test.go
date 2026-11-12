@@ -28,9 +28,9 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-// These tests cover real transaction overlap, independently of the existing
-// pre-atomic getter hook. No driver error, identity, successful source decision
-// or final snapshot is injected into the atomic repository result.
+// These tests cover the retained atomic user-snapshot component and the
+// runtime login-snapshot API after publication authorization was retired.
+// Transaction overlap, driver errors and snapshots are never injected.
 type (
 	publicationConcurrentContextKey struct{}
 	publicationConcurrentToken      [1]byte
@@ -54,6 +54,15 @@ func (l *publicationConcurrentLookup) GetUserLoginSnapshot(
 	identities, snapshot, err := l.DirectoryRepository.GetUserLoginSnapshot(ctx, userID)
 	l.reads = append(l.reads, publicationConcurrentRead{identities, snapshot, err})
 	return identities, snapshot, err
+}
+
+// GetLoginSnapshot is the active DirectoryRuntime Login/catalog snapshot API.
+func (l *publicationConcurrentLookup) GetLoginSnapshot(
+	ctx context.Context, directoryID, objectGUID string,
+) (*types.DirectoryLoginSnapshot, error) {
+	snapshot, err := l.DirectoryRepository.GetLoginSnapshot(ctx, directoryID, objectGUID)
+	l.reads = append(l.reads, publicationConcurrentRead{snapshot: snapshot, err: err})
+	return snapshot, err
 }
 
 type publicationConcurrentFixture struct {
@@ -252,6 +261,38 @@ func publicationConcurrentActualFixture(t *testing.T) *publicationConcurrentFixt
 	return f
 }
 
+// A canceled pgx query may discard its database/sql connection. Give this
+// one read its own connection so the shared fixture's ordinary connection
+// cleanup remains strict, while sql.ErrConnDone is valid for this canceled one.
+func publicationConcurrentCancelableReader(t *testing.T, f *publicationConcurrentFixture) {
+	t.Helper()
+	var schema string
+	require.NoError(t, f.reader.Raw("SELECT current_schema()").Scan(&schema).Error)
+	require.Regexp(t, regexp.MustCompile(`^publication_directory_[0-9a-f]{32}$`), schema)
+	pool, err := sql.Open("pgx", os.Getenv("WEKNORA_LEASE_TEST_POSTGRES_DSN"))
+	require.NoError(t, err)
+	pool.SetMaxOpenConns(1)
+	t.Cleanup(func() { require.NoError(t, pool.Close()) })
+	conn, err := pool.Conn(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if err := conn.Close(); !errors.Is(err, sql.ErrConnDone) {
+			require.NoError(t, err)
+		}
+	})
+	_, err = conn.ExecContext(context.Background(), `SET search_path TO "`+schema+`"`)
+	require.NoError(t, err)
+	var actualSchema string
+	require.NoError(t, conn.QueryRowContext(context.Background(),
+		"SELECT current_schema(), pg_backend_pid()").Scan(&actualSchema, &f.readerPID))
+	require.Equal(t, schema, actualSchema)
+	require.NotEqual(t, f.writerPID, f.readerPID)
+	f.reader, err = gorm.Open(postgres.New(postgres.Config{Conn: conn, PreferSimpleProtocol: true}),
+		&gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	require.NoError(t, err)
+	f.lookup.DirectoryRepository = apprepo.NewDirectoryRepository(f.reader)
+}
+
 func publicationConcurrentKnowledge(t *testing.T) *types.Knowledge {
 	t.Helper()
 	metadata, err := json.Marshal(
@@ -357,14 +398,40 @@ func TestPostgresNextcloudPublicationDirectorySnapshotConcurrentTransactions(t *
 				committed = hookErr == nil
 			}))
 			t.Cleanup(func() { require.NoError(t, f.reader.Callback().Query().Remove(name)) })
-			err := f.guard.CheckKnowledge(ctx, publicationConcurrentKnowledge(t))
+			// The retired publication adapter performs no directory or HTTP read.
+			require.NoError(t, f.guard.CheckKnowledge(ctx, publicationConcurrentKnowledge(t)))
+			require.Empty(t, f.lookup.reads)
+			require.False(t, committed)
+			require.Zero(t, f.sourceRequests.Load())
+			identities, current, err := f.lookup.GetUserLoginSnapshot(ctx, publicationConcurrentUser)
+			require.NoError(t, err)
 			require.NoError(t, hookErr)
 			require.True(t, committed, "a real separate connection committed the controlled writer")
 			require.NotEmpty(t, isolation)
 			for _, level := range isolation {
 				require.Equal(t, "repeatable read", level)
 			}
-			require.Len(t, f.lookup.reads, 1, "one guard call invokes one whole atomic repository operation")
+			require.Len(t, f.lookup.reads, 1, "one direct repository call records one whole atomic operation")
+			// The retained user-link operation above is component coverage. The
+			// runtime Login/catalog path uses this explicit-directory API instead.
+			login, loginErr := apprepo.NewDirectoryRepository(f.reader).GetLoginSnapshot(
+				f.caller, f.directory.ID, publicationConcurrentGUID,
+			)
+			require.NoError(t, loginErr)
+			require.NotNil(t, login)
+			require.NotNil(t, login.Directory)
+			if mode == "disabled" || mode == "out_of_scope" {
+				require.Nil(t, login.Identity)
+				require.Empty(t, login.EffectiveGroupObjectGUIDs)
+			} else {
+				require.NotNil(t, login.Identity)
+				require.Equal(t, []string{publicationConcurrentGroup}, login.EffectiveGroupObjectGUIDs)
+			}
+			if mode == "directory_disabled" {
+				require.False(t, login.Directory.Enabled, "runtime login validation receives the disabled flag")
+			} else {
+				require.True(t, login.Directory.Enabled)
+			}
 			if mode == "link_phantom_point_in_time" {
 				// RR cardinality is a point-in-time snapshot. A new link whose
 				// commit is after the first SELECT is not retroactively visible.
@@ -373,19 +440,14 @@ func TestPostgresNextcloudPublicationDirectorySnapshotConcurrentTransactions(t *
 				require.Zero(t, driver40001)
 				require.Len(t, f.lookup.reads[0].identities, 1)
 				require.Equal(t, []uint64{f.beforeVersion}, versions)
-				require.Equal(t, int64(1), f.sourceCalls.Load())
-				require.ErrorIs(
-					t,
-					f.guard.CheckKnowledge(f.caller, publicationConcurrentKnowledge(t)),
-					appaccess.ErrNextcloudPublicationDenied,
-				)
-				require.Len(
-					t,
-					f.lookup.reads[1].identities,
-					2,
-					"the next independent snapshot sees all-directory cardinality",
-				)
-				require.Equal(t, int64(1), f.sourceCalls.Load(), "the next denied read does not reach source HTTP")
+				require.Len(t, identities, 1)
+				require.NotNil(t, current.Identity)
+				identities, current, err = f.lookup.GetUserLoginSnapshot(f.caller, publicationConcurrentUser)
+				require.NoError(t, err)
+				require.Len(t, identities, 2, "the next independent snapshot sees all-directory cardinality")
+				require.Nil(t, current, "multiple links do not select a login identity")
+				require.Zero(t, f.sourceCalls.Load())
+				require.Zero(t, f.sourceRequests.Load())
 				return
 			}
 			require.Equal(
@@ -406,21 +468,36 @@ func TestPostgresNextcloudPublicationDirectorySnapshotConcurrentTransactions(t *
 					[]string{publicationConcurrentGroup},
 					f.lookup.reads[0].snapshot.EffectiveGroupObjectGUIDs,
 				)
-				require.Equal(t, int64(1), f.sourceCalls.Load())
-				require.Equal(t, int64(2), f.sourceRequests.Load())
+				require.Len(t, identities, 1)
+				require.NotNil(t, current.Identity)
 			} else {
-				require.ErrorIs(t, err, appaccess.ErrNextcloudPublicationDenied)
-				require.Zero(t, f.sourceCalls.Load())
-				require.Zero(
-					t,
-					f.sourceRequests.Load(),
-					"the refreshed disabled/out-of-scope binding cannot even reach capabilities",
-				)
+				require.Len(t, identities, 1, "inactive links remain visible to the atomic routing read")
+				require.NotNil(t, current)
+				if mode == "directory_disabled" {
+					require.False(t, current.Directory.Enabled, "login admission sees the disabled directory")
+				} else {
+					require.Equal(t, f.beforeVersion+1, current.Directory.SnapshotVersion)
+					require.Nil(t, current.Identity, "inactive identities are not eligible login snapshots")
+					require.Empty(t, current.EffectiveGroupObjectGUIDs)
+					stored, lookupErr := writerRepo.GetIdentityByObjectGUID(
+						context.Background(), f.directory.ID, publicationConcurrentGUID,
+					)
+					require.NoError(t, lookupErr)
+					require.NotNil(t, stored)
+					if mode == "disabled" {
+						require.Equal(t, types.DirectoryObjectDisabled, stored.Status)
+					} else {
+						require.Equal(t, types.DirectoryObjectOutOfScope, stored.Status)
+					}
+				}
 			}
+			require.Zero(t, f.sourceCalls.Load())
+			require.Zero(t, f.sourceRequests.Load())
 		})
 	}
 	t.Run("cancel_waiting_for_share", func(t *testing.T) {
 		f := publicationConcurrentActualFixture(t)
+		publicationConcurrentCancelableReader(t, f)
 		readerToken, writerToken := &publicationConcurrentToken{}, &publicationConcurrentToken{}
 		readerCtx, cancelReader := context.WithCancel(
 			context.WithValue(f.caller, publicationConcurrentContextKey{}, readerToken),
@@ -435,7 +512,7 @@ func TestPostgresNextcloudPublicationDirectorySnapshotConcurrentTransactions(t *
 		writerDone, readerDone := make(chan error, 1), make(chan error, 1)
 		writerStarted, readerStarted := false, false
 		writerJoined, readerJoined := false, false
-		var linksReads atomic.Int64
+		var identityReads atomic.Int64
 		var directoryErrors atomic.Int64
 		var serializationErrors atomic.Int64
 		writerName, readerName := "publication-concurrent-held-update", "publication-concurrent-cancel-share"
@@ -461,10 +538,10 @@ func TestPostgresNextcloudPublicationDirectorySnapshotConcurrentTransactions(t *
 			if tx.Statement.Context.Value(publicationConcurrentContextKey{}) != readerToken {
 				return
 			}
-			if _, ok := tx.Statement.Dest.(*[]*types.DirectoryIdentity); ok &&
+			if _, ok := tx.Statement.Dest.(*types.DirectoryIdentity); ok &&
 				tx.Statement.Table == "directory_identities" &&
 				tx.Error == nil {
-				linksReads.Add(1)
+				identityReads.Add(1)
 			}
 			if tx.Statement.Table == "directories" && tx.Error != nil {
 				directoryErrors.Add(1)
@@ -508,8 +585,10 @@ func TestPostgresNextcloudPublicationDirectorySnapshotConcurrentTransactions(t *
 			t.Fatal("the real ApplySnapshot did not acquire its directory UPDATE lock")
 		}
 		readerStarted = true
-		knowledge := publicationConcurrentKnowledge(t)
-		go func() { readerDone <- f.guard.CheckKnowledge(readerCtx, knowledge) }()
+		go func() {
+			_, err := f.lookup.GetLoginSnapshot(readerCtx, f.directory.ID, publicationConcurrentGUID)
+			readerDone <- err
+		}()
 		// Observe the real reader backend blocked by this exact writer PID.
 		// Timing alone, callback counts and a synthetic SQL error are insufficient.
 		require.Eventually(t, func() bool {
@@ -529,7 +608,7 @@ func TestPostgresNextcloudPublicationDirectorySnapshotConcurrentTransactions(t *
 		select {
 		case err := <-readerDone:
 			readerJoined = true
-			require.ErrorIs(t, err, appaccess.ErrNextcloudPublicationUnavailable)
+			require.ErrorIs(t, err, context.Canceled)
 		case <-time.After(3 * time.Second):
 			t.Fatal("canceling the real blocked SHARE did not return")
 		}
@@ -537,11 +616,15 @@ func TestPostgresNextcloudPublicationDirectorySnapshotConcurrentTransactions(t *
 		require.ErrorIs(t, f.lookup.reads[0].err, context.Canceled)
 		require.Nil(t, f.lookup.reads[0].identities)
 		require.Nil(t, f.lookup.reads[0].snapshot)
-		require.Equal(t, int64(1), linksReads.Load(), "cancellation does not retry into a later granting transaction")
+		require.Zero(t, identityReads.Load(), "canceled SHARE cannot proceed to identity or group reads")
 		require.Equal(t, int64(1), directoryErrors.Load())
 		require.Zero(t, serializationErrors.Load())
 		require.Zero(t, f.sourceCalls.Load())
 		require.Zero(t, f.sourceRequests.Load())
+		// A canceled repository read remains canceled; the retired compatibility
+		// method is independently a no-op and cannot retry or authorize it.
+		require.NoError(t, f.guard.CheckKnowledge(readerCtx, publicationConcurrentKnowledge(t)))
+		require.Len(t, f.lookup.reads, 1)
 		unlock.Do(func() { close(release) })
 		select {
 		case err := <-writerDone:
