@@ -17,6 +17,7 @@ workbook is read exactly as before.
 import datetime
 import io
 import os
+import time
 import unittest
 from unittest.mock import patch
 
@@ -160,14 +161,24 @@ def _upstream_fill_merged_cells_xlsx(content: bytes) -> bytes:
 class PercentMaterializationOffTests(unittest.TestCase):
     """Default behavior: unchanged, and byte-identical to the old function."""
 
+    def _assert_matches_upstream(self, content: bytes) -> bytes:
+        # Both saves must see the same timestamp. openpyxl stamps core.xml;
+        # zipfile stamps entries from either the clock or a temporary file's mtime.
+        stamp = datetime.datetime(2025, 1, 1, tzinfo=datetime.timezone.utc)
+        with (
+            patch("openpyxl.writer.excel.datetime", wraps=datetime) as workbook_clock,
+            patch("zipfile.time", wraps=time) as archive_clock,
+        ):
+            workbook_clock.datetime.now.return_value = stamp
+            archive_clock.localtime.return_value = stamp.timetuple()
+            actual = fill_merged_cells_xlsx(content)
+            self.assertEqual(actual, _upstream_fill_merged_cells_xlsx(content))
+        return actual
+
     def test_default_keeps_the_raw_fraction(self):
-        content = _workbook_with_percentages()
+        result = self._assert_matches_upstream(_workbook_with_percentages())
 
-        self.assertEqual(
-            fill_merged_cells_xlsx(content), _upstream_fill_merged_cells_xlsx(content)
-        )
-
-        values = _read_cells(fill_merged_cells_xlsx(content), "B2", "C2", "B3", "B4")
+        values = _read_cells(result, "B2", "C2", "B3", "B4")
         self.assertEqual(values, [0.61123366, 0.5512345, 0.0833, 0.0833])
 
     def test_excel_parser_default_keeps_the_raw_fraction(self):
@@ -187,10 +198,7 @@ class PercentMaterializationOffTests(unittest.TestCase):
                 # Explicitly off, so a stray env var in the calling shell
                 # cannot turn this into an accidental behavior test.
                 with patch.dict(os.environ, {PERCENT_ENV: "0"}):
-                    self.assertEqual(
-                        fill_merged_cells_xlsx(content),
-                        _upstream_fill_merged_cells_xlsx(content),
-                    )
+                    self._assert_matches_upstream(content)
 
     def test_env_var_off_forms_keep_the_raw_fraction(self):
         content = _workbook_with_percentages()
