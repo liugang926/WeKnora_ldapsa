@@ -160,8 +160,10 @@ func (s *knowledgeBaseService) hydrateRAGSearchChunks(ctx context.Context, byKno
 	lineages := map[string]*types.SourceLineage{}
 	if s.ragChunkSnapshots == nil {
 		var ids []string
-		for _, chunkIDs := range byKnowledge {
-			ids = append(ids, chunkIDs...)
+		for id, chunkIDs := range byKnowledge {
+			if knowledgeMap[id] != nil {
+				ids = append(ids, chunkIDs...)
+			}
 		}
 		rows, err := s.listChunksByIDWithShared(ctx, types.MustTenantIDFromContext(ctx), ids)
 		for _, row := range rows {
