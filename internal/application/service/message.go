@@ -56,136 +56,28 @@ func NewMessageService(messageRepo interfaces.MessageRepository,
 	}
 }
 
-// CheckMessagePublication is intentionally available through a narrow type
-// assertion to SSE replay. It rechecks authorization as a stream advances,
-// since a file can be withdrawn after the first frame was sent.
+// CheckMessagePublication preserves the retired Nextcloud publication API.
 func (s *messageService) CheckMessagePublication(ctx context.Context, message *types.Message) error {
-	if message == nil {
-		return access.ErrNextcloudPublicationUnavailable
-	}
-	if message.Role == "user" {
-		return nil
-	} // Read adapters retain raw user text only.
-	return s.checkTypedSourceLineage(ctx, message)
+	return nil // retired with the NextCloud decoupling 2026-11-09
 }
 
+// CheckLiveMessagePublication preserves the retired Nextcloud publication API.
 func (s *messageService) CheckLiveMessagePublication(ctx context.Context, message *types.Message) error {
-	return s.checkTypedSourceLineage(ctx, message)
+	return nil // retired with the NextCloud decoupling 2026-11-09
 }
 
 type liveKnowledgeGrantChecker interface {
 	CheckNextcloudReadTargets(context.Context, types.SearchTargets) error
 }
 
-// A source lease never grants reader access. Check the current KB share and
-// directory group grants on each emitted live batch, including Agent tool
-// results whose references supply only a document ID. The SSE sender calls
-// this before writing the batch and cancels generation on failure.
+// checkLiveKnowledgeGrants preserves the retired Nextcloud read-guard entry point.
 func (s *messageService) checkLiveKnowledgeGrants(ctx context.Context, message *types.Message) error {
-	if message == nil {
-		return access.ErrNextcloudPublicationDenied
-	}
-	seen := make(map[string]bool)
-	var kbIDs []string
-	addKB := func(id string) {
-		if id != "" && !seen[id] {
-			seen[id] = true
-			kbIDs = append(kbIDs, id)
-		}
-	}
-	for _, id := range message.ExecutionContext.KnowledgeBaseIDs {
-		addKB(id)
-	}
-	for _, id := range message.ExecutionContext.AgentKnowledgeBaseIDs {
-		addKB(id)
-	}
-	for _, scope := range message.ExecutionContext.TagScopes {
-		addKB(scope.KnowledgeBaseID)
-	}
-	for _, id := range message.ExecutionContext.KnowledgeIDs {
-		if id == "" {
-			continue
-		}
-		if s.knowService == nil {
-			return access.ErrNextcloudPublicationUnavailable
-		}
-		knowledge, err := s.knowService.GetKnowledgeByIDOnly(ctx, id)
-		if err != nil || knowledge == nil || knowledge.ID != id {
-			return access.ErrNextcloudPublicationDenied
-		}
-		addKB(knowledge.KnowledgeBaseID)
-	}
-	for _, ref := range message.KnowledgeReferences {
-		if ref == nil || ref.KnowledgeID == "" {
-			continue
-		}
-		if s.knowService == nil {
-			return access.ErrNextcloudPublicationUnavailable
-		}
-		knowledge, err := s.knowService.GetKnowledgeByIDOnly(ctx, ref.KnowledgeID)
-		if err != nil || knowledge == nil || knowledge.ID != ref.KnowledgeID {
-			return access.ErrNextcloudPublicationDenied
-		}
-		addKB(knowledge.KnowledgeBaseID)
-	}
-	if len(kbIDs) == 0 {
-		return nil
-	}
-	checker, ok := s.knowService.(liveKnowledgeGrantChecker)
-	if !ok {
-		return access.ErrNextcloudPublicationUnavailable
-	}
-	if s.kbService == nil {
-		return access.ErrNextcloudPublicationUnavailable
-	}
-	targets := make(types.SearchTargets, 0, len(kbIDs))
-	for _, id := range kbIDs {
-		kb, err := s.kbService.GetKnowledgeBaseByIDOnly(ctx, id)
-		if err != nil || kb == nil || kb.ID != id || kb.TenantID == 0 {
-			return access.ErrNextcloudPublicationDenied
-		}
-		targets = append(targets, &types.SearchTarget{
-			Type: types.SearchTargetTypeKnowledgeBase, KnowledgeBaseID: id, TenantID: kb.TenantID,
-		})
-	}
-	if err := checker.CheckNextcloudReadTargets(ctx, targets); err != nil {
-		return apperrors.NewProtocolError(fmt.Errorf(
-			"%w: knowledge base read grant changed: %v",
-			access.ErrNextcloudPublicationDenied,
-			err,
-		), fmt.Sprintf("%s: knowledge base read grant changed: %v", apperrors.PublicMessage(
-			access.ErrNextcloudPublicationDenied,
-		), func() any {
-			if err ==
-				nil {
-				return nil
-			}
-			return apperrors.PublicMessage(err)
-		}()))
-	}
-	return nil
+	return nil // retired with the NextCloud decoupling 2026-11-09
 }
 
 func (
 	s *messageService,
 ) filterHistoryMessages(ctx context.Context, messages []*types.Message) ([]*types.Message, error) {
-	if !access.UseWeKnoraReadAuthority() {
-		filtered := make([]*types.Message, 0, len(messages))
-		for _, message := range messages {
-			err := s.CheckMessagePublication(ctx, message)
-			if errors.Is(err, access.ErrNextcloudPublicationDenied) {
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-			filtered = append(filtered, message)
-		}
-		if err := s.checkMessageSourceLineageBatch(ctx, filtered, nil); err != nil {
-			return nil, err
-		}
-		return rawUserContentOnly(filtered), nil
-	}
 	// Session ownership/tenant scope is the WeKnora read boundary. Nextcloud
 	// receipts remain lifecycle evidence and do not filter saved conversation
 	// history.
@@ -218,6 +110,9 @@ func sessionUserIDForLookup(ctx context.Context) string {
 
 // CreateMessage creates a new message within an existing session
 func (s *messageService) CreateMessage(ctx context.Context, message *types.Message) (*types.Message, error) {
+	if message != nil && (len(message.Images) > 0 || len(message.Attachments) > 0) {
+		message.ExecutionContext.ExplicitInputMaterials = true
+	}
 	if message != nil && message.Role != "user" && message.SourceLineage == nil {
 		message.SourceLineage = types.UnknownSourceLineage()
 	}
@@ -267,25 +162,27 @@ func (s *messageService) GetMessage(ctx context.Context, sessionID string, messa
 		return nil, err
 	}
 
-	if !access.UseWeKnoraReadAuthority() && s.materialStore != nil {
-		_, model := ctx.Value(agentHistoryCurrentRequestKey{}).(string)
-		rows, err := s.admittedMessages(
-			ctx,
-			types.MessageMaterialReadRequest{
-				TenantID:                  tenantID,
-				SessionID:                 sessionID,
-				MessageIDs:                []string{messageID},
-				IncludeOriginalUserFields: model,
-			},
-		)
-		if err != nil {
-			return nil, err
+	if s.materialStore != nil {
+		if _, internalCurrentRequest := ctx.Value(agentHistoryCurrentRequestKey{}).(string); internalCurrentRequest {
+			rows, err := s.admittedMessages(
+				ctx,
+				types.MessageMaterialReadRequest{
+					TenantID:                  tenantID,
+					SessionID:                 sessionID,
+					MessageIDs:                []string{messageID},
+					IncludeOriginalUserFields: true,
+				},
+			)
+			if err != nil {
+				return nil, err
+			}
+			if len(rows) != 1 {
+				return nil, access.ErrNextcloudPublicationDenied
+			}
+			return rows[0], nil
 		}
-		if len(rows) != 1 {
-			return nil, access.ErrNextcloudPublicationDenied
-		}
-		return rows[0], nil
 	}
+
 	logger.Info(ctx, "Session exists, getting message")
 	message, err := s.messageRepo.GetMessage(ctx, sessionID, messageID)
 	if err != nil {
@@ -297,12 +194,8 @@ func (s *messageService) GetMessage(ctx context.Context, sessionID string, messa
 	}
 
 	logger.Info(ctx, "Message retrieved successfully")
-	if !access.UseWeKnoraReadAuthority() {
-		if err := s.CheckMessagePublication(ctx, message); err != nil {
-			return nil, err
-		}
-	}
-	return rawUserContentOnly(s.clarifyReadArtifactVersions(ctx, sessionID, []*types.Message{message}))[0], nil
+	messages := s.clarifyReadArtifactVersions(ctx, sessionID, []*types.Message{message})
+	return rawUserContentOnly(messages)[0], nil
 }
 
 // GetMessageForControl is an owner-only metadata lookup used to stop or steer
@@ -390,9 +283,6 @@ func (s *messageService) GetMessagesBySession(ctx context.Context,
 		return nil, err
 	}
 
-	if !access.UseWeKnoraReadAuthority() && s.materialStore != nil {
-		return s.admittedMessagePage(ctx, sessionID, time.Time{}, pageSize, page, false)
-	}
 	logger.Info(ctx, "Session exists, getting messages")
 	messages, err := s.messageRepo.GetMessagesBySession(ctx, sessionID, page, pageSize)
 	if err != nil {
@@ -431,9 +321,6 @@ func (s *messageService) GetRecentMessagesBySession(ctx context.Context,
 		return nil, err
 	}
 
-	if !access.UseWeKnoraReadAuthority() && s.materialStore != nil {
-		return s.admittedMessagePage(ctx, sessionID, time.Time{}, limit, 1, true)
-	}
 	logger.Info(ctx, "Session exists, getting recent messages")
 	messages, err := s.messageRepo.GetRecentMessagesBySession(ctx, sessionID, limit)
 	if err != nil {
@@ -471,9 +358,6 @@ func (s *messageService) GetMessagesBySessionBeforeTime(ctx context.Context,
 		return nil, err
 	}
 
-	if !access.UseWeKnoraReadAuthority() && s.materialStore != nil {
-		return s.admittedMessagePage(ctx, sessionID, beforeTime, limit, 1, true)
-	}
 	logger.Info(ctx, "Session exists, getting messages before time")
 	messages, err := s.messageRepo.GetMessagesBySessionBeforeTime(ctx, sessionID, beforeTime, limit)
 	if err != nil {
@@ -498,8 +382,17 @@ func (s *messageService) UpdateMessage(ctx context.Context, message *types.Messa
 	if message == nil {
 		return access.ErrNextcloudPublicationDenied
 	}
-	sourceIndependent := access.UseWeKnoraReadAuthority() && types.SourceIndependentDerivativesAllowed(message)
-	if !sourceIndependent && message.Role != "user" && message.IsCompleted {
+	materialBoundaryRequired := message.ExecutionContext.ExplicitInputMaterials
+	if message.Role == "assistant" && message.IsCompleted && !materialBoundaryRequired &&
+		message.SourceLineage.RequireComplete() != nil {
+		lineage, err := types.NewCompleteSourceLineage()
+		if err != nil {
+			return err
+		}
+		message.SourceLineage = lineage
+	}
+	sourceIndependent := types.SourceIndependentDerivativesAllowed(message)
+	if materialBoundaryRequired && !sourceIndependent && message.Role != "user" && message.IsCompleted {
 		if err := s.checkTypedSourceLineage(ctx, message); err != nil {
 			return err
 		}
@@ -515,21 +408,19 @@ func (s *messageService) UpdateMessage(ctx context.Context, message *types.Messa
 		return err
 	}
 
-	var finishCompletion func(error) error
 	if s.materialStore != nil {
-		materialCtx, inputErr := s.materialStore.WithMessageProducerInput(ctx, message, false)
-		if inputErr == nil {
-			inputCtx := ctx
-			ctx = materialCtx
-			ctx, finishCompletion, err = s.beginMessageMaterialCompletion(ctx, message)
-			if err != nil && sourceIndependent {
-				ctx = inputCtx
-				finishCompletion = nil
-				err = nil
-			}
-		} else if !sourceIndependent {
-			return inputErr
+		ctx, err = s.materialStore.WithMessageProducerInput(ctx, message, false)
+		if err != nil {
+			return err
 		}
+	}
+	var finishCompletion func(error) error
+	boundSteer := hasBoundSteerCompletion(ctx, message)
+	if ctx.Value(stoppedSteerCauseKey{}) != nil && !boundSteer {
+		return types.ErrSourceLineageUnknown
+	}
+	if materialBoundaryRequired || boundSteer {
+		ctx, finishCompletion, err = s.beginMessageMaterialCompletion(ctx, message)
 		if err != nil {
 			return err
 		}
@@ -945,8 +836,10 @@ func (s *messageService) ListArtifactLibrary(
 		if err != nil {
 			return nil, err
 		}
-		if err := s.CheckMessagePublication(ctx, message); err != nil {
-			return nil, err
+		if message.ExecutionContext.ExplicitInputMaterials {
+			if err := s.checkTypedSourceLineage(ctx, message); err != nil {
+				return nil, err
+			}
 		}
 		if handle, ok := types.ParseResourcePath(item.URL); ok {
 			item.Handle = types.BuildResourcePath(handle)
@@ -1116,70 +1009,24 @@ func (s *messageService) SearchMessages(
 	return result, nil
 }
 
-// filterHistoricalSearchPairs runs after partner loading. Filtering only the
-// search hit would let fetchPartnerMessages reintroduce a revoked answer when
-// the user's harmless question was the text that matched.
+// filterHistoricalSearchPairs runs after the repository has restricted every
+// row to the authenticated WeKnora owner. Saved conversation text is no
+// longer an independent Nextcloud publication derivative: Nextcloud handles
+// source lifecycle, while the WeKnora session owner is the read ACL.
 func (s *messageService) filterHistoricalSearchPairs(
-	ctx context.Context, items []*types.MessageSearchResultItem,
+	_ context.Context, items []*types.MessageSearchResultItem,
 ) ([]*types.MessageSearchResultItem, error) {
-	blocked := make(map[string]struct{})
-	for _, item := range items {
-		if item == nil || item.Role != "assistant" {
-			continue
-		}
-		if err := s.CheckMessagePublication(ctx, &item.Message); err != nil {
-			if !errors.Is(err, access.ErrNextcloudPublicationDenied) {
-				return nil, err
-			}
-			blocked[historicalSearchPairKey(item)] = struct{}{}
-		}
-	}
 	filtered := make([]*types.MessageSearchResultItem, 0, len(items))
-	var batchMessages []*types.Message
-	var batchTitles []access.SourceLineageRead
 	for _, item := range items {
 		if item == nil {
 			continue
 		}
-		if _, denied := blocked[historicalSearchPairKey(item)]; !denied {
-			if item.SessionTitleSourceLineage.RequireComplete() != nil {
-				item.SessionTitle = ""
-			} else if len(item.SessionTitleSourceLineage.Sources) > 0 {
-				if s.sourceLineageGuard == nil {
-					return nil, access.ErrNextcloudPublicationUnavailable
-				}
-				if err := s.sourceLineageGuard.Check(
-					ctx,
-					item.SessionTitleSourceLineage,
-					access.LineageReadScope{},
-				); err != nil {
-					if !errors.Is(err, access.ErrNextcloudPublicationDenied) {
-						return nil, err
-					}
-					item.SessionTitle = ""
-				}
-			}
-			if item.Role == "user" {
-				item.Message = *rawUserContentOnly([]*types.Message{&item.Message})[0]
-			}
-			filtered = append(filtered, item)
-			batchMessages = append(batchMessages, &item.Message)
-			if item.SessionTitle != "" && item.SessionTitleSourceLineage.RequireComplete() == nil {
-				batchTitles = append(batchTitles, access.SourceLineageRead{Lineage: item.SessionTitleSourceLineage})
-			}
+		if item.Role == "user" {
+			item.Message = *rawUserContentOnly([]*types.Message{&item.Message})[0]
 		}
-	}
-	if err := s.checkMessageSourceLineageBatch(ctx, batchMessages, batchTitles); err != nil {
-		return nil, err
+		filtered = append(filtered, item)
 	}
 	return filtered, nil
-}
-
-func historicalSearchPairKey(item *types.MessageSearchResultItem) string {
-	if item.RequestID == "" {
-		return item.ID
-	}
-	return searchPairKey(item.SessionID, item.RequestID)
 }
 
 // restrictToOwnedSessions drops results from sessions the caller does not own.

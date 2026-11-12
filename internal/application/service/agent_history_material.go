@@ -165,6 +165,31 @@ func admittedAgentSessionAttachments(
 	return attachments, nil
 }
 
+func weknoraAgentSessionAttachments(
+	ctx context.Context,
+	messages interfaces.MessageRepository,
+	sessions interfaces.SessionRepository,
+	sessionID string,
+) (types.MessageAttachments, error) {
+	if messages == nil || sessions == nil {
+		return nil, access.ErrNextcloudPublicationUnavailable
+	}
+	tenant, ok := sessionTenantIDForLookup(ctx)
+	if !ok {
+		return nil, access.ErrNextcloudPublicationDenied
+	}
+	if _, err := loadSessionForRead(
+		ctx,
+		sessions,
+		tenant,
+		sessionUserIDForLookup(ctx),
+		sessionID,
+	); err != nil {
+		return nil, err
+	}
+	return messages.GetSessionAttachments(ctx, sessionID)
+}
+
 func originalHistoryRepositoryConfigured(repo interfaces.MessageRepository) bool {
 	actual, ok := repo.(interface {
 		MessageMaterialStore() *repository.KnowledgeInputProvenanceStore

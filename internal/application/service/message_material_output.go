@@ -613,16 +613,32 @@ func (s *messageService) beginMessageMaterialCompletion(
 	if slot.Closed || external && !slot.Ready || slot.Failed != nil {
 		return fail(access.ErrNextcloudPublicationUnavailable)
 	}
+	stopCause, _ := ctx.Value(stoppedSteerCauseKey{}).(error)
+	stopped := stopCause != nil && slot.Completion != nil && slot.OwnerContext != nil &&
+		context.Cause(slot.OwnerContext) == stopCause
+	if stopCause != nil && !stopped {
+		return fail(types.ErrSourceLineageUnknown)
+	}
 	leases := []repository.NextcloudContentLease{}
 	for _, guard := range slot.Guards {
-		if err := guard.Recheck(); err != nil {
+		guard.mu.Lock()
+		checkCtx := guard.ctx
+		cancel := func() {}
+		if stopped && context.Cause(checkCtx) == stopCause {
+			// Keep the guard's original caller and read-plan values. Only
+			// the explicit user-stop write gets its own bounded lifetime.
+			deadline, _ := ctx.Deadline()
+			checkCtx, cancel = context.WithDeadline(context.WithoutCancel(checkCtx), deadline)
+		}
+		err := guard.recheckLocked(checkCtx)
+		cancel()
+		if err != nil {
+			guard.mu.Unlock()
 			return fail(err)
 		}
-		guard.mu.Lock()
 		plan := guard.plan
 		rows := append([]repository.NextcloudContentLease{}, guard.leases...)
 		guard.mu.Unlock()
-		var err error
 		ctx, err = repository.WithMessageMaterialReadPlan(ctx, plan)
 		if err != nil {
 			return fail(err)
@@ -665,6 +681,11 @@ func (s *messageService) beginMessageMaterialCompletion(
 		if writeErr != nil {
 			slot.Failed = writeErr
 			return writeErr
+		}
+		// The canceled producer has no next frame to admit against the new
+		// write. Its original leases are released with the last slot reference.
+		if stopped {
+			return nil
 		}
 		for i, guard := range slot.Guards {
 			if guard.store.RecheckMessageMaterialInputs(guard.ctx, guard.snapshot) == nil {

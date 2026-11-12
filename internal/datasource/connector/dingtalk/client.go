@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/datasource"
@@ -122,28 +123,62 @@ type dingTalkAPI interface {
 	listWorkspaces(context.Context) ([]workspace, error)
 	listNodes(context.Context, string) ([]node, error)
 	documentBlocks(context.Context, string) ([]json.RawMessage, error)
+	workbookMarkdown(context.Context, node) (string, error)
+	downloadWikiNode(context.Context, string, string) ([]byte, error)
 }
 
 type client struct {
-	baseURL   string
-	operator  string
+	baseURL  string
+	operator string
+	// minInterval spaces authenticated API calls apart so parallel data
+	// source syncs sharing one app key stay under DingTalk's QPS limit.
+	// Zero disables the throttle (tests).
+	minInterval time.Duration
+	appKey      string
+	appSecret   string
+	http        *http.Client
+	sleep       func(context.Context, time.Duration) error
+
+	// creds is shared by every data source configured with the same
+	// appKey/appSecret: one access token and one API throttle budget per
+	// DingTalk app instead of per data source.
+	creds *dingTalkCredentials
+}
+
+// dingTalkCredentials carries the per-app access token cache and the global
+// API throttle. All data sources sharing one app key share one instance.
+type dingTalkCredentials struct {
 	appKey    string
 	appSecret string
-	http      *http.Client
-	sleep     func(context.Context, time.Duration) error
 
-	token       string
-	tokenExpiry time.Time
+	mu           sync.Mutex
+	token        string
+	tokenExpiry  time.Time
+	throttleNext time.Time
+}
+
+var sharedDingTalkCredentials sync.Map // appKey + "\x00" + appSecret → *dingTalkCredentials
+
+func dingTalkCredentialsFor(appKey, appSecret string) *dingTalkCredentials {
+	key := appKey + "\x00" + appSecret
+	if v, ok := sharedDingTalkCredentials.Load(key); ok {
+		return v.(*dingTalkCredentials)
+	}
+	fresh := &dingTalkCredentials{appKey: appKey, appSecret: appSecret}
+	actual, _ := sharedDingTalkCredentials.LoadOrStore(key, fresh)
+	return actual.(*dingTalkCredentials)
 }
 
 func newClient(cfg *config) *client {
 	return &client{
-		baseURL:   apiBaseURL,
-		operator:  cfg.OperatorID,
-		appKey:    cfg.ClientID,
-		appSecret: cfg.ClientSecret,
-		http:      datasource.NewConnectorHTTPClient(apiTimeout),
-		sleep:     sleepContext,
+		baseURL:     apiBaseURL,
+		minInterval: dingTalkAPIMinInterval,
+		operator:    cfg.OperatorID,
+		appKey:      cfg.ClientID,
+		appSecret:   cfg.ClientSecret,
+		creds:       dingTalkCredentialsFor(cfg.ClientID, cfg.ClientSecret),
+		http:        datasource.NewConnectorHTTPClient(apiTimeout),
+		sleep:       sleepContext,
 	}
 }
 
@@ -153,8 +188,10 @@ type accessTokenResponse struct {
 }
 
 func (c *client) accessToken(ctx context.Context) (string, error) {
-	if c.token != "" && time.Now().Before(c.tokenExpiry) {
-		return c.token, nil
+	c.creds.mu.Lock()
+	defer c.creds.mu.Unlock()
+	if c.creds.token != "" && time.Now().Before(c.creds.tokenExpiry) {
+		return c.creds.token, nil
 	}
 
 	var response accessTokenResponse
@@ -177,9 +214,9 @@ func (c *client) accessToken(ctx context.Context) (string, error) {
 	if ttl > 5*time.Minute {
 		ttl -= 5 * time.Minute
 	}
-	c.token = response.AccessToken
-	c.tokenExpiry = time.Now().Add(ttl)
-	return c.token, nil
+	c.creds.token = response.AccessToken
+	c.creds.tokenExpiry = time.Now().Add(ttl)
+	return c.creds.token, nil
 }
 
 func (c *client) doJSON(
@@ -219,6 +256,9 @@ func (c *client) doJSON(
 				return err
 			}
 			req.Header.Set("x-acs-dingtalk-access-token", token)
+			if err := c.throttle(ctx); err != nil {
+				return err
+			}
 		}
 
 		resp, err := c.http.Do(req)
@@ -242,12 +282,32 @@ func (c *client) doJSON(
 		}
 
 		if authenticated && resp.StatusCode == http.StatusUnauthorized && !refreshed {
-			if c.token == token {
-				c.token = ""
-				c.tokenExpiry = time.Time{}
+			if c.creds.token == token {
+				c.creds.token = ""
+				c.creds.tokenExpiry = time.Time{}
 			}
 			refreshed = true
 			continue
+		}
+
+		if resp.StatusCode == http.StatusForbidden && bytes.Contains(responseBody, []byte("QpsLimitForApi")) {
+			// App-level QPS limit: transient by nature. Back off and retry a
+			// few times before surfacing; concurrent data source syncs share
+			// one app key and trip this regularly.
+			if retryAttempt+1 < maxAttempts {
+				delay := retryDelay(retryAttempt)
+				if extra := parseRetryAfter(resp.Header.Get("Retry-After"), 0); extra > delay {
+					delay = extra
+				}
+				if delay < 2*time.Second {
+					delay = 2 * time.Second
+				}
+				retryAttempt++
+				if err := c.wait(ctx, delay); err != nil {
+					return err
+				}
+				continue
+			}
 		}
 
 		if isTransient(resp.StatusCode) {
@@ -284,7 +344,7 @@ func (c *client) doJSON(
 
 func (c *client) redactAPIError(err error) error {
 	message := err.Error()
-	for _, sensitive := range []string{c.appKey, c.appSecret, c.operator, c.token} {
+	for _, sensitive := range []string{c.appKey, c.appSecret, c.operator, c.creds.token} {
 		if sensitive != "" {
 			message = strings.ReplaceAll(message, sensitive, "[REDACTED]")
 		}
@@ -487,6 +547,140 @@ func parseRetryAfter(value string, fallback time.Duration) time.Duration {
 		return maximum
 	}
 	return delay
+}
+
+// maxWikiNodeDownloadBytes caps wiki file downloads (uploads above the
+// platform limit cannot be ingested anyway).
+const maxWikiNodeDownloadBytes = 100 << 20
+
+// wikiNodeFileDownloadTimeout bounds the signed-URL file transfer (headers
+// and body) independently of the client-wide API timeout, so one stalled
+// download costs at most this much of the sync's budget.
+const wikiNodeFileDownloadTimeout = 15 * time.Second
+
+// downloadWikiNode fetches the raw bytes of a binary wiki node (PDF, Office
+// documents, plain text) through the documented three-step chain, entirely
+// under the already-granted knowledge-base scopes:
+//  1. GET /v2.0/doc/dentries/{uuid}/queryDentryId — wiki uuid to numeric
+//     storage dentryId/spaceId (Document.WorkspaceDocument.Read);
+//  2. POST /v1.0/storage/spaces/{spaceId}/dentries/{dentryId}/downloadInfos/query
+//     — signed URL plus mandatory headers (Storage.DownloadInfo.Read);
+//  3. plain GET of the signed URL with those headers.
+func (c *client) downloadWikiNode(ctx context.Context, workspaceID, nodeID string) ([]byte, error) {
+	token, err := c.accessToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+	_ = workspaceID // the conversion endpoint resolves the space by uuid itself
+
+	convertURL := c.baseURL + "/v2.0/doc/dentries/" + url.PathEscape(nodeID) +
+		"/queryDentryId?operatorId=" + url.QueryEscape(c.operator)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, convertURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create DingTalk conversion request: %w", err)
+	}
+	req.Header.Set("x-acs-dingtalk-access-token", token)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("execute DingTalk conversion request: %w", redactRequestError(err))
+	}
+	body, _ := readBody(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("DingTalk dentry conversion status=%d", resp.StatusCode)
+	}
+	var converted struct {
+		DentryID string `json:"dentryId"`
+		SpaceID  string `json:"spaceId"`
+	}
+	if err := json.Unmarshal(body, &converted); err != nil ||
+		converted.DentryID == "" || converted.SpaceID == "" {
+		return nil, errors.New("DingTalk dentry conversion returned no ids")
+	}
+
+	infoURL := c.baseURL + "/v1.0/storage/spaces/" + url.PathEscape(converted.SpaceID) +
+		"/dentries/" + url.PathEscape(converted.DentryID) +
+		"/downloadInfos/query?unionId=" + url.QueryEscape(c.operator)
+	infoPayload, _ := json.Marshal(map[string]string{"unionId": c.operator})
+	infoReq, err := http.NewRequestWithContext(ctx, http.MethodPost, infoURL, bytes.NewReader(infoPayload))
+	if err != nil {
+		return nil, fmt.Errorf("create DingTalk download-info request: %w", err)
+	}
+	infoReq.Header.Set("x-acs-dingtalk-access-token", token)
+	infoReq.Header.Set("Content-Type", "application/json")
+	infoResp, err := c.http.Do(infoReq)
+	if err != nil {
+		return nil, fmt.Errorf("execute DingTalk download-info request: %w", redactRequestError(err))
+	}
+	infoBody, _ := readBody(infoResp.Body)
+	_ = infoResp.Body.Close()
+	if infoResp.StatusCode < 200 || infoResp.StatusCode >= 300 {
+		return nil, fmt.Errorf("DingTalk download info status=%d", infoResp.StatusCode)
+	}
+	var info struct {
+		HeaderSignatureInfo struct {
+			ResourceUrls []string          `json:"resourceUrls"`
+			Headers      map[string]string `json:"headers"`
+		} `json:"headerSignatureInfo"`
+	}
+	if err := json.Unmarshal(infoBody, &info); err != nil || len(info.HeaderSignatureInfo.ResourceUrls) == 0 {
+		return nil, errors.New("DingTalk download info returned no resource url")
+	}
+
+	// The signed-URL download is the step that observably stalls (production
+	// 2026-11: a few hundred wiki files each eating the full 30s client
+	// timeout turned the fetch phase into a 1.5h+ crawl that the task
+	// deadline then killed). Give the file transfer its own tighter budget —
+	// headers plus body — so a stalled download fails fast, becomes a
+	// per-document failure, and the sync moves on.
+	fileCtx, cancelFile := context.WithTimeout(ctx, wikiNodeFileDownloadTimeout)
+	defer cancelFile()
+	fileReq, err := http.NewRequestWithContext(fileCtx, http.MethodGet, info.HeaderSignatureInfo.ResourceUrls[0], nil)
+	if err != nil {
+		return nil, fmt.Errorf("create DingTalk file request: %w", err)
+	}
+	for key, value := range info.HeaderSignatureInfo.Headers {
+		fileReq.Header.Set(key, value)
+	}
+	fileResp, err := c.http.Do(fileReq)
+	if err != nil {
+		return nil, fmt.Errorf("execute DingTalk file request: %w", redactRequestError(err))
+	}
+	defer func() { _ = fileResp.Body.Close() }()
+	if fileResp.StatusCode < 200 || fileResp.StatusCode >= 300 {
+		return nil, fmt.Errorf("DingTalk file download status=%d", fileResp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(fileResp.Body, maxWikiNodeDownloadBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read DingTalk file body: %w", redactRequestError(err))
+	}
+	if len(data) > maxWikiNodeDownloadBytes {
+		return nil, fmt.Errorf("DingTalk file exceeds %d bytes", maxWikiNodeDownloadBytes)
+	}
+	return data, nil
+}
+
+// dingTalkAPIMinInterval keeps well below the documented wiki QPS ceiling.
+const dingTalkAPIMinInterval = 300 * time.Millisecond
+
+func (c *client) throttle(ctx context.Context) error {
+	if c.minInterval <= 0 {
+		return nil
+	}
+	c.creds.mu.Lock()
+	now := time.Now()
+	wait := time.Duration(0)
+	if c.creds.throttleNext.After(now) {
+		wait = c.creds.throttleNext.Sub(now)
+		c.creds.throttleNext = c.creds.throttleNext.Add(c.minInterval)
+	} else {
+		c.creds.throttleNext = now.Add(c.minInterval)
+	}
+	c.creds.mu.Unlock()
+	if wait > 0 {
+		return c.wait(ctx, wait)
+	}
+	return nil
 }
 
 func (c *client) wait(ctx context.Context, delay time.Duration) error {

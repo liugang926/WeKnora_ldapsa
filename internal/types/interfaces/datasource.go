@@ -2,6 +2,7 @@ package interfaces
 
 import (
 	"context"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/hibiken/asynq"
@@ -100,6 +101,10 @@ type DataSourceRepository interface {
 
 	// FindActive retrieves all active data sources (used for scheduling)
 	FindActive(ctx context.Context) ([]*types.DataSource, error)
+
+	// FindSchedulable retrieves active and error-state data sources so the
+	// scheduler keeps retrying failed sources with backoff.
+	FindSchedulable(ctx context.Context) ([]*types.DataSource, error)
 }
 
 // SyncLogRepository defines database access patterns for sync logs
@@ -119,6 +124,16 @@ type SyncLogRepository interface {
 	// HasRunningSync checks if a data source has any sync currently in "running" status.
 	// Used to prevent overlapping sync executions.
 	HasRunningSync(ctx context.Context, dsID string) (bool, error)
+
+	// ConsecutiveFailures counts the trailing run of failed sync logs and
+	// returns the finish time of the newest failure. Powers scheduler retry
+	// backoff for error-state sources.
+	ConsecutiveFailures(ctx context.Context, dsID string) (int, time.Time, error)
+
+	// UpdateProgress writes live progress columns for a still-running sync
+	// log. Only the supplied keys are touched; terminal state stays owned by
+	// the finalize path.
+	UpdateProgress(ctx context.Context, logID string, updates map[string]any) error
 
 	// ClaimNextcloudSyncStart fences duplicate, old, and recovered manual/cron
 	// tasks before any source I/O. The task ID is supplied by the executor.

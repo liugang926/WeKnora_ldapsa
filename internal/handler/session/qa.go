@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
-	appsvc "github.com/Tencent/WeKnora/internal/application/service"
+	applicationservice "github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -57,7 +57,7 @@ type qaRequestContext struct {
 	localBrowserEnabled   bool
 	webSearchEnabled      bool
 	mentionedItems        types.MentionedItems
-	effectiveTenantID     uint64                   // when using shared agent, tenant ID for model/KB/MCP resolution; 0 = use context tenant
+	effectiveTenantID     uint64                   // Shared agent tenant for model/KB/MCP; 0 uses context tenant
 	sharedAgentReadOnly   bool                     // access was granted by a read-only agent share
 	images                []ImageAttachment        // Uploaded images with analysis text
 	userMessageID         string                   // Created user message ID (populated after createUserMessage)
@@ -446,6 +446,9 @@ func (h *Handler) parseQARequest(
 	)
 
 	executionContext.LocalBrowserEnabled = request.LocalBrowserEnabled
+	executionContext.ExplicitInputMaterials = len(request.Images) > 0 ||
+		len(processedAttachments) > 0 ||
+		len(attachmentIDs) > 0
 
 	// Build request context
 	reqCtx := &qaRequestContext{
@@ -797,6 +800,12 @@ type sseStreamContext struct {
 	releaseTurn func()
 }
 
+// A failed non-cancelled Agent run must remain incomplete. A user-requested
+// stop still persists the partial turn, matching the existing stop semantics.
+func shouldCompleteAgentTurn(executionFailed bool, contextErr error) bool {
+	return !executionFailed || contextErr != nil
+}
+
 // setupSSEStream sets up the SSE streaming context
 func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, mode qaMode) *sseStreamContext {
 	// Base context for async work: when using shared agent, use source tenant for model/KB/MCP resolution
@@ -836,19 +845,27 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	}
 
 	eventBus := event.NewEventBus()
-	asyncCtx, cancel := context.WithCancel(logger.CloneContext(baseCtx))
+	asyncCtx, cancelGeneration := context.WithCancelCause(logger.CloneContext(baseCtx))
 	var materialAttach func(context.Context) context.Context
 	var materialCheck func() error
 	var materialClose func()
-	// Agent turns create their steer sink below, after this boundary must be
-	// established. Check the mode/agent precondition rather than the sink's
-	// current value so mid-run steering cannot bypass original-material proof.
-	needsMaterialBoundary := !access.UseWeKnoraReadAuthority() || hasExplicitInputMaterials(reqCtx) ||
-		(mode == qaModeAgent && reqCtx != nil && reqCtx.customAgent != nil)
-	if needsMaterialBoundary {
+	// KnowledgeQA always retains generic user/history material, even when no
+	// explicit file is attached. Share that owner with the HTTP idle checker;
+	// a producer-only holder cannot notice refusal while its provider is idle.
+	// Steer consumption and follow-up share the exact initial message and control
+	// with both the producer and the HTTP sender until their final writes.
+	steerable := mode == qaModeAgent && reqCtx.customAgent != nil
+	if mode == qaModeNormal || steerable || hasExplicitInputMaterials(reqCtx) {
 		native, ok := h.messageService.(interface{ HasOriginalMessageMaterialStore() bool })
 		if ok && native.HasOriginalMessageMaterialStore() {
-			asyncCtx, materialAttach, materialCheck, materialClose = appsvc.BeginMessageMaterialHTTPBoundary(asyncCtx)
+			if steerable {
+				asyncCtx = applicationservice.WithSteerCompletionOwner(asyncCtx)
+			}
+			beginMaterial := applicationservice.BeginMessageMaterialHTTPBoundary
+			if mode == qaModeNormal {
+				beginMaterial = applicationservice.BeginKnowledgeQAHTTPBoundary
+			}
+			asyncCtx, materialAttach, materialCheck, materialClose = beginMaterial(asyncCtx)
 		}
 	}
 
@@ -858,7 +875,7 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 		materialClose:    materialClose,
 		eventBus:         eventBus,
 		asyncCtx:         asyncCtx,
-		cancel:           cancel,
+		cancel:           func() { cancelGeneration(nil) },
 		assistantMessage: reqCtx.assistantMessage,
 	}
 
@@ -873,7 +890,7 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	// SetLiveRun happens before SSE headers: a 409/503 after text/event-stream
 	// has started cannot change the status, and the client would sit on a
 	// stream nobody will write to.
-	if mode == qaModeAgent && reqCtx.customAgent != nil {
+	if steerable {
 		streamCtx.steerSink = newSteerSink(
 			asyncCtx, reqCtx.sessionID, reqCtx.requestID, reqCtx.assistantMessage,
 			h.messageService, h.streamManager,
@@ -906,7 +923,10 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	)
 
 	// Setup stop event handler
-	h.setupStopEventHandler(eventBus, reqCtx.sessionID, reqCtx.session.TenantID, reqCtx.assistantMessage, cancel)
+	h.setupStopEventHandler(
+		eventBus, reqCtx.sessionID, reqCtx.session.TenantID, reqCtx.assistantMessage,
+		steerable && materialCheck != nil, cancelGeneration,
+	)
 
 	// Watch for stop events on the generation context, which already survives
 	// client disconnects and the early KnowledgeQA return. Generation
@@ -1339,7 +1359,11 @@ func (h *Handler) holdQATurn(ctx context.Context, reqCtx *qaRequestContext) (fun
 // an original-material receipt before the unified QA flow can continue.
 func hasExplicitInputMaterials(reqCtx *qaRequestContext) bool {
 	return reqCtx != nil &&
-		(len(reqCtx.images) > 0 || len(reqCtx.attachments) > 0 || len(reqCtx.attachmentIDs) > 0)
+		(len(reqCtx.images) > 0 ||
+			len(reqCtx.attachments) > 0 ||
+			len(reqCtx.attachmentIDs) > 0 ||
+			reqCtx.assistantMessage != nil &&
+				reqCtx.assistantMessage.ExecutionContext.ExplicitInputMaterials)
 }
 
 // executeQA is the unified execution flow for both KnowledgeQA and AgentQA modes.
@@ -1515,7 +1539,8 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 	livePublicationMessage.KnowledgeReferences = nil
 	asyncDone := make(chan struct{})
 	streamCtx.producerDone = asyncDone
-	releaseMaterialProducer := appsvc.RetainMessageMaterialHTTPProducer(streamCtx.asyncCtx)
+	releaseMaterialProducer := applicationservice.RetainMessageMaterialHTTPProducer(streamCtx.asyncCtx)
+	agentExecutionFailed := false
 	go func() {
 		defer close(asyncDone)
 		defer releaseMaterialProducer()
@@ -1527,7 +1552,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 		}
 		defer func() {
 			if r := recover(); r != nil {
-				appsvc.RefuseMessageMaterialOutputBoundary(streamCtx.asyncCtx)
+				applicationservice.RefuseMessageMaterialOutputBoundary(streamCtx.asyncCtx)
 				if streamCtx.releaseTurn != nil {
 					streamCtx.releaseTurn()
 				}
@@ -1544,6 +1569,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 					),
 					map[string]interface{}{"session_id": sessionID},
 				)
+				agentExecutionFailed = true
 			}
 			// Agent mode: complete the assistant message in defer (normal mode does it via event handler)
 			if mode == qaModeAgent {
@@ -1560,32 +1586,38 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 					types.TenantIDContextKey, reqCtx.session.TenantID,
 				)
 
-				// Claim any follow-up before completing this row. liveAgentRun
-				// treats a completed assistant as idle and would ClearLiveRun
-				// the old marker — exactly the new_run window. The follow-up
-				// SetLiveRun's first; this run's CAS ClearLiveRun then no-ops.
-				if streamCtx.asyncCtx.Err() != nil {
-					// The turn was cancelled — a user stop. Stopping means
-					// stopping: queued follow-ups are dropped rather than
-					// fired off as a brand-new run the user did not ask for.
-					injected := map[string]struct{}{}
-					if streamCtx.steerSink != nil {
-						injected = streamCtx.steerSink.InjectedIDs()
-					}
-					h.discardSteerBacklog(updateCtx, sessionID, streamCtx.assistantMessage.ID, injected)
-					h.completeStreamAssistantMessage(
-						updateCtx, streamCtx, reqCtx.query, reqCtx.userMessageID,
+				if !shouldCompleteAgentTurn(agentExecutionFailed, streamCtx.asyncCtx.Err()) {
+					logger.Infof(
+						updateCtx,
+						"Agent QA did not complete; retaining assistant message as incomplete for session: %s",
+						sessionID,
 					)
 				} else {
-					kicked := h.kickNextRunFromSteerBacklog(updateCtx, reqCtx, streamCtx)
-					h.completeStreamAssistantMessage(
-						updateCtx, streamCtx, reqCtx.query, reqCtx.userMessageID,
-					)
-					// A /steer that landed while we were completing still sits
-					// on this run. Claim it before ClearLiveRun so it is not
-					// stranded on a list nobody will drain.
-					if !kicked {
-						h.kickNextRunFromSteerBacklog(updateCtx, reqCtx, streamCtx)
+					// Claim any follow-up before completing this row. liveAgentRun
+					// treats a completed assistant as idle and would ClearLiveRun
+					// the old marker — exactly the new_run window. The follow-up
+					// SetLiveRun's first; this run's CAS ClearLiveRun then no-ops.
+					if streamCtx.asyncCtx.Err() != nil {
+						// The turn was cancelled — a user stop. Stopping means
+						// stopping: queued follow-ups are dropped rather than
+						// fired off as a brand-new run the user did not ask for.
+						injected := map[string]struct{}{}
+						if streamCtx.steerSink != nil {
+							injected = streamCtx.steerSink.InjectedIDs()
+						}
+						h.discardSteerBacklog(updateCtx, sessionID, streamCtx.assistantMessage.ID, injected)
+						h.completeCanceledAgentTurn(updateCtx, streamCtx, reqCtx.query, reqCtx.userMessageID)
+					} else {
+						kicked := h.kickNextRunFromSteerBacklog(updateCtx, reqCtx, streamCtx)
+						h.completeStreamAssistantMessage(
+							updateCtx, streamCtx, reqCtx.query, reqCtx.userMessageID,
+						)
+						// A /steer that landed while we were completing still sits
+						// on this run. Claim it before ClearLiveRun so it is not
+						// stranded on a list nobody will drain.
+						if !kicked {
+							h.kickNextRunFromSteerBacklog(updateCtx, reqCtx, streamCtx)
+						}
 					}
 				}
 				if err := h.streamManager.ClearLiveRun(
@@ -1624,6 +1656,9 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 		}
 
 		if serviceErr != nil {
+			if mode == qaModeAgent && streamCtx.asyncCtx.Err() == nil {
+				agentExecutionFailed = true
+			}
 			if mode == qaModeNormal && streamCtx.releaseTurn != nil {
 				streamCtx.releaseTurn()
 			}
@@ -1637,7 +1672,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 				// A refused Steer control may not touch any saved parent row.
 				// Carry that producer failure into this same request's material
 				// owner so finalization cannot certify an empty completed answer.
-				appsvc.RefuseMessageMaterialOutputBoundary(streamCtx.asyncCtx)
+				applicationservice.RefuseMessageMaterialOutputBoundary(streamCtx.asyncCtx)
 				logger.ErrorWithFields(streamCtx.asyncCtx, serviceErr, nil)
 				streamCtx.eventBus.Emit(streamCtx.asyncCtx, event.Event{
 					Type:      event.EventError,
@@ -1672,7 +1707,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 		sseCtx = streamCtx.materialAttach(sseCtx)
 	}
 	if streamCtx.materialCheck != nil {
-		phase := &liveMaterialWritePhase{MaterialCheck: streamCtx.materialCheck}
+		phase := &liveMaterialWritePhase{MaterialCheck: streamCtx.materialCheck, Generation: streamCtx.asyncCtx}
 		sseCtx = context.WithValue(sseCtx, liveMaterialWritePhaseKey{}, phase)
 		prior := reqCtx.c.Writer
 		writer := &nativeSavedReplayWriter{ResponseWriter: prior, ctx: reqCtx.c.Request.Context(), check: func() error {
@@ -2117,6 +2152,22 @@ func (h *Handler) sessionTenantInfoContext(ctx context.Context) (context.Context
 		return ctx, false
 	}
 	return context.WithValue(ctx, types.TenantInfoContextKey, tenant), true
+}
+
+// A stopped, steerable generation owns its inputs until this final write.
+// Only an explicit user stop can commit its partial assistant.
+func (h *Handler) completeCanceledAgentTurn(ctx context.Context, streamCtx *sseStreamContext, query, userID string) {
+	if streamCtx.steerSink == nil || streamCtx.materialCheck == nil {
+		h.completeStreamAssistantMessage(ctx, streamCtx, query, userID)
+		return
+	}
+	if context.Cause(streamCtx.asyncCtx) != errGenerationStoppedByUser {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	ctx = applicationservice.WithStoppedSteerCompletion(ctx, errGenerationStoppedByUser)
+	_ = h.completeAssistantMessage(ctx, streamCtx.assistantMessage, "", "")
 }
 
 // completeStreamAssistantMessage makes output readable before notifying clients

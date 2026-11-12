@@ -251,3 +251,9 @@ type KnowledgeBaseRepository interface {
 		ctx context.Context, tenantID uint64, userID string,
 	) (map[string]time.Time, error)
 }
+
+// KnowledgeBaseAuthorizationReader exposes only current authorization metadata.
+// It is not a content-read grant and never returns retained configuration/body.
+type KnowledgeBaseAuthorizationReader interface {
+	GetKnowledgeBaseAuthorizationMetadata(context.Context, string) (*types.KnowledgeBaseAuthorizationMetadata, error)
+}

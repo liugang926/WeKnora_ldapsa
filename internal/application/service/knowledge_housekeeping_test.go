@@ -115,7 +115,7 @@ func insertKnowledge(t *testing.T, db *gorm.DB, id, status string, updatedAt tim
 	t.Helper()
 	require.NoError(t, db.Exec(
 		`INSERT INTO knowledges (id, parse_status, updated_at) VALUES (?, ?, ?)`,
-		id, status, updatedAt,
+		id, status, updatedAt.UTC(),
 	).Error)
 }
 
@@ -124,7 +124,7 @@ func insertSpan(t *testing.T, db *gorm.DB, kid string, attempt int, spanID, stat
 	require.NoError(t, db.Exec(
 		`INSERT INTO knowledge_processing_spans (knowledge_id, attempt, span_id, name, kind, status, updated_at)
 		 VALUES (?, ?, ?, 'docreader', 'stage', ?, ?)`,
-		kid, attempt, spanID, status, updatedAt,
+		kid, attempt, spanID, status, updatedAt.UTC(),
 	).Error)
 }
 
@@ -137,6 +137,19 @@ type fakeTaskInspector struct {
 	// nil means "no delete task alive" for every ID.
 	deleteQueued map[string]bool
 	err          error
+}
+
+func (f fakeTaskInspector) QueuedKnowledgeIDs(context.Context) (map[string]struct{}, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	ids := make(map[string]struct{})
+	for id, queued := range f.queued {
+		if queued {
+			ids[id] = struct{}{}
+		}
+	}
+	return ids, nil
 }
 
 func (f fakeTaskInspector) CancelTasksForKnowledge(
@@ -211,7 +224,7 @@ func TestHousekeeping_RecoversAbandoned(t *testing.T) {
 func TestHousekeeping_RecoversPendingTaskMissingFromQueue(t *testing.T) {
 	db := setupHousekeepingDB(t)
 	svc := newHousekeepingSvcForTest(db)
-	stale := time.Now().Add(-3 * time.Hour)
+	stale := time.Now().Add(-90 * time.Minute)
 	insertKnowledge(t, db, "kid-pending-orphan", types.ParseStatusPending, stale)
 
 	svc.runSweep(context.Background())
@@ -229,7 +242,7 @@ func TestHousekeeping_PreservesPendingTaskStillQueued(t *testing.T) {
 	svc := newHousekeepingSvcWithInspector(db, fakeTaskInspector{
 		queued: map[string]bool{"kid-pending-queued": true},
 	})
-	stale := time.Now().Add(-3 * time.Hour)
+	stale := time.Now().Add(-90 * time.Minute)
 	insertKnowledge(t, db, "kid-pending-queued", types.ParseStatusPending, stale)
 
 	svc.runSweep(context.Background())
@@ -297,7 +310,7 @@ func TestHousekeeping_NoFalseKill_TasksStillQueued(t *testing.T) {
 	svc := newHousekeepingSvcWithInspector(db, fakeTaskInspector{
 		queued: map[string]bool{"kid-backlogged": true},
 	})
-	stale := time.Now().Add(-3 * time.Hour)
+	stale := time.Now().Add(-90 * time.Minute)
 	// finalizing + stale knowledge + stale span: span-only heuristics
 	// would flag this as stuck, but the queue still holds its subtasks.
 	insertKnowledge(t, db, "kid-backlogged", types.ParseStatusFinalizing, stale)
@@ -322,7 +335,7 @@ func TestHousekeeping_NoFalseKill_TasksStillQueued(t *testing.T) {
 func TestHousekeeping_NoFalseKill_DurableWikiIngestPending(t *testing.T) {
 	db := setupHousekeepingDB(t)
 	svc := newHousekeepingSvcWithInspector(db, fakeTaskInspector{})
-	stale := time.Now().Add(-3 * time.Hour)
+	stale := time.Now().Add(-90 * time.Minute)
 	insertKnowledge(t, db, "kid-durable-wiki", types.ParseStatusFinalizing, stale)
 	insertSpan(t, db, "kid-durable-wiki", 1, "wiki-1", types.SpanStatusRunning, stale)
 	insertWikiPendingOp(t, db, "kb-1", "kid-durable-wiki")
@@ -344,7 +357,7 @@ func TestHousekeeping_NoFalseKill_DurableWikiIngestPending(t *testing.T) {
 func TestHousekeeping_StillRecoversWhenNoDurableOp(t *testing.T) {
 	db := setupHousekeepingDB(t)
 	svc := newHousekeepingSvcWithInspector(db, fakeTaskInspector{})
-	stale := time.Now().Add(-3 * time.Hour)
+	stale := time.Now().Add(-90 * time.Minute)
 	insertKnowledge(t, db, "kid-orphan", types.ParseStatusFinalizing, stale)
 	insertSpan(t, db, "kid-orphan", 1, "wiki-1", types.SpanStatusRunning, stale)
 	// A pending op for a DIFFERENT document must not shield this one.
@@ -361,14 +374,13 @@ func TestHousekeeping_StillRecoversWhenNoDurableOp(t *testing.T) {
 }
 
 // TestHousekeeping_QueueProbeError_FailsSafe confirms the fail-safe
-// direction: when the queue probe errors we still recover the row rather
-// than leaving it stranded forever.
+// direction: an unavailable queue cannot prove that a row is orphaned.
 func TestHousekeeping_QueueProbeError_FailsSafe(t *testing.T) {
 	db := setupHousekeepingDB(t)
 	svc := newHousekeepingSvcWithInspector(db, fakeTaskInspector{
 		err: errors.New("redis unavailable"),
 	})
-	stale := time.Now().Add(-3 * time.Hour)
+	stale := time.Now().Add(-90 * time.Minute)
 	insertKnowledge(t, db, "kid-probeerr", types.ParseStatusProcessing, stale)
 
 	svc.runSweep(context.Background())
@@ -377,8 +389,8 @@ func TestHousekeeping_QueueProbeError_FailsSafe(t *testing.T) {
 	require.NoError(t, db.Raw(
 		`SELECT parse_status FROM knowledges WHERE id = ?`, "kid-probeerr",
 	).Row().Scan(&status))
-	assert.Equal(t, types.ParseStatusFailed, status,
-		"queue probe error must fail safe and still recover the stuck row")
+	assert.Equal(t, types.ParseStatusProcessing, status,
+		"queue probe error must defer the candidate without destroying its state")
 }
 
 // TestHousekeeping_PreservesRecentlyTouched: any knowledge whose

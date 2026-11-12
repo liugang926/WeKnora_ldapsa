@@ -582,6 +582,14 @@ func (s *knowledgeBaseService) UpdateKnowledgeBase(ctx context.Context,
 		}
 		kb.ChunkingConfig = config.ChunkingConfig
 		kb.ImageProcessingConfig = config.ImageProcessingConfig
+		// Optional full replacement of the multimodal (VLM) configuration.
+		// Applies only when the update payload carries it, mirroring the
+		// create-time top-level vlm_config semantics. This is the only way
+		// to toggle opt-in features (e.g. image classification) on an
+		// existing knowledge base.
+		if config.VLMConfig != nil {
+			kb.VLMConfig = *config.VLMConfig
+		}
 		if config.FAQConfig != nil {
 			kb.FAQConfig = config.FAQConfig
 		}
@@ -1530,4 +1538,18 @@ func cloneKnowledgeBaseConfiguration(sourceKB *types.KnowledgeBase) (*types.Know
 		return nil, err
 	}
 	return &targetKB, nil
+}
+
+// GetKnowledgeBaseAuthorizationMetadata is a live, non-content read. Callers
+// must still enforce tenant/share permission and all content/source guards.
+func (s *knowledgeBaseService) GetKnowledgeBaseAuthorizationMetadata(
+	ctx context.Context,
+	id string) (*types.KnowledgeBaseAuthorizationMetadata,
+	error,
+) {
+	reader, ok := s.repo.(interfaces.KnowledgeBaseAuthorizationReader)
+	if !ok || reader == nil {
+		return nil, errors.New("knowledge base authorization metadata unavailable")
+	}
+	return reader.GetKnowledgeBaseAuthorizationMetadata(ctx, id)
 }

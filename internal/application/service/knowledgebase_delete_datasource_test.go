@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/datasource"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -78,6 +79,10 @@ func (r *kbDeleteDSRepo) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+func (r *kbDeleteDSRepo) FindSchedulable(_ context.Context) ([]*types.DataSource, error) {
+	return r.FindActive(context.Background())
+}
+
 func (r *kbDeleteDSRepo) FindActive(_ context.Context) ([]*types.DataSource, error) {
 	return nil, nil
 }
@@ -100,6 +105,14 @@ func (r *kbDeleteSyncLogRepo) FindByDataSource(_ context.Context, _ string, _, _
 
 func (r *kbDeleteSyncLogRepo) FindLatest(_ context.Context, _ string) (*types.SyncLog, error) {
 	return nil, nil
+}
+
+func (r *kbDeleteSyncLogRepo) ConsecutiveFailures(_ context.Context, _ string) (int, time.Time, error) {
+	return 0, time.Time{}, nil
+}
+
+func (r *kbDeleteSyncLogRepo) UpdateProgress(_ context.Context, _ string, _ map[string]any) error {
+	return nil
 }
 
 func (r *kbDeleteSyncLogRepo) HasRunningSync(_ context.Context, _ string) (bool, error) {

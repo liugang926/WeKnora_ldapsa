@@ -32,8 +32,30 @@ output_dir="$(cd "$output_dir" && pwd)"
 build_dir="$(mktemp -d /tmp/weknora-bsk-build.XXXXXX)"
 trap 'rm -rf "$build_dir"' EXIT
 
-git clone --no-checkout https://github.com/Tencent/BrowserSkill.git "$build_dir/source"
-git -C "$build_dir/source" checkout --detach "$source_commit"
+# Source acquisition: primary is a git clone (CI path); when GitHub's git
+# smart-HTTP transport is unreachable (observed as fetch-pack disconnects from
+# restricted networks) fall back to the codeload tarball of the exact pinned
+# commit. WEKNORA_BROWSERSKILL_TARBALL=1 forces the tarball path explicitly.
+bsk_source="git"
+if [ "${WEKNORA_BROWSERSKILL_TARBALL:-0}" = "1" ]; then
+  bsk_source="tarball"
+elif git clone --no-checkout https://github.com/Tencent/BrowserSkill.git "$build_dir/source"; then
+  git -C "$build_dir/source" checkout --detach "$source_commit"
+else
+  echo "BrowserSkill: git clone failed, falling back to codeload tarball @ $source_commit" >&2
+  bsk_source="tarball"
+fi
+if [ "$bsk_source" = "tarball" ]; then
+  mkdir -p "$build_dir/source"
+  curl -fsSL "https://codeload.github.com/Tencent/BrowserSkill/tar.gz/${source_commit}" \
+    | tar -xz --strip-components=1 -C "$build_dir/source"
+  # Materialise a repository snapshot so patch application and the daemon
+  # build below see the same tree shape as the clone path.
+  git -C "$build_dir/source" init -q
+  git -C "$build_dir/source" add -A
+  git -C "$build_dir/source" -c user.email=build@localhost -c user.name=build \
+    commit -qm "BrowserSkill ${source_commit} (tarball snapshot)"
+fi
 for patch in "$repo_root"/patches/browserskill/*.patch; do
   git -C "$build_dir/source" apply --check "$patch"
   git -C "$build_dir/source" apply "$patch"

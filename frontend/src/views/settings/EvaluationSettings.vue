@@ -136,6 +136,7 @@
 </template>
 
 <script setup lang="ts">
+import { evaluationErrorMessage } from './evaluationError'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { get, post, put } from '@/utils/request'
@@ -269,7 +270,7 @@ async function saveChatCost() {
     runs.value = runs.value.map(run => run.task.id === response.data.task.id ? response.data : run)
     error.value = ''
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : String(cause)
+    error.value = evaluationErrorMessage(cause)
   } finally { savingCost.value = false }
 }
 
@@ -284,7 +285,7 @@ async function saveReview(entry: CaseResult) {
     runs.value = runs.value.map(run => run.task.id === response.data.task.id ? response.data : run)
     error.value = ''
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : String(cause)
+    error.value = evaluationErrorMessage(cause)
   } finally { savingReviewID.value = null }
 }
 
@@ -295,7 +296,7 @@ async function refresh() {
     runs.value = response.data || []
     error.value = ''
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : String(cause)
+    error.value = evaluationErrorMessage(cause)
   } finally { loading.value = false }
 }
 async function startRun() {
@@ -305,12 +306,12 @@ async function startRun() {
     await post('/api/v1/evaluation', { dataset_id: datasetID.value, embedding_id: embeddingID.value, rerank_id: rerankID.value, chat_id: chatID.value })
     await refresh()
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : String(cause)
+    error.value = evaluationErrorMessage(cause)
   } finally { running.value = false }
 }
 let poll: ReturnType<typeof setInterval> | undefined
 onMounted(async () => {
-  try { models.value = await listModels() } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) }
+  try { models.value = await listModels() } catch (cause) { error.value = evaluationErrorMessage(cause) }
   await refresh()
   poll = setInterval(() => { if (runs.value.some(r => r.task.status === 0 || r.task.status === 1)) void refresh() }, 5000)
 })

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/agent"
 	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
@@ -13,6 +14,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -21,6 +23,22 @@ type agentPromptActualModel struct {
 	fakeAgentChatModel
 	messages []chat.Message
 	calls    int
+}
+
+type agentPromptMCPDirectory struct {
+	interfaces.MCPServiceService
+}
+
+func (d *agentPromptMCPDirectory) ListMCPServicesByIDs(
+	_ context.Context, _ uint64, ids []string,
+) ([]*types.MCPService, error) {
+	result := make([]*types.MCPService, 0, len(ids))
+	for _, id := range ids {
+		result = append(result, &types.MCPService{
+			ID: id, Name: "Actual prompt MCP", Description: "Server-resolved MCP metadata",
+		})
+	}
+	return result, nil
 }
 
 func (m *agentPromptActualModel) ChatStream(
@@ -94,8 +112,8 @@ func TestAgentPromptActualDefaultKBAndDocumentMetadata(t *testing.T) {
 		EmbeddingModelID: "embed",
 		SummaryModelID:   "summary",
 		IndexingStrategy: types.IndexingStrategy{VectorEnabled: true},
-		Description:      "UNPROVEN_KB_DESCRIPTION",
-		GeneratedProfile: &types.KnowledgeBaseProfile{Gist: "UNPROVEN_PROFILE"},
+		Description:      "Description of the selected knowledge base",
+		GeneratedProfile: &types.KnowledgeBaseProfile{Gist: "Profile of the selected knowledge base"},
 	}
 	producer := repository.WithIndependentKnowledgeBaseNameInput(
 		repository.WithIndependentKnowledgeInput(ctx),
@@ -153,14 +171,15 @@ func TestAgentPromptActualDefaultKBAndDocumentMetadata(t *testing.T) {
 		"agent-metadata-turn",
 	)
 	require.NoError(t, err)
-	guarded, ok := engine.(*agentPromptInputEngine)
+	_, wrapped := engine.(*agentPromptInputEngine)
+	require.False(t, wrapped, "ordinary KB metadata must not enter the Nextcloud material guard")
+	direct, ok := engine.(*agent.AgentEngine)
 	require.True(t, ok)
-	guarded.SetSourceLineageVerifier(func(current context.Context, lineage *types.SourceLineage) error {
-		return messages.sourceLineageGuard.Check(
-			current,
-			lineage,
-			access.LineageReadScope{Targets: settings.SearchTargets},
-		)
+	direct.SetSourceLineageVerifier(func(current context.Context, lineage *types.SourceLineage) error {
+		if current == nil || current.Err() != nil {
+			return access.ErrNextcloudPublicationUnavailable
+		}
+		return lineage.RequireComplete()
 	})
 	state, err := engine.Execute(ctx, session.ID, "agent-metadata-turn", "answer using the selected knowledge", nil)
 	require.NoError(t, err)
@@ -172,15 +191,69 @@ func TestAgentPromptActualDefaultKBAndDocumentMetadata(t *testing.T) {
 	}
 	require.Contains(t, wire.String(), kb.Name)
 	require.Contains(t, wire.String(), document.Title)
-	require.NotContains(t, wire.String(), "doc_count=")
-	require.NotContains(t, wire.String(), "UNPROVEN_KB_DESCRIPTION")
-	require.NotContains(t, wire.String(), "UNPROVEN_PROFILE")
-	require.NoError(t, CheckMessageMaterialOutputBoundary(ctx))
-	require.NoError(
+	require.Contains(t, wire.String(), "doc_count=")
+	require.Contains(t, wire.String(), kb.Description)
+	require.Contains(t, wire.String(), kb.GeneratedProfile.Gist)
+}
+
+func TestAgentPromptMaterialHoldRequiresExplicitInputMaterials(t *testing.T) {
+	inputs := &agentPromptInputGuard{
+		bases: []*repository.KnowledgeBasePromptInputSnapshot{{}},
+	}
+	check := func(context.Context) error { return nil }
+
+	require.False(
 		t,
-		db.Model(&types.User{}).Where("id=?", types.CallerFromContext(ctx).UserID).Update("is_active", false).Error,
+		shouldHoldAgentPromptInputs(context.Background(), inputs, nil),
+		"an ordinary KB prompt without explicit materials must use the direct engine",
 	)
-	require.Error(t, CheckMessageMaterialOutputBoundary(ctx), "buffered HTTP output must recheck the current reader")
+	require.False(
+		t,
+		shouldHoldAgentPromptInputs(
+			withAgentExplicitInputMaterials(context.Background(), false),
+			inputs,
+			check,
+		),
+		"a server-owned prompt alone is not a Nextcloud material",
+	)
+	require.True(
+		t,
+		shouldHoldAgentPromptInputs(
+			withAgentExplicitInputMaterials(context.Background(), true),
+			inputs,
+			nil,
+		),
+		"explicit materials must keep retained prompt producers held",
+	)
+}
+
+func TestAgentPinnedMetadataIsSourceIndependent(t *testing.T) {
+	ctx := types.WithExecutionTenant(
+		context.Background(),
+		7,
+	)
+	settings := &types.AgentConfig{
+		MCPSelectionMode:    "none",
+		PinnedMCPServiceIDs: []string{"mcp-prompt"},
+		PinnedSkillNames:    []string{"skill-prompt"},
+		TenantSkills: []*types.TenantSkillEntity{{
+			Name: "skill-prompt", Description: "Server-resolved pinned skill metadata",
+		}},
+	}
+	service := &agentService{
+		mcpServiceService: &agentPromptMCPDirectory{},
+	}
+	lineage := sourceIndependentPromptLineage()
+	require.NoError(t, lineage.RequireComplete())
+	mcpServices, skills := service.resolveSourceIndependentPinnedMentions(
+		ctx,
+		settings,
+		lineage,
+	)
+	require.Len(t, mcpServices, 1)
+	require.Len(t, skills, 1)
+	require.NoError(t, mcpServices[0].SourceLineage.RequireComplete())
+	require.NoError(t, skills[0].SourceLineage.RequireComplete())
 }
 
 func TestAgentPromptQuestionOriginIsAHintNotSelectedDocumentInput(t *testing.T) {
@@ -254,23 +327,27 @@ func TestAgentPromptQuestionOriginIsAHintNotSelectedDocumentInput(t *testing.T) 
 	require.NoError(t, err, "a suggestion origin must not require an original-material receipt")
 	require.NotNil(t, guard)
 	require.NotNil(t, guard.origin)
-	require.Nil(t, guard.origin.Document,
-		"an origin document is not selected model input unless listed in KnowledgeIDs")
+	require.NotNil(t, guard.origin.Document)
+	require.Equal(t, originDocument.Title, guard.origin.Document.Title)
 	require.Empty(t, guard.selectedDocs)
 	require.NoError(t, guard.Close())
 
 	configWithOrigin.KnowledgeIDs = []string{originDocument.ID}
 	guard, err = service.prepareAgentPromptInputs(ctx, configWithOrigin)
-	require.Error(t, err, "an explicit document without material proof must remain rejected")
-	if guard != nil {
-		_ = guard.Close()
-	}
+	require.NoError(t, err)
+	require.Len(t, guard.selectedDocs, 1)
+	require.Equal(t, originDocument.ID, guard.selectedDocs[0].KnowledgeID)
+	require.NoError(t, guard.Close())
+
+	configWithOrigin.SearchTargets[0].KnowledgeBaseID = "different-kb"
+	_, err = service.prepareAgentPromptInputs(ctx, configWithOrigin)
+	require.ErrorIs(t, err, access.ErrNextcloudPublicationDenied)
 }
 
 func TestAgentPromptActualBodyAndLineageMutationDeniedAtHTTP(t *testing.T) {
 	for _, mutation := range []string{"title", "lineage"} {
 		t.Run(mutation, func(t *testing.T) {
-			messages, knowledge, store, db, ctx, _, _ := messageBodyIntegrationFixture(
+			messages, knowledge, store, db, ctx, session, _ := messageBodyIntegrationFixture(
 				t,
 				false,
 				agentPromptDisplayFixtureSchema(t),
@@ -299,24 +376,37 @@ func TestAgentPromptActualBodyAndLineageMutationDeniedAtHTTP(t *testing.T) {
 			require.NoError(t, store.CreateKnowledgeBaseWithInput(producer, kb))
 			ctx = WithMessageMaterialOutputBoundary(ctx)
 			defer CloseMessageMaterialOutputBoundary(ctx)
-			service := &agentService{knowledgeService: knowledge, messageService: messages}
-			guard, err := service.prepareAgentPromptInputs(
-				ctx,
-				&types.AgentConfig{
-					KnowledgeBases: []string{kb.ID},
-					SearchTargets: types.SearchTargets{
-						&types.SearchTarget{
-							Type:            types.SearchTargetTypeKnowledgeBase,
-							TenantID:        7,
-							KnowledgeBaseID: kb.ID,
-						},
-					},
-				},
+			ctx = withAgentExplicitInputMaterials(ctx, true)
+			custom := &types.CustomAgent{ID: "body-agent", TenantID: kb.TenantID}
+			custom.Config.SystemPrompt = "Original server-selected prompt"
+			require.NoError(t, db.AutoMigrate(&types.CustomAgent{}))
+			require.NoError(t, db.Create(custom).Error)
+			assistant, err := messages.CreateMessage(ctx, &types.Message{
+				SessionID: session.ID, RequestID: "body-request", Role: "assistant",
+				AgentID: custom.ID, AgentTenantID: custom.TenantID,
+			})
+			require.NoError(t, err)
+			service := &agentService{
+				db: db, cfg: &config.Config{},
+				knowledgeBaseService: kbs, knowledgeService: knowledge, messageService: messages,
+				ragChunkSnapshotReader: repository.NewRAGChunkSnapshotReader(db, store),
+			}
+			settings := &types.AgentConfig{
+				UseCustomSystemPrompt: true, SystemPrompt: custom.Config.SystemPrompt,
+				KnowledgeBases: []string{kb.ID}, MCPSelectionMode: "none",
+				SearchTargets: types.SearchTargets{{
+					Type: types.SearchTargetTypeKnowledgeBase, TenantID: kb.TenantID, KnowledgeBaseID: kb.ID,
+				}},
+			}
+			engine, err := service.CreateAgentEngine(
+				ctx, settings, &agentPromptActualModel{}, nil, event.NewEventBus(), session.ID, assistant.ID,
 			)
 			require.NoError(t, err)
-			held, err := holdAgentPromptInputs(ctx, guard)
-			require.NoError(t, err)
-			require.True(t, held)
+			wrapped, ok := engine.(*agentPromptInputEngine)
+			require.True(t, ok)
+			guard := wrapped.inputs
+			require.True(t, guard.held)
+			require.NoError(t, CheckMessageMaterialOutputBoundary(ctx))
 			if mutation == "title" {
 				guard.kbInfos[0].Name = "foreign current label"
 			} else {
@@ -361,12 +451,13 @@ func TestAgentPromptBuiltinActualFactoryAndOverride(t *testing.T) {
 	builtin.Config.SystemPrompt = "UNKNOWN_RETAINED_OVERRIDE"
 	require.NoError(t, repository.NewCustomAgentRepository(db).CreateAgent(ctx, builtin))
 	require.Error(t, check(ctx), "a persisted builtin-ID override cannot certify unknown retained text")
-	_, _, err = service.builtinAgentPromptInput(
+	_, overrideCheck, err := service.builtinAgentPromptInput(
 		ctx,
 		&types.AgentConfig{UseCustomSystemPrompt: true, SystemPrompt: builtin.Config.SystemPrompt},
 		session.ID,
 		assistant.ID,
 		builtin.Config.SystemPrompt,
 	)
-	require.Error(t, err)
+	require.NoError(t, err)
+	require.NoError(t, overrideCheck(ctx))
 }

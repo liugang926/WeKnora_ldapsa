@@ -278,8 +278,7 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 			return nil, errors.New("no default embedding model found for evaluation")
 		}
 
-		kb, err := e.knowledgeBaseService.CreateKnowledgeBase(ctx,
-			evaluationKnowledgeBase(embeddingModelID, chatModelID))
+		kb, err := e.createEvaluationKnowledgeBase(ctx, embeddingModelID, chatModelID)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to create knowledge base: %v", err)
 			return nil, err
@@ -300,8 +299,7 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 			return nil, errors.New("evaluation embedding model differs from reference knowledge base")
 		}
 
-		kb, err = e.knowledgeBaseService.CreateKnowledgeBase(ctx,
-			evaluationKnowledgeBase(kb.EmbeddingModelID, chatModelID))
+		kb, err = e.createEvaluationKnowledgeBase(ctx, kb.EmbeddingModelID, chatModelID)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to create knowledge base: %v", err)
 			return nil, err
@@ -455,6 +453,29 @@ func validateEvaluationModelSelection(datasetID, chatModelID, rerankModelID, emb
 	return nil
 }
 
+// createEvaluationKnowledgeBase admits only the fixed configuration produced here.
+// The reference-KB branch selects an embedding model identifier; it does not copy
+// the reference KB's name, prompts, templates, passages or processing settings.
+// Keep this boundary local so unrelated callers still need their own proof.
+func (e *EvaluationService) createEvaluationKnowledgeBase(
+	ctx context.Context,
+	embeddingModelID,
+	chatModelID string) (*types.KnowledgeBase,
+	error,
+) {
+	kb := evaluationKnowledgeBase(embeddingModelID, chatModelID)
+	lineage, err := types.NewCompleteSourceLineage()
+	if err != nil {
+		return nil, err
+	}
+	inputCtx, err := repository.WithDerivedKnowledgeInput(ctx, lineage)
+	if err != nil {
+		return nil, err
+	}
+	inputCtx = repository.WithIndependentKnowledgeBaseNameInput(inputCtx, "", kb.Name)
+	return e.knowledgeBaseService.CreateKnowledgeBase(inputCtx, kb)
+}
+
 // evaluationKnowledgeBase pins corpus summarization to the chosen answer
 // model. A reference KB's summary model must not silently receive the
 // evaluation corpus when the operator selected a different chat model.
@@ -467,6 +488,33 @@ func evaluationKnowledgeBase(embeddingModelID, chatModelID string) *types.Knowle
 	}
 }
 
+// loadEvaluationDatasetInput is the admission boundary for operator-installed,
+// de-identified benchmark fixtures. Only the concrete local loader enforces the
+// bounded dataset path and validates all Parquet relationships. A replacement
+// provider may read protected business data and must not inherit this receipt.
+// Keep this context scoped to the exact corpus import; it is not a QA bypass.
+func (e *EvaluationService) loadEvaluationDatasetInput(
+	ctx context.Context,
+	id string) (*types.EvaluationDataset,
+	context.Context,
+	error,
+) {
+	loader, ok := e.dataset.(*DatasetService)
+	if !ok || loader == nil {
+		return nil, ctx, types.ErrSourceLineageUnknown
+	}
+	dataset, err := loader.GetDatasetByID(ctx, id)
+	if err != nil {
+		return nil, ctx, err
+	}
+	lineage, err := types.NewCompleteSourceLineage()
+	if err != nil {
+		return nil, ctx, err
+	}
+	inputCtx, err := repository.WithDerivedKnowledgeInput(ctx, lineage)
+	return dataset, inputCtx, err
+}
+
 // EvalDataset performs the actual evaluation of a dataset
 // Processes each QA pair in parallel and records metrics
 func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.EvaluationDetail, knowledgeBaseID string) error {
@@ -474,13 +522,15 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 	logger.Infof(ctx, "Task ID: %s, Dataset ID: %s", detail.Task.ID, detail.Task.DatasetID)
 	defer func() {
 		logger.Infof(ctx, "Cleaning up evaluation knowledge base: %s", knowledgeBaseID)
-		if err := e.knowledgeBaseService.DeleteKnowledgeBase(ctx, knowledgeBaseID); err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		if err := e.knowledgeBaseService.DeleteKnowledgeBase(cleanupCtx, knowledgeBaseID); err != nil {
 			logger.Errorf(ctx, "Failed to delete evaluation knowledge base %s: %v", knowledgeBaseID, err)
 		}
 	}()
 
 	// Retrieve dataset from storage
-	dataset, err := e.dataset.GetDatasetByID(ctx, detail.Task.DatasetID)
+	dataset, inputCtx, err := e.loadEvaluationDatasetInput(ctx, detail.Task.DatasetID)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to get dataset: %v", err)
 		return err
@@ -521,7 +571,7 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 	logger.Infof(ctx, "Creating knowledge from %d passages", len(passages))
 
 	// Create knowledge base from passages (sync: wait for indexing to complete before querying)
-	knowledge, err := e.knowledgeService.CreateKnowledgeFromPassageSync(ctx, knowledgeBaseID, passages, "")
+	knowledge, err := e.knowledgeService.CreateKnowledgeFromPassageSync(inputCtx, knowledgeBaseID, passages, "")
 	if err != nil {
 		logger.Errorf(ctx, "Failed to create knowledge from passages: %v", err)
 		return err
@@ -531,14 +581,27 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 	// Setup cleanup of temporary resources
 	defer func() {
 		logger.Infof(ctx, "Cleaning up resources - deleting knowledge: %s", knowledge.ID)
-		if err := deleteReferencedKnowledge(ctx,
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		if err := deleteReferencedKnowledge(cleanupCtx,
 			e.knowledgeService,
 			knowledgeBaseID,
 			[]string{knowledge.ID}); err != nil {
 			logger.Errorf(ctx, "Failed to delete knowledge: %v, knowledge ID: %s", err, knowledge.ID)
 		}
-
 	}()
+
+	// Synchronous import waits for indexing, not asynchronous enrichment/finalization.
+	if err := waitForEvaluationKnowledge(
+		ctx,
+		e.knowledgeService.GetRepository(),
+		detail.Task.TenantID,
+		knowledgeBaseID,
+		knowledge.ID,
+		5*time.Minute,
+		time.Second); err != nil {
+		return err
+	}
 
 	// Initialize parallel evaluation metrics
 	var finished int
@@ -572,6 +635,7 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 			chatManage.SearchTargets = types.SearchTargets{
 				&types.SearchTarget{
 					Type:            types.SearchTargetTypeKnowledgeBase,
+					TenantID:        detail.Task.TenantID,
 					KnowledgeBaseID: knowledgeBaseID,
 				},
 			}

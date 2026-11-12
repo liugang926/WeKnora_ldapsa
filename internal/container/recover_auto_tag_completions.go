@@ -24,6 +24,9 @@ func startKnowledgeAutoTagCompletionRecovery(
 	run := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
+		if _, err := service.RecoverDingTalkGraphs(ctx, store, queue, ""); err != nil {
+			logger.Warnf(ctx, "[DingTalkGraphRecovery] pending delivery failed: %v", err)
+		}
 		if _, err := service.RecoverKnowledgeAutoTagCompletions(ctx, store, queue, ""); err != nil {
 			logger.Warnf(ctx, "[AutoTagRecovery] pending delivery failed: %v", err)
 		}

@@ -363,6 +363,21 @@
                   :maxlength="4000" :autosize="{ minRows: 3, maxRows: 8 }" />
               </div>
             </div>
+
+            <!-- 图像类型识别开关（多模态启用时） -->
+            <div v-if="formData.multimodalConfig.enabled" class="setting-row"
+              data-guide="kb-create-multimodal-image-classification">
+              <div class="setting-info">
+                <label>{{ $t('knowledgeEditor.advanced.multimodal.imageClassificationLabel') }}</label>
+                <p class="desc">{{ $t('knowledgeEditor.advanced.multimodal.imageClassificationDescription') }}</p>
+              </div>
+              <div class="setting-control">
+                <t-switch
+                  v-model="formData.multimodalConfig.imageClassification"
+                  size="medium"
+                />
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -828,7 +843,8 @@ const initFormData = (type: 'document' | 'faq' = 'document') => {
       enabled: false,
       vllmModelId: '',
       descriptionLanguage: '',
-      customInstructions: ''
+      customInstructions: '',
+      imageClassification: false
     },
     asrConfig: {
       enabled: false,
@@ -982,7 +998,8 @@ const loadKBData = async (
         enabled: !!kb.vlm_config?.enabled,
         vllmModelId: kb.vlm_config?.model_id || '',
         descriptionLanguage: kb.vlm_config?.description_language || '',
-        customInstructions: kb.vlm_config?.custom_instructions || ''
+        customInstructions: kb.vlm_config?.custom_instructions || '',
+        imageClassification: !!kb.vlm_config?.enable_image_classification
       },
       asrConfig: {
         enabled: !!kb.asr_config?.enabled,
@@ -1365,7 +1382,9 @@ const buildSubmitData = () => {
       ? (formData.value.multimodalConfig.vllmModelId || '')
       : '',
     description_language: formData.value.multimodalConfig.descriptionLanguage || '',
-    custom_instructions: formData.value.multimodalConfig.customInstructions || ''
+    custom_instructions: formData.value.multimodalConfig.customInstructions || '',
+    enable_image_classification: formData.value.multimodalConfig.enabled
+      && !!formData.value.multimodalConfig.imageClassification
   }
 
   // 添加ASR语音识别配置

@@ -182,7 +182,7 @@ func TestQuickAnswerUnknownPrefilledBodyCannotPublishCompletion(t *testing.T) {
 	require.ErrorIs(t, bus.Emit(ctx, event.Event{
 		Type: event.EventAgentComplete,
 		Data: event.AgentCompleteData{MessageID: "m"},
-	}), access.ErrNextcloudPublicationDenied)
+	}), types.ErrSourceLineageUnknown)
 	require.Empty(t, streams.events)
 	require.Error(t, message.SourceLineage.RequireComplete())
 }

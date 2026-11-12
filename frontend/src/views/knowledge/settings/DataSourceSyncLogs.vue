@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getSyncLogs, type SyncLog, type SyncItemError } from '@/api/datasource'
 
@@ -40,6 +40,36 @@ async function fetchLogs(reset = true) {
     loadingMore.value = false
   }
 }
+
+// Auto-refresh while a sync is running so the live progress bar moves
+// without manual clicking.
+const runningTimer = ref<number | null>(null)
+
+function hasRunningLog(): boolean {
+  return logs.value.some((l: any) => l.status === 'running')
+}
+
+function scheduleRunningPoll() {
+  if (runningTimer.value !== null) return
+  runningTimer.value = window.setTimeout(async () => {
+    runningTimer.value = null
+    if (hasRunningLog()) {
+      await fetchLogs(true).catch(() => {})
+      scheduleRunningPoll()
+    }
+  }, 5000)
+}
+
+watch(() => logs.value.some((l: any) => l.status === 'running'), (running) => {
+  if (running) scheduleRunningPoll()
+})
+
+onBeforeUnmount(() => {
+  if (runningTimer.value !== null) {
+    window.clearTimeout(runningTimer.value)
+    runningTimer.value = null
+  }
+})
 
 watch(visible, (v) => {
   if (!v) return
@@ -125,6 +155,13 @@ function duration(log: SyncLog) {
   const sec = Math.round(ms / 1000)
   if (sec < 60) return `${sec}s`
   return `${Math.floor(sec / 60)}m${sec % 60}s`
+}
+
+function syncProgressOf(log: any): { done: number; total: number; pct: number } | null {
+  if (!log || log.status !== 'running' || !log.items_total || log.items_total <= 0) return null
+  const done = (log.items_created || 0) + (log.items_updated || 0) + (log.items_skipped || 0) + (log.items_failed || 0)
+  const pct = Math.min(100, Math.round((done / log.items_total) * 100))
+  return { done, total: log.items_total, pct }
 }
 
 function hasPills(log: SyncLog) {
@@ -252,6 +289,16 @@ const groupedLogs = computed(() => {
                 </span>
                 <span class="tl-time">{{ formatHourMin(log.started_at) }}</span>
                 <span v-if="log.finished_at" class="tl-duration">{{ duration(log) }}</span>
+              </div>
+
+              <!-- Live progress while running -->
+              <div v-if="syncProgressOf(log)" class="tl-progress">
+                <div class="tl-progress-bar">
+                  <div class="tl-progress-fill" :style="{ width: syncProgressOf(log)!.pct + '%' }"></div>
+                </div>
+                <span class="tl-progress-text">
+                  {{ t('datasource.syncProgress', { done: syncProgressOf(log)!.done, total: syncProgressOf(log)!.total, pct: syncProgressOf(log)!.pct }) }}
+                </span>
               </div>
 
               <!-- Pills -->
@@ -615,5 +662,30 @@ const groupedLogs = computed(() => {
 
 .ds-logs-drawer :deep(.t-drawer__body) {
   padding: 20px 24px;
+}
+
+.tl-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.tl-progress-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: var(--app-radius-pill);
+  background: var(--td-gray-color-3);
+  overflow: hidden;
+}
+.tl-progress-fill {
+  height: 100%;
+  border-radius: var(--app-radius-pill);
+  background: var(--td-brand-color);
+  transition: width 0.4s ease;
+}
+.tl-progress-text {
+  font-size: var(--app-text-sm);
+  color: var(--td-text-color-secondary);
+  white-space: nowrap;
 }
 </style>

@@ -2,6 +2,57 @@ import { directoryAccessLocale } from './directoryAccessLocale'
 
 export default {
   ...directoryAccessLocale,
+  dingtalkAdmin: {
+    title: '钉钉登录',
+    description: '配置钉钉企业单点登录：启停、凭据管理与连接测试。',
+    refresh: '刷新',
+    loading: '正在加载钉钉配置…',
+    readOnlyHint: '钉钉配置由部署文件管理（config_source=file），此处只读。设置 DINGTALK_AUTH_CONFIG_SOURCE=database 后可在本页管理。',
+    copy: '复制',
+    copied: '已复制',
+    source: { file: '环境变量管理', database: '页面管理' },
+    secretSource: { database: '密钥：数据库', env: '密钥：环境变量', none: '未配置密钥' },
+    status: { enabled: '已启用', disabled: '已停用' },
+    sections: { redirect: '回调地址' },
+    fields: {
+      enabled: '启用钉钉登录',
+      enabledHint: '密码、OIDC 与 LDAP 登录不受影响。',
+      corpId: '企业 Corp ID',
+      corpIdHint: '钉钉开放平台的企业标识。',
+      appKey: '应用 AppKey',
+      appSecret: '应用 AppSecret',
+      secretPlaceholder: '留空保持不变',
+      clearSecret: '清除已存密钥（回落到环境变量）',
+      agentId: 'Agent ID',
+      agentIdHint: '仅作记录，登录流程不使用。',
+      displayName: '登录入口显示名称',
+      displayNameHint: '展示在登录页扫码入口旁。',
+      redirectUrl: '已登记的重定向 URL',
+      redirectUrlHint: '需在钉钉开放平台将该地址登记为应用的重定向 URL；更换域名后需同步更新。',
+      secretManaged: '由{source}管理，不回显取值。',
+      secretStored: '数据库已存储密钥，留空保持不变。',
+      secretFromEnv: '当前密钥来自环境变量；在此保存新密钥后会存入数据库。',
+      secretMissing: '尚未配置 AppSecret，启用前必须提供。',
+    },
+    actions: {
+      test: '测试连接',
+      adopt: '从环境配置导入',
+      adoptConfirm: '将当前环境变量中的钉钉配置（含 AppSecret，加密保存）写入本页并转为页面管理。之后可清理 env 中的钉钉配置；设置 DINGTALK_AUTH_CONFIG_SOURCE=file 可随时回退为环境变量管理。确认导入？'
+    },
+    messages: {
+      testSuccess: '钉钉已接受应用凭据。',
+      testFailed: '钉钉连接测试失败。',
+      testRejected: '钉钉拒绝了凭据（{code}）：{detail}',
+      loadFailed: '加载钉钉配置失败。',
+      saved: '钉钉配置已保存。',
+      saveFailed: '保存钉钉配置失败。',
+      required: '启用钉钉登录时 Corp ID 与 AppKey 必填。',
+      copyFailed: '复制回调地址失败。',
+      adoptSuccess: '已导入环境配置并转为页面管理。',
+      adoptFailed: '导入环境配置失败。',
+    },
+  },
+
   directoryAdmin: {
     ...directoryAccessLocale.directoryAdmin,
     title: '目录服务',
@@ -1050,6 +1101,8 @@ export default {
     schedule6h: '每 6 小时',
     schedule12h: '每 12 小时',
     schedule24h: '每天',
+      scheduleDailyCustom: '每天固定时间（自选时刻）',
+      scheduleDailyTime: '同步时刻',
     neverSynced: '未同步',
     justNow: '刚刚',
     minutesAgo: '{n} 分钟前',
@@ -1137,6 +1190,7 @@ export default {
       failed: '失败'
     },
     logStatus: {
+      syncProgress: '已同步 {done} / 共 {total}（{pct}%）',
       running: '同步中',
       success: '成功',
       partial: '部分成功',
@@ -2649,9 +2703,7 @@ export default {
       deleted: 'MCP 服务已删除',
       deleteFailed: '删除 MCP 服务失败'
     },
-    actions: {
-      test: '测试连接'
-    }
+    actions: { test: '测试连接' }
   },
   conversationSettings: {
     maxTokens: {
@@ -4037,7 +4089,9 @@ export default {
         descriptionLanguageAuto: '自动跟随文档语言',
         customInstructionsLabel: '图片解析要求',
         customInstructionsDescription: '补充需要重点识别的视觉信息，OCR 和 Markdown 格式协议保持不变',
-        customInstructionsPlaceholder: '例如：重点识别设备铭牌、型号、告警代码和表格中的单位…'
+        customInstructionsPlaceholder: '例如：重点识别设备铭牌、型号、告警代码和表格中的单位…',
+        imageClassificationLabel: '图像类型识别',
+        imageClassificationDescription: '识别图片前先由视觉模型判断类型（工程图纸/产品图/普通页面），确认为图纸或产品图时改用专用提取提示词（优先提取图纸名称/图号或产品名称/型号）；每张图片增加一次模型调用'
       },
       tableMetadataInstructions: {
         label: '表格元数据生成要求',
@@ -5202,6 +5256,24 @@ export default {
     redirectingToOIDC: '正在跳转到身份提供商...',
     orContinueWith: '或使用以下方式继续',
     oidcLoginFailed: 'OIDC 登录失败',
+    dingtalkLogin: '钉钉扫码登录',
+    dingtalkLoginWithProvider: '使用 {provider} 登录',
+    redirectingToDingTalk: '正在跳转到钉钉...',
+    dingtalkLoginFailed: '钉钉登录失败',
+    dingtalkInAppFailed: '钉钉免登失败，请重试或使用账号登录',
+    dingtalkErrors: {
+      not_enterprise_member: '该钉钉账号不属于本企业，无法登录',
+      no_ad_match: '未找到与钉钉工号匹配的账号，请联系管理员开通',
+      identity_link_required: '该工号已有同名本地账号，请联系管理员完成关联',
+      empty_job_number: '钉钉账号缺少工号信息，请联系管理员补录',
+      duplicate_job_number: '工号匹配不唯一，请联系管理员处理',
+      binding_conflict: '账号关联冲突，请联系管理员处理',
+      user_inactive: '账号已被禁用，请联系管理员',
+      invalid_state: '登录会话已过期，请重新扫码',
+      dingtalk_unavailable: '钉钉服务暂时不可用，请稍后重试或使用 AD 登录',
+      wrong_corp: '企业信息校验失败，无法登录',
+      fallback: '钉钉登录失败，请重试或使用账号登录'
+    },
     username: '用户名',
     email: '邮箱',
     password: '密码',

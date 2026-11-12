@@ -72,7 +72,7 @@ func TestAgentPromptActualNextcloudNonManagerViewerAndRevocation(t *testing.T) {
 	h.m.f.s.kbService = h.kb
 	h.m.f.s.contentLeases = store.ContentLeaseStore()
 	h.m.f.s.knowledgeInputs = store
-	service := &agentService{knowledgeService: h.m.f.s, messageService: h.messages}
+	service := &agentService{knowledgeBaseService: h.kb, knowledgeService: h.m.f.s, messageService: h.messages}
 	settings := &types.AgentConfig{
 		KnowledgeBases: []string{kb.ID},
 		SearchTargets: types.SearchTargets{
@@ -85,18 +85,14 @@ func TestAgentPromptActualNextcloudNonManagerViewerAndRevocation(t *testing.T) {
 		err,
 		"KB metadata must not require the connector's private manager capability or enumerate personal files",
 	)
-	held, err := holdAgentPromptInputs(viewer, guard)
-	require.NoError(t, err)
-	require.True(t, held)
+	defer guard.Close()
+	require.False(t, shouldHoldAgentPromptInputs(viewer, guard, nil))
 	require.Len(t, guard.kbInfos, 1)
 	require.Equal(t, kb.Name, guard.kbInfos[0].Name)
 	require.True(t, guard.kbInfos[0].OmitDocumentMetadata)
 	require.Empty(t, guard.documents)
-	require.NoError(t, CheckMessageMaterialOutputBoundary(viewer))
+	session := &sessionService{groupAccess: NewGroupAccessService(repository.NewGroupAccessRepository(db))}
+	require.NoError(t, session.revalidateSearchTargets(viewer, settings.SearchTargets))
 	require.NoError(t, db.Where("id=?", "agent-source-viewer-grant").Delete(&types.ResourceGroupGrant{}).Error)
-	require.Error(
-		t,
-		CheckMessageMaterialOutputBoundary(viewer),
-		"withdrawing only the exact source-KB grant must block buffered HTTP metadata",
-	)
+	require.ErrorIs(t, session.revalidateSearchTargets(viewer, settings.SearchTargets), ErrResourceAccessDenied)
 }

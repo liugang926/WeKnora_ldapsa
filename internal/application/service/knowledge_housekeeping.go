@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -118,6 +119,7 @@ func (h *HousekeepingService) Stop() {
 // single sweep without waiting for the cron tick.
 func (h *HousekeepingService) runSweep(ctx context.Context) {
 	now := time.Now().UTC()
+	h.completeStrandedFinalizingDocs(ctx, now)
 	h.recoverStalledNextcloudFinalizing(ctx, now)
 	threshold := h.staleThreshold()
 	cutoff := now.Add(-threshold)
@@ -146,7 +148,7 @@ func (h *HousekeepingService) runSweep(ctx context.Context) {
 	// visibly. Housekeeping promotes both states to 'failed' once the
 	// span heartbeat is older than the threshold.
 	var candidates []types.Knowledge
-	if err := h.db.WithContext(ctx).
+	if err := repository.ExcludeDurableDingTalkGraphPlans(h.db.WithContext(ctx)).
 		Where("parse_status IN ? AND updated_at < ?",
 			[]string{types.ParseStatusPending, types.ParseStatusProcessing, types.ParseStatusFinalizing}, cutoff).
 		Find(&candidates).Error; err != nil {
@@ -165,14 +167,30 @@ func (h *HousekeepingService) runSweep(ctx context.Context) {
 	// positive users hit under heavy upload bursts. Drop any candidate
 	// that still has a queued/active task referencing it; only rows with
 	// nothing left in the queue are treated as genuinely orphaned.
-	stuck, queueSkipped := h.filterOutQueued(ctx, stuck)
+	// Hard grace cap for the queue gate below: filterOutQueued protects any
+	// row whose subtasks sit queued or in asynq retry backoff. Under a
+	// sustained gateway brownout that protection masked stalls for 5-17
+	// hours in production (2026-10-27 / 11-03: retries exhausted slowly
+	// while the row sat in processing). Once a row is twice the stale
+	// threshold old it is failed regardless of queue state, so the stall
+	// surfaces for operator retry instead of hiding behind backoff.
+	hardCutoff := now.Add(-2 * threshold)
+	var withinGrace, beyondGrace []types.Knowledge
+	for _, k := range stuck {
+		if k.UpdatedAt.Before(hardCutoff) {
+			beyondGrace = append(beyondGrace, k)
+		} else {
+			withinGrace = append(withinGrace, k)
+		}
+	}
+	stuck, queueSkipped := h.filterOutQueued(ctx, withinGrace)
 
 	if len(stuck) > 0 {
 		stuckIDs := make([]string, 0, len(stuck))
 		for _, k := range stuck {
 			stuckIDs = append(stuckIDs, k.ID)
 		}
-		res := h.db.WithContext(ctx).Model(&types.Knowledge{}).
+		res := repository.ExcludeDurableDingTalkGraphPlans(h.db.WithContext(ctx).Model(&types.Knowledge{})).
 			Where("id IN ? AND parse_status IN ?", stuckIDs,
 				[]string{types.ParseStatusPending, types.ParseStatusProcessing, types.ParseStatusFinalizing}).
 			Updates(map[string]interface{}{
@@ -185,6 +203,33 @@ func (h *HousekeepingService) runSweep(ctx context.Context) {
 		} else if res.RowsAffected > 0 {
 			logger.Infof(ctx, "[Housekeeping] recovered %d stuck knowledge rows (threshold=%s)",
 				res.RowsAffected, threshold)
+		}
+	}
+	if len(beyondGrace) > 0 {
+		hardIDs := make([]string, 0, len(beyondGrace))
+		for _, k := range beyondGrace {
+			hardIDs = append(hardIDs, k.ID)
+		}
+		res := repository.ExcludeDurableDingTalkGraphPlans(h.db.WithContext(ctx).Model(&types.Knowledge{})).
+			Where("id IN ? AND parse_status IN ?", hardIDs,
+				[]string{types.ParseStatusPending, types.ParseStatusProcessing, types.ParseStatusFinalizing}).
+			Updates(map[string]interface{}{
+				"parse_status": types.ParseStatusFailed,
+				"error_message": "task stuck in processing > " +
+					(2 * threshold).String() +
+					" despite queued retries, recovered by housekeeping",
+
+				"pending_subtasks_count": 0,
+			})
+		if res.Error != nil {
+			logger.Warnf(ctx, "[Housekeeping] hard-grace sweep update failed: %v", res.Error)
+		} else if res.RowsAffected > 0 {
+			logger.Warnf(ctx,
+				"[Housekeeping] failed %d knowledge row(s) stuck beyond "+
+					"%s despite queued retries — inspect queue backoff and "+
+					"gateway health",
+
+				res.RowsAffected, 2*threshold)
 		}
 	}
 	if spanSkipped > 0 {
@@ -287,6 +332,60 @@ func (h *HousekeepingService) runSweep(ctx context.Context) {
 // pending-op and queue probes prove no work can advance it. The existing
 // candidate retry path then re-reads authoritative source bytes and creates a
 // fresh generation.
+// completeStrandedFinalizingDocs closes the accounting-lost decrement hole:
+// a finalizing document whose pending_subtasks_count is still positive but
+// that has NO durable pending operation of any kind (graph, wiki, auto-tag)
+// cannot be advanced by anything — the per-minute recovery loop has nothing
+// to redeliver, and the generic sweep would eventually fail the whole
+// document for one lost slot. Graph subtasks already carry their own
+// bounded retries (asynq MaxRetry(3)) and terminal accounting, and the
+// document-level completion tolerates individual subtask failures, so the
+// correct terminal state is COMPLETED — mirroring exactly what the atomic
+// drain promote does when the last real decrement lands. Non-Nextcloud
+// documents only (the Nextcloud ledger has its own stall reaper).
+func (h *HousekeepingService) completeStrandedFinalizingDocs(ctx context.Context, now time.Time) {
+	cutoff := now.Add(-20 * time.Minute)
+	var stranded []types.Knowledge
+	if err := h.db.WithContext(ctx).
+		Select("id").
+		Where(`parse_status = ? AND pending_subtasks_count > 0 AND updated_at < ?
+			AND channel <> ?
+			AND NOT EXISTS (SELECT 1 FROM task_pending_ops t WHERE t.scope_id = knowledges.id AND t.op <> 'settled')`,
+			types.ParseStatusFinalizing, cutoff, types.ConnectorTypeNextcloud).
+		Limit(64).
+		Find(&stranded).Error; err != nil {
+		logger.Warnf(ctx, "[Housekeeping] stranded finalizing query failed: %v", err)
+		return
+	}
+	if len(stranded) == 0 {
+		return
+	}
+	completed := int64(0)
+	for _, k := range stranded {
+		res := h.db.WithContext(ctx).Model(&types.Knowledge{}).
+			Where(`id = ? AND parse_status = ? AND pending_subtasks_count > 0 AND updated_at < ?
+				AND NOT EXISTS (SELECT 1 FROM task_pending_ops t WHERE t.scope_id = ? AND t.op <> 'settled')`,
+				k.ID, types.ParseStatusFinalizing, cutoff, k.ID).
+			Updates(map[string]interface{}{
+				"parse_status":           types.ParseStatusCompleted,
+				"pending_subtasks_count": 0,
+				"error_message":          "",
+				"processed_at":           now,
+				"updated_at":             now,
+			})
+		if res.Error != nil {
+			logger.Warnf(ctx, "[Housekeeping] stranded finalizing completion failed for %s: %v", k.ID, res.Error)
+			continue
+		}
+		completed += res.RowsAffected
+	}
+	if completed > 0 {
+		logger.Infof(ctx,
+			"[Housekeeping] completed %d stranded finalizing document(s) (lost decrement, no durable work pending)",
+			completed)
+	}
+}
+
 func (h *HousekeepingService) recoverStalledNextcloudFinalizing(ctx context.Context, now time.Time) {
 	cutoff := now.Add(-nextcloudFinalizingStallThreshold())
 	var candidates []types.Knowledge
@@ -433,18 +532,14 @@ func (h *HousekeepingService) filterByLastSpanActivity(ctx context.Context, cand
 // durable per document in task_pending_ops (dedup_key = knowledge ID), while
 // asynq only carries a per-KB wake-up trigger whose payload has no knowledge
 // ID — and TypeWikiIngest is deliberately absent from the inspector's
-// taskTypesForKnowledgeCancel set anyway. So HasQueuedTasksForKnowledge
+// taskTypesForKnowledgeCancel set anyway. So the transient queue snapshot
 // structurally reports "nothing queued" for a document whose only outstanding
 // work is a queued Wiki ingest, and the sweep force-fails a perfectly healthy
 // row. Probe the durable table directly before consulting the inspector.
 //
 // When no inspector is wired (nil) the durable gate still applies; only the
-// transient queue check is skipped. On probe error we fail safe, but in
-// opposite directions by design: an inspector error KEEPS the candidate as
-// stuck (matching the span heartbeat query), whereas a durable-table error
-// DEFERS every candidate to the next sweep — we cannot tell backlog from
-// orphan without it, and wrongly failing a live document is not recoverable
-// by the user, while waiting one more interval is.
+// transient queue check is skipped. Any probe error defers the candidates:
+// unknown queue state must never be interpreted as absence of work.
 func (h *HousekeepingService) filterOutQueued(
 	ctx context.Context, candidates []types.Knowledge,
 ) (kept []types.Knowledge, skipped int) {
@@ -473,24 +568,32 @@ func (h *HousekeepingService) filterOutQueued(
 		durable[id] = struct{}{}
 	}
 
+	// Snapshot once for the whole sweep rather than walking every queue for
+	// every candidate (upstream #4360). Keep the durable Wiki gate first.
+	var queued map[string]struct{}
+	if h.inspector != nil && len(durable) < len(candidates) {
+		scanner, ok := h.inspector.(interfaces.QueuedKnowledgeInspector)
+		if !ok {
+			logger.Warnf(ctx, "[Housekeeping] queue snapshot unavailable; deferring %d candidate(s)", len(candidates))
+			return candidates[:0], len(candidates)
+		}
+		var err error
+		queued, err = scanner.QueuedKnowledgeIDs(ctx)
+		if err != nil {
+			logger.Warnf(ctx,
+				"[Housekeeping] queue snapshot failed: %v (deferring %d candidate(s))",
+				err,
+				len(candidates))
+			return candidates[:0], len(candidates)
+		}
+	}
 	out := candidates[:0]
 	for _, k := range candidates {
 		if _, ok := durable[k.ID]; ok {
 			skipped++
 			continue
 		}
-		if h.inspector == nil {
-			out = append(out, k)
-			continue
-		}
-		queued, err := h.inspector.HasQueuedTasksForKnowledge(ctx, k.ID)
-		if err != nil {
-			logger.Warnf(ctx,
-				"[Housekeeping] queue probe failed for %s: %v (will fail safe and treat as stuck)", k.ID, err)
-			out = append(out, k)
-			continue
-		}
-		if queued {
+		if _, ok := queued[k.ID]; ok {
 			skipped++
 			continue
 		}

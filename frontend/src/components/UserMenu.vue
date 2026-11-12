@@ -32,9 +32,12 @@
     <Transition name="dropdown">
       <div v-if="menuVisible" class="user-dropdown" @click.stop>
         <!-- 弹出菜单：账号（头像+昵称）／当前空间（名称+权限）；底部侧栏样式不改。 -->
-        <div v-if="userName" class="dropdown-user-header is-clickable" role="button" tabindex="0"
-          @click="handleQuickNav('userprofile')" @keydown.enter.prevent="handleQuickNav('userprofile')"
-          @keydown.space.prevent="handleQuickNav('userprofile')">
+        <!-- 员工口径下账号卡只做身份展示（userprofile 也是设置页分区）。 -->
+        <div v-if="userName" class="dropdown-user-header" :class="{ 'is-clickable': canAccessSettingsShortcuts }"
+          role="button" :tabindex="canAccessSettingsShortcuts ? 0 : -1"
+          @click="canAccessSettingsShortcuts && handleQuickNav('userprofile')"
+          @keydown.enter.prevent="canAccessSettingsShortcuts && handleQuickNav('userprofile')"
+          @keydown.space.prevent="canAccessSettingsShortcuts && handleQuickNav('userprofile')">
           <div class="dropdown-user-avatar">
             <img v-if="userAvatar" :src="userAvatar" :alt="$t('common.avatar')" />
             <span v-else class="dropdown-user-avatar-placeholder">{{ userInitial }}</span>
@@ -72,13 +75,14 @@
           <t-icon v-if="showTenantSwitcher" name="swap" class="dropdown-tenant-panel-trail"
             :title="$t('tenant.switcher.menuLabel')" />
         </div>
-        <div class="menu-divider"></div>
-        <!-- 账号与空间是头像菜单的核心上下文；基础设施类配置统一收进「全部设置」。 -->
-        <div class="menu-item" @click="handleQuickNav('general')">
+        <div v-if="canAccessSettingsShortcuts" class="menu-divider"></div>
+        <!-- 账号与空间是头像菜单的核心上下文；基础设施类配置统一收进「全部设置」。
+             员工口径下整个设置分组隐藏（W-UI-01：隐藏并拒绝）。 -->
+        <div v-if="canAccessSettingsShortcuts" class="menu-item" @click="handleQuickNav('general')">
           <t-icon name="user" class="menu-icon" />
           <span>{{ $t('general.personalSettings') }}</span>
         </div>
-        <div v-if="!authStore.isLiteMode" class="menu-item" @click="handleQuickNav('tenant')">
+        <div v-if="canAccessSettingsShortcuts && !authStore.isLiteMode" class="menu-item" @click="handleQuickNav('tenant')">
           <t-icon name="user-circle" class="menu-icon" />
           <span>{{ $t('settings.workspaceSettings') }}</span>
         </div>
@@ -97,7 +101,7 @@
           <span>{{ $t('settings.skills.title') }}</span>
         </div>
         <div class="menu-divider"></div>
-        <div class="menu-item" @click="handleSettings">
+        <div v-if="canAccessSettingsShortcuts" class="menu-item" @click="handleSettings">
           <t-icon name="setting" class="menu-icon" />
           <span>{{ $t('general.allSettings') }}</span>
         </div>
@@ -219,6 +223,7 @@ import { useRoleLabel, useHomeTenant } from '@/composables/useRoleLabel'
 import { getRootZoom, rectToCssPx, cssViewportSize } from '@/utils/zoom'
 import { openNewUserGuide } from '@/config/contextualGuides'
 import { SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE } from '@/config/settingsAccess'
+import { isMenuAdminUser } from '@/stores/menuVisibility'
 import { SKILL_ICON } from '@/types/mention'
 
 const { t } = useI18n()
@@ -251,20 +256,33 @@ const showTenantIdentityLine = computed(() => {
   return (authStore.memberships ?? []).length > 1
 })
 
+// W-UI-01（隐藏并拒绝）：普通员工（!hasRole('admin') && !isSystemAdmin，
+// 与侧栏 menuVisibility.ts 完全同口径）不渲染任何指向设置页的快捷入口
+// ——路由守卫（requiresTenantAdmin）会兜底拒绝，但入口本身也不该出现。
+// 顶部的账号信息卡保留身份展示，仅去掉导航行为。
+const canAccessSettingsShortcuts = computed(() =>
+  isMenuAdminUser(authStore.hasRole('admin'), authStore.isSystemAdmin),
+)
+
 // 快捷入口使用“管理能力”而不是页面最低可见角色：成员名册和模型列表允许
 // viewer 浏览，但头像菜单里的“管理”入口只服务实际能执行管理操作的角色。
+// 在此之上统一叠加员工口径（canAccessSettingsShortcuts），保证跨空间
+// superuser 切到 viewer 身份的空间时与侧栏判定一致。
 const canManageMembers = computed(() =>
-  authStore.canAccessAllTenants || authStore.hasRole(SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE.members),
+  canAccessSettingsShortcuts.value &&
+  (authStore.canAccessAllTenants || authStore.hasRole(SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE.members)),
 )
 const canManageModels = computed(() =>
-  authStore.canAccessAllTenants ||
-  authStore.isSystemAdmin ||
-  authStore.hasRole(SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE.models),
+  canAccessSettingsShortcuts.value &&
+  (authStore.canAccessAllTenants ||
+    authStore.isSystemAdmin ||
+    authStore.hasRole(SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE.models)),
 )
 const canManageSkills = computed(() =>
-  authStore.canAccessAllTenants ||
-  authStore.isSystemAdmin ||
-  authStore.hasRole(SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE.skills),
+  canAccessSettingsShortcuts.value &&
+  (authStore.canAccessAllTenants ||
+    authStore.isSystemAdmin ||
+    authStore.hasRole(SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE.skills)),
 )
 
 const menuRef = ref<HTMLElement>()

@@ -492,12 +492,47 @@ const prereqExpanded = ref(false)
 const tempDsId = ref('')
 
 // Schedule presets
+const DAILY_CUSTOM = '__daily_custom__'
+const dailyCustomTime = ref('01:00')
+// Keep the explicit choice: the 24-hour preset and custom 02:00 share a cron.
+const scheduleSelection = ref('0 0 */6 * * *')
+
+function dailyCustomCron(time: string): string {
+  const [h, m] = (time || '01:00').split(':').map((x) => parseInt(x, 10) || 0)
+  return `0 ${m} ${h} * * *`
+}
+
+function parseDailyCustomCron(cron: string): string | null {
+  const m = /^0 (\d{1,2}) (\d{1,2}) \* \* \*$/.exec(cron || '')
+  if (!m) return null
+  const minute = parseInt(m[1], 10)
+  const hour = parseInt(m[2], 10)
+  if (minute > 59 || hour > 23) return null
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+}
+
+function onScheduleChange(value: unknown) {
+  if (typeof value !== 'string') return
+  scheduleSelection.value = value
+  if (value === DAILY_CUSTOM) {
+    form.value.sync_schedule = dailyCustomCron(dailyCustomTime.value)
+  } else {
+    form.value.sync_schedule = value
+  }
+}
+
+function onDailyTimeChange(value: string) {
+  dailyCustomTime.value = value
+  form.value.sync_schedule = dailyCustomCron(value)
+}
+
 const schedulePresets = computed(() => [
   { label: t('datasource.schedule30min'), value: '0 */30 * * * *' },
   { label: t('datasource.schedule1h'), value: '0 0 * * * *' },
   { label: t('datasource.schedule6h'), value: '0 0 */6 * * *' },
   { label: t('datasource.schedule12h'), value: '0 0 */12 * * *' },
   { label: t('datasource.schedule24h'), value: '0 0 2 * * *' },
+  { label: t('datasource.scheduleDailyCustom'), value: '__daily_custom__' },
 ])
 
 // --- Connector definitions ---
@@ -793,6 +828,13 @@ watch(visible, async (v) => {
       sync_deletions: true,
     }
   }
+  const dailyTime = parseDailyCustomCron(form.value.sync_schedule)
+  dailyCustomTime.value = dailyTime || '01:00'
+  // Stored crons cannot preserve the choice between equivalent daily modes.
+  // Prefer a known preset on reopen; other fixed daily times use the picker.
+  scheduleSelection.value = schedulePresets.value.some(p => p.value === form.value.sync_schedule)
+    ? form.value.sync_schedule
+    : dailyTime ? DAILY_CUSTOM : form.value.sync_schedule
 })
 
 watch(
@@ -1830,9 +1872,21 @@ const drawerConfirmText = computed(() => {
     <template v-if="step === 3">
       <section class="setting-drawer__section">
         <h4 class="setting-drawer__section-title">{{ t('datasource.syncScheduleLabel') }}</h4>
-        <t-select v-model="form.sync_schedule">
+        <t-select
+          :value="scheduleSelection"
+          @change="onScheduleChange"
+        >
           <t-option v-for="p in schedulePresets" :key="p.value" :value="p.value" :label="p.label" />
         </t-select>
+        <t-time-picker
+          v-if="scheduleSelection === DAILY_CUSTOM"
+          :value="dailyCustomTime"
+          :label="t('datasource.scheduleDailyTime')"
+          format="HH:mm"
+          :allow-input="false"
+          style="margin-left: 8px; width: 130px"
+          @change="onDailyTimeChange"
+        />
       </section>
 
       <section class="setting-drawer__section">

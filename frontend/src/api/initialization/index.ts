@@ -112,6 +112,8 @@ export interface KBModelConfigRequest {
         model_id?: string
         description_language?: string
         custom_instructions?: string
+        /** KB opt-in: classify each image (drawing sheet / product image / plain document) before OCR. */
+        enable_image_classification?: boolean
     }
     asr_config?: {
         enabled: boolean

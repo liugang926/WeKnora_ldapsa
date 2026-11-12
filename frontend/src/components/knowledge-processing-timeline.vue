@@ -3,7 +3,7 @@ import { ref, reactive, onMounted, onBeforeUnmount, watch, computed, nextTick } 
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
 import { copyWithToast } from '@/utils/clipboard'
-import { getKnowledgeSpans, reparseKnowledge, cancelKnowledgeParse, getKnowledgeDetails } from '@/api/knowledge-base/index'
+import { getKnowledgeSpans, getKnowledgeRecoveryEligibility, reparseKnowledge, cancelKnowledgeParse, getKnowledgeDetails } from '@/api/knowledge-base/index'
 import {
   groupPostprocessGraphSpans,
   knowledgeSpansPayloadHasTrace,
@@ -463,17 +463,28 @@ async function copySpan(node: SpanNode) {
   await copyValue(node)
 }
 
+const currentKnowledgeChannel = ref('')
+
 async function onRetry() {
   if (!props.knowledgeId) return
   try {
-    await reparseKnowledge(props.knowledgeId)
+    let recoverySnapshot: string | undefined
+    if (currentKnowledgeChannel.value === 'dingtalk') {
+      const eligibility: any = await getKnowledgeRecoveryEligibility(props.knowledgeId)
+      if (!eligibility?.success || !eligibility.data?.allowed) {
+        MessagePlugin.info(eligibility?.data?.reason || t('knowledgeBase.rebuildFailed'))
+        return
+      }
+      recoverySnapshot = eligibility.data.snapshot
+    }
+    await reparseKnowledge(props.knowledgeId, { recovery_snapshot: recoverySnapshot })
     selectedAttempt.value = undefined
     attemptStatuses.clear()
     selectedSpanId.value = null
     autoSelectPending.value = true
     await fetchSpans()
-  } catch {
-    // ignore
+  } catch (error: any) {
+    MessagePlugin.error(error?.message || t('knowledgeBase.rebuildFailed'))
   }
 }
 
@@ -527,6 +538,7 @@ watch(
     data.value = null
     processOverrides.value = null
     currentKnowledgeFileType.value = ''
+    currentKnowledgeChannel.value = ''
     expandedRows.value = new Set(['__root__'])
     selectedSpanId.value = null
     autoSelectPending.value = true
@@ -548,6 +560,7 @@ async function fetchProcessOverrides() {
   try {
     const res: any = await getKnowledgeDetails(props.knowledgeId)
     if (res?.success && res.data) {
+      currentKnowledgeChannel.value = res.data.channel || ''
       processOverrides.value = res.data.metadata?.process_overrides ?? null
       currentKnowledgeFileType.value = normalizeFileType(
         res.data.file_type || getFileTypeFromName(res.data.file_name || res.data.title || ''),
@@ -1247,7 +1260,8 @@ const errorHeadline = computed(() => {
 // Retry stays reachable from the toolbar when a failure has no
 // last_error payload to hang the in-card button off.
 const showToolbarRetry = computed(
-  () => data.value?.parse_status === 'failed' && !showLastError.value,
+  () => (data.value?.parse_status === 'failed' && !showLastError.value)
+    || (currentKnowledgeChannel.value === 'dingtalk' && data.value?.parse_status === 'finalizing'),
 )
 
 const stagesStatDisplay = computed(() => {

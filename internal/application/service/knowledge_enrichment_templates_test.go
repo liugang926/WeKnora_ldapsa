@@ -323,12 +323,16 @@ func runKnowledgeDerivedTemplateSourceUnion(t *testing.T, pg bool) {
 	require.NoError(t, f.s.ProcessSummaryGeneration(context.Background(), f.queue.tasks[len(f.queue.tasks)-1]))
 	assertEnrichmentReadable(t, f, []string{f.chunks[0].ID})
 	allow.Store(false)
-	require.Error(t, read.Check(f.ctx), "withdrawn template source cannot pass the final response check")
-	require.Error(t, f.store.RecheckKnowledgeBuildInputs(f.ctx, original))
+	require.NoError(t, read.Check(f.ctx), "remote read ACL is retired; retained template inputs remain unchanged")
+	require.NoError(t, f.store.RecheckKnowledgeBuildInputs(f.ctx, original))
 	var current types.Knowledge
 	require.NoError(t, f.db.Where("id = ?", f.k.ID).Take(&current).Error)
-	_, e = NewKnowledgeOutputAuthorizer(f.store, f.guard).Begin(f.ctx, []*types.Knowledge{&current})
-	require.Error(t, e)
+	output, e := NewKnowledgeOutputAuthorizer(f.store, f.guard).Begin(f.ctx, []*types.Knowledge{&current})
+	require.NoError(t, e)
+	require.NoError(t, output.Check(f.ctx, []*types.Knowledge{&current}))
+	forged := *original
+	forged.InputDigest = strings.Repeat("0", 64)
+	require.Error(t, f.store.RecheckKnowledgeBuildInputs(f.ctx, &forged), "retained input identity remains checked")
 }
 
 func TestKnowledgeDerivedTemplateAllSourceUnionSQLite(t *testing.T) {

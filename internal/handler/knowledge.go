@@ -2379,7 +2379,8 @@ func (h *KnowledgeHandler) ReparseKnowledge(c *gin.Context) {
 	var processOverrides *types.KnowledgeProcessOverrides
 	if c.Request.ContentLength != 0 {
 		var req struct {
-			ProcessConfig *types.KnowledgeProcessOverrides `json:"process_config"`
+			ProcessConfig    *types.KnowledgeProcessOverrides `json:"process_config"`
+			RecoverySnapshot string                           `json:"recovery_snapshot"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			logger.Error(ctx, "Failed to parse reparse request body", err)
@@ -2387,6 +2388,7 @@ func (h *KnowledgeHandler) ReparseKnowledge(c *gin.Context) {
 			return
 		}
 		processOverrides = req.ProcessConfig
+		effCtx = types.WithKnowledgeRecoverySnapshot(effCtx, req.RecoverySnapshot)
 	}
 
 	// Call service to reparse knowledge

@@ -24,10 +24,6 @@ func hasAgentRawInputMaterials(req *types.QARequest) bool {
 	return req != nil && (len(req.ImageURLs) > 0 || len(req.Attachments) > 0)
 }
 
-func hasAgentMaterialFlow(req *types.QARequest) bool {
-	return hasAgentRawInputMaterials(req) || req != nil && req.SteerSink != nil
-}
-
 // AgentQA performs agent-based question answering with conversation history and streaming support
 // customAgent is optional - if provided, uses custom agent configuration instead of tenant defaults
 // summaryModelID is optional - if provided, overrides the model from customAgent config
@@ -36,15 +32,11 @@ func (s *sessionService) AgentQA(
 	req *types.QARequest,
 	eventBus *event.EventBus,
 ) error {
-	// Keep strict Nextcloud lineage as the default. Deployments may explicitly
-	// make the WeKnora workspace/session ACL authoritative; only in that mode
-	// may an ordinary query without explicit material skip lineage admission.
-	hasMaterialFlow := hasAgentMaterialFlow(req) || !access.UseWeKnoraReadAuthority()
-	if !hasMaterialFlow {
-		ctx = context.WithValue(ctx, weknoraSourceIndependentAgentKey{}, true)
-	}
+	hasRawInputMaterials := hasAgentRawInputMaterials(req)
 	releaseProducer := func() {}
-	if hasMaterialFlow {
+	steerOwner, _ := ctx.Value(steerCompletionOwnerKey{}).(bool)
+	hasTurnMaterials := hasRawInputMaterials || (steerOwner && req.SteerSink != nil)
+	if hasTurnMaterials {
 		var external bool
 		ctx, releaseProducer, external = retainMessageMaterialProducer(ctx)
 		if !external {
@@ -53,7 +45,7 @@ func (s *sessionService) AgentQA(
 		}
 	}
 	defer releaseProducer()
-	if native, ok := s.lineageVerifier.(*messageService); ok && native.materialStore != nil && hasMaterialFlow {
+	if native, ok := s.lineageVerifier.(*messageService); ok && native.materialStore != nil && hasTurnMaterials {
 		requestID, err := native.materialStore.MessageRequestControl(ctx, req.Session.ID, req.AssistantMessageID)
 		if err != nil {
 			return err
@@ -230,21 +222,21 @@ func (s *sessionService) AgentQA(
 	}
 	// A single-turn Agent can still reuse the session workspace, attachments,
 	// memory and tools. Admission is independent from message replay settings.
-	if native, ok := s.lineageVerifier.(*messageService); ok && native.materialStore != nil && hasMaterialFlow {
+	if hasRawInputMaterials {
+		native, ok := s.lineageVerifier.(*messageService)
+		if !ok || native.materialStore == nil {
+			return access.ErrNextcloudPublicationUnavailable
+		}
 		// Native retained materials have per-message original proofs and actual
 		// scopes. Their current source guard runs on the captured inputs.
 		if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
 			return err
 		}
-	} else if s.historyGuard == nil {
-		excludeHistoricalContext(access.ErrNextcloudPublicationUnavailable)
-	} else if err := s.historyGuard.CheckAgentHistoryReplay(ctx); err != nil {
-		excludeHistoricalContext(err)
 	}
 	if historyAdmitted && agentConfig.MultiTurnEnabled {
 		budget := agent.HistoryTokenBudget(agentConfig)
 		var historyAdmission AgentHistoryAdmission = messageLineageHistoryAdmission{verifier: s.lineageVerifier}
-		if !hasMaterialFlow {
+		if !hasRawInputMaterials {
 			historyAdmission = weknoraACLHistoryAdmission{}
 		}
 		llmContext, agentConfig.ContextTokenScale, err = LoadAgentHistory(
@@ -257,7 +249,7 @@ func (s *sessionService) AgentQA(
 		)
 		if err != nil {
 			excludeHistoricalContext(err)
-		} else if !hasMaterialFlow {
+		} else if !hasRawInputMaterials {
 			// Stored conversation text is governed by the WeKnora session
 			// owner/space ACL. Older rows may predate the source-lineage
 			// envelope; normalize only unknown envelopes for the model turn
@@ -302,7 +294,7 @@ func (s *sessionService) AgentQA(
 	// source of truth. Gated on the sandbox manager advertising a session
 	// filesystem capability so provider-neutral remote wiring stays here.
 	var stagedAttachments []stagedSessionAttachment
-	if historyAdmitted && hasMaterialFlow {
+	if historyAdmitted {
 		stager, ok := s.agentService.(sessionAttachmentStager)
 		if !ok {
 			return errors.New("agent service does not support session attachment staging")
@@ -315,7 +307,18 @@ func (s *sessionService) AgentQA(
 			return fmt.Errorf("resolve sandbox file store for session %s: %w", sessionID, storeErr)
 		}
 		if inputStore != nil {
-			sessionAttachments, loadErr := admittedAgentSessionAttachments(ctx, s.lineageVerifier, sessionID)
+			var sessionAttachments types.MessageAttachments
+			var loadErr error
+			if !hasRawInputMaterials {
+				sessionAttachments, loadErr = weknoraAgentSessionAttachments(
+					ctx,
+					s.messageRepo,
+					s.sessionRepo,
+					sessionID,
+				)
+			} else {
+				sessionAttachments, loadErr = admittedAgentSessionAttachments(ctx, s.lineageVerifier, sessionID)
+			}
 			if loadErr != nil {
 				return fmt.Errorf("load session attachments for sandbox staging: %w", loadErr)
 			}
@@ -335,8 +338,9 @@ func (s *sessionService) AgentQA(
 
 	// Create agent engine with EventBus
 	logger.Info(ctx, "Creating agent engine")
+	engineCtx := withAgentExplicitInputMaterials(ctx, hasRawInputMaterials)
 	engine, err := s.agentService.CreateAgentEngine(
-		ctx,
+		engineCtx,
 		agentConfig,
 		summaryModel,
 		rerankModel,
@@ -348,35 +352,58 @@ func (s *sessionService) AgentQA(
 		logger.Errorf(ctx, "Failed to create agent engine: %v", err)
 		return err
 	}
-	lineageEngine, ok := engine.(interface {
-		SetSourceLineageVerifier(func(context.Context, *types.SourceLineage) error)
-	})
-	if !ok {
-		return access.ErrNextcloudPublicationUnavailable
-	}
-	if hasMaterialFlow && s.sourceLineageGuard == nil {
-		return access.ErrNextcloudPublicationUnavailable
-	}
-	lineageScope := access.LineageReadScope{
-		Targets:       agentConfig.SearchTargets,
-		AgentID:       req.CustomAgent.ID,
-		AgentTenantID: req.CustomAgent.TenantID,
-	}
-	lineageEngine.SetSourceLineageVerifier(func(checkCtx context.Context, lineage *types.SourceLineage) error {
-		if err := lineage.RequireComplete(); err != nil {
-			return err
+	if hasRawInputMaterials {
+		lineageEngine, ok := engine.(interface {
+			SetSourceLineageVerifier(func(context.Context, *types.SourceLineage) error)
+		})
+		if !ok {
+			return access.ErrNextcloudPublicationUnavailable
 		}
-		if err := s.revalidateAgentExecution(checkCtx, req.CustomAgent, agentConfig.SearchTargets); err != nil {
-			return err
-		}
-		if !hasMaterialFlow {
+		lineageEngine.SetSourceLineageVerifier(func(
+			checkCtx context.Context,
+			lineage *types.SourceLineage,
+		) error {
+			if err := lineage.RequireComplete(); err != nil {
+				return err
+			}
+			if err := s.revalidateAgentExecution(
+				checkCtx,
+				req.CustomAgent,
+				agentConfig.SearchTargets,
+			); err != nil {
+				return err
+			}
+			if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
+				return err
+			}
+			// 2026-11-09 decoupling: the NextCloud publication lineage guard is
+			// retired with the integration; completeness, agent revalidation
+			// and the material output boundary remain.
 			return nil
+		})
+	} else {
+		aclEngine, ok := engine.(interface {
+			SetWeKnoraACLSourceLineageVerifier(func(context.Context) error)
+		})
+		if !ok {
+			return errors.New("agent engine does not support WeKnora ACL authorization")
 		}
-		if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
-			return err
-		}
-		return s.sourceLineageGuard.Check(checkCtx, lineage, lineageScope)
-	})
+		aclEngine.SetWeKnoraACLSourceLineageVerifier(func(checkCtx context.Context) error {
+			if err := s.revalidateAgentExecution(
+				checkCtx,
+				req.CustomAgent,
+				agentConfig.SearchTargets,
+			); err != nil {
+				logger.Warnf(
+					checkCtx,
+					"Ordinary Agent ACL revalidation failed: %v",
+					err,
+				)
+				return err
+			}
+			return nil
+		})
+	}
 	if mcpEngine, ok := engine.(interface {
 		SetMCPIndependentTransportVerifier(func(context.Context) error)
 	}); ok {
@@ -392,7 +419,7 @@ func (s *sessionService) AgentQA(
 		agent := req.CustomAgent
 		searchTargets := agentConfig.SearchTargets
 		guarded.SetRoundGuard(func(guardCtx context.Context) error {
-			if hasMaterialFlow {
+			if hasRawInputMaterials {
 				if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
 					return err
 				}
@@ -406,10 +433,12 @@ func (s *sessionService) AgentQA(
 	// no-model read, and an agent may opt out of it entirely.
 	memoryCtx := types.ApplyAgentMemoryPreference(ctx, agentConfig.MemoryEnabled)
 	if historyAdmitted && s.memoryService != nil {
-		recall := s.memoryService.Recall(memoryCtx, req.Query)
-		if recall.Prompt != "" {
-			return access.ErrNextcloudPublicationDenied
-		}
+		_ = s.memoryService.Recall(memoryCtx, req.Query)
+		// 2026-11-09: the recalled-memory prompt used to hard-deny the turn
+		// with ErrNextcloudPublicationDenied, breaking every conversation for
+		// users with resident long-term memory (RDK workspace reports). The
+		// deny branch is retired with the NextCloud decoupling; recall result
+		// stays inert until memory injection is implemented deliberately.
 	}
 
 	// Mid-run steering: when the caller supplied a sink, the engine will drain
@@ -474,6 +503,11 @@ func (s *sessionService) AgentQA(
 			RefuseMessageMaterialOutputBoundary(ctx)
 		}
 		logger.Errorf(ctx, "Agent execution failed: %v", err)
+		if lineageDiag, ok := engine.(interface{ SourceLineageDiagnostic() string }); ok {
+			if diag := lineageDiag.SourceLineageDiagnostic(); diag != "" {
+				logger.Errorf(ctx, "Agent execution lineage diagnostic: %s", diag)
+			}
+		}
 		// Emit error event to the EventBus used by this agent
 		eventBus.Emit(ctx, event.Event{
 			Type:      event.EventError,
@@ -486,7 +520,7 @@ func (s *sessionService) AgentQA(
 		})
 		return err
 	}
-	if hasMaterialFlow {
+	if hasRawInputMaterials {
 		if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
 			return err
 		}

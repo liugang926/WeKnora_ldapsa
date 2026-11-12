@@ -863,7 +863,19 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 			payload.DataSourceID,
 			err,
 		)
+		if s.sourceInputs != nil {
+			dingTalk, identifyErr := s.sourceInputs.IsDingTalkSourceTask(ctx, payload.TenantID, payload.DataSourceID)
+			if identifyErr != nil {
+				return identifyErr
+			}
+			if dingTalk {
+				return fmt.Errorf("%w: DingTalk source unavailable before run claim", asynq.SkipRetry)
+			}
+		}
 		if syncLog, slErr := s.syncLogRepo.FindByID(ctx, payload.SyncLogID); slErr == nil && syncLog != nil {
+			if syncLog.TenantID != payload.TenantID || syncLog.DataSourceID != payload.DataSourceID {
+				return fmt.Errorf("%w: source task sync-log binding changed", asynq.SkipRetry)
+			}
 			syncLog.Status = types.SyncLogStatusCanceled
 			syncLog.FinishedAt = timePtr(time.Now().UTC())
 			syncLog.ErrorMessage = "data source has been deleted"
@@ -982,6 +994,9 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 
 	kb, kbErr := s.kbService.GetKnowledgeBaseByID(ctx, ds.KnowledgeBaseID)
 	if kbErr != nil {
+		if ds.Type == types.ConnectorTypeDingTalk {
+			return kbErr
+		}
 		if ds.Type == types.ConnectorTypeNextcloud {
 			// A failed current configuration/source check is not proof that
 			// the KB was deleted. Keep the failure retryable and preserve it.
@@ -1019,10 +1034,12 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 		if err := knowledge.revalidateBackgroundKBAccess(ctx, ds.TenantID, ds.KnowledgeBaseID,
 			types.ResourceActionEdit); err != nil {
 			if errors.Is(err, ErrResourceAccessDenied) {
-				syncLog.Status = types.SyncLogStatusFailed
-				syncLog.FinishedAt = timePtr(time.Now().UTC())
-				syncLog.ErrorMessage = "processing permission revoked"
-				_ = s.syncLogRepo.Update(ctx, syncLog)
+				if ds.Type != types.ConnectorTypeDingTalk {
+					syncLog.Status = types.SyncLogStatusFailed
+					syncLog.FinishedAt = timePtr(time.Now().UTC())
+					syncLog.ErrorMessage = "processing permission revoked"
+					_ = s.syncLogRepo.Update(ctx, syncLog)
+				}
 				return fmt.Errorf("data source processing authorization revoked: %w", asynq.SkipRetry)
 			}
 			return err
@@ -1039,6 +1056,9 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 	ctx, err = access.WithKBTaskWrite(ctx, kb, ds.TenantID)
 	if err != nil {
 		return fmt.Errorf("%w: data source KB does not belong to its tenant", asynq.SkipRetry)
+	}
+	if ds.Type == types.ConnectorTypeDingTalk {
+		return s.processDingTalkSync(ctx, ds, kb, payload)
 	}
 	wasPaused := ds.Status == types.DataSourceStatusPaused
 

@@ -382,6 +382,27 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 		}
 	}
 
+	// New DingTalk plans are prepared before the atomic counter handoff.
+	// A finalizing legacy document is deliberately never backfilled from count.
+	var dingGraphs []types.ExtractChunkPayload
+	if knowledge.Channel == types.ConnectorTypeDingTalk {
+		if store,
+			ok := s.knowledgeInputs.(*repository.KnowledgeInputProvenanceStore); ok &&
+			knowledge.ParseStatus == types.ParseStatusFinalizing {
+
+			if _, err := RecoverDingTalkGraphs(ctx, store, s.taskEnqueuer, payload.KnowledgeID); err != nil {
+				return err
+			}
+		}
+		if graphChunkCount > 0 && knowledge.ParseStatus == types.ParseStatusProcessing {
+			var err error
+			dingGraphs, err = s.planDingTalkGraphs(ctx, kb, payload.KnowledgeID, payload.TenantID, attempt, graphChunks)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
 	// enteredFinalizing is set only when the processing-to-finalizing handoff
 	// actually seeded the counter. For Wiki-enabled knowledge, that handoff
 	// also persists the pending Wiki op in the same transaction.
@@ -437,7 +458,35 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 		// cancel/delete cannot race us into completed.
 		var promoted bool
 		var err error
-		if willSpawnWiki {
+		if len(dingGraphs) > 0 {
+			ledger, ok := s.knowledgeRepo.(dingTalkGraphRepository)
+			if !ok {
+				return errors.New("DingTalk graph lifecycle unavailable")
+			}
+			var wiki *types.TaskPendingOp
+			if willSpawnWiki {
+				wiki,
+					err = newWikiIngestPendingOp(ctx,
+					payload.TenantID,
+					payload.KnowledgeBaseID,
+					payload.KnowledgeID,
+					attempt)
+				if err != nil {
+					return err
+				}
+			}
+			promoted,
+				err = ledger.SeedDingTalkGraphFinalizing(
+				ctx,
+				payload.KnowledgeID,
+				expectedSubtasks,
+				dingGraphs,
+				wiki)
+			if err != nil {
+				return err
+			}
+			wikiSlotOwned = promoted && willSpawnWiki
+		} else if willSpawnWiki {
 			seeder, ok := s.pendingRepo.(interfaces.TaskPendingOpsFinalizingSeeder)
 			if !ok {
 				return errors.New("wiki post-process requires atomic finalizing handoff")
@@ -535,7 +584,17 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 
 	// 5. Spawn Graph RAG Tasks — only when graph indexing is enabled in IndexingStrategy
 	enqueuedGraphCount := 0
-	if graphChunkCount > 0 {
+	if len(dingGraphs) > 0 {
+		// SQL owns all planned slots, including those whose delivery fails.
+		// Never release these through the legacy aggregate shortfall loop.
+		for _, p := range dingGraphs {
+			if err := enqueueDingTalkGraph(ctx, s.taskEnqueuer, p); err != nil {
+				logger.Warn(ctx, "DingTalk graph delivery deferred to durable recovery")
+			} else {
+				enqueuedGraphCount++
+			}
+		}
+	} else if graphChunkCount > 0 {
 		logger.Infof(ctx,
 			"[KnowledgePostProcess] Spawning Graph RAG extract tasks for %d text/OCR chunks (of %d text-like)",
 			len(graphChunks), len(textChunks))
@@ -654,6 +713,9 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 			plannedOwned++
 		}
 		actualOwned := enqueuedQuestionCount + enqueuedGraphCount
+		if len(dingGraphs) > 0 {
+			actualOwned += len(dingGraphs) - enqueuedGraphCount
+		}
 		if enqueuedSummary {
 			actualOwned++
 		}
@@ -687,6 +749,7 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 		"wiki_slot_owned":         wikiSlotOwned,
 		"enqueued_graph":          enqueuedGraphCount > 0,
 		"enqueued_graph_count":    enqueuedGraphCount,
+		"durable_graph_count":     len(dingGraphs),
 		"auto_tag_on_completion":  autoTagOnCompletion,
 	}
 	s.tracker().EndSpan(ctx, postSpan, postOutput)
@@ -767,7 +830,10 @@ func (s *KnowledgePostProcessService) enqueueAutoTagTask(
 		return false
 	}
 	task, err := newKnowledgeQueueTask(ctx, s.knowledgeInputs, types.TypeKnowledgeAutoTag, payloadBytes,
-		asynq.Queue(types.QueueSummary), asynq.MaxRetry(2), asynq.Timeout(2*time.Minute))
+		// Auto-tagging follows the summary LLM call; a 2-minute budget
+		// false-failed whenever the chat gateway ran slow and its retries
+		// piled onto the same queue (production 2026-10-27/11-03 stalls).
+		asynq.Queue(types.QueueSummary), asynq.MaxRetry(2), asynq.Timeout(10*time.Minute))
 	if err != nil {
 		return false
 	}

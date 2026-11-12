@@ -3244,7 +3244,7 @@ func (s *knowledgeService) UpdateLastFAQImportResultDisplayStatus(
 		if knowledge == nil {
 			return types.ErrSourceLineageUnknown
 		}
-		guard, err := (&FAQOutputAuthorizer{s.faqInputs, s.faqLineageChecker}).BeginImportOutput(
+		guard, err := NewFAQOutputAuthorizer(s.faqInputs, s.faqLineageChecker).BeginImportOutput(
 			ctx,
 			types.FAQImportOutputReadRequest{
 				TenantID:        tenantID,

@@ -73,6 +73,7 @@ type RouterParams struct {
 	MeEnvVarHandler                    *handler.MeEnvVarHandler
 	EvaluationHandler                  *handler.EvaluationHandler
 	AuthHandler                        *handler.AuthHandler
+	DingTalkAuthHandler                *handler.DingTalkAuthHandler
 	DirectoryHandler                   *handler.DirectoryHandler
 	GroupAccessHandler                 *handler.GroupAccessHandler
 	InitializationHandler              *handler.InitializationHandler
@@ -183,6 +184,9 @@ func NewRouter(params RouterParams) *gin.Engine {
 		c.JSON(status, gin.H{"status": state, "checks": readiness})
 	})
 	r.GET("/metrics", handler.ServeNextcloudMetrics(params.DB))
+
+	// Operator diagnostics (off by default; see registerDebugPprof).
+	registerDebugPprof(r)
 
 	// Swagger API 文档（仅在非生产环境下启用）
 	// 通过 GIN_MODE 环境变量判断：release 模式下禁用 Swagger
@@ -356,7 +360,21 @@ func NewRouter(params RouterParams) *gin.Engine {
 		// so that sub-groups inherit it.
 		v1.Use(rbacGuards.apiKeyAuthorizer.Middleware())
 
+		// Employee write-block (W-ACL-01): rejects management writes
+		// (knowledge/KB management, model & agent config, org settings,
+		// API keys, sharing, MCP endpoint config) from non-admin HUMAN
+		// sessions. Reads, self-service routes, chat/retrieval/memory and
+		// the API-key machine channel all pass through. Runs after Auth
+		// (role/principal are already resolved on the context) and before
+		// the per-route RBAC guards, as an employee-tightening layer on
+		// top of them. The blocked prefix list lives in one testable
+		// declaration inside the middleware — see
+		// internal/middleware/employee_management_block.go for the
+		// prefix↔requirement-category mapping.
+		v1.Use(middleware.EmployeeManagementBlock())
+
 		RegisterAuthRoutes(v1, params.AuthHandler, rbacGuards)
+		RegisterDingTalkAuthRoutes(v1, params.DingTalkAuthHandler)
 		if params.NextcloudConnectionHandler != nil {
 			connection := v1.Group("/integrations/nextcloud/connection")
 			rbacGuards.apiKeyRoute(
@@ -473,6 +491,14 @@ func NewRouter(params RouterParams) *gin.Engine {
 		if params.DirectoryHandler != nil {
 			directoryAdmin := v1.Group("/system/admin", rbacGuards.SystemAdmin())
 			params.DirectoryHandler.RegisterAdminRoutes(directoryAdmin)
+		}
+		// DingTalk SSO provider administration rides the same system-admin
+		// group: SystemAdmin RBAC is the primary guard, and the employee
+		// write-block middleware additionally covers these writes because
+		// they live under /api/v1/system.
+		if params.DingTalkAuthHandler != nil {
+			dingTalkAdmin := v1.Group("/system/admin", rbacGuards.SystemAdmin())
+			params.DingTalkAuthHandler.RegisterAdminRoutes(dingTalkAdmin)
 		}
 		RegisterMCPServiceRoutes(
 			v1,

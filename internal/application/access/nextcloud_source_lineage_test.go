@@ -176,9 +176,9 @@ func lineagePolicyFixture(
 	return guard, ctx, lineage, snapshots, groups
 }
 
-func TestNextcloudSourceLineageChecksOriginalIdentityAndVersion(t *testing.T) {
+func TestNextcloudSourceLifecycleChecksOriginalIdentityAndVersion(t *testing.T) {
 	guard, ctx, saved, snapshots, _ := lineagePolicyFixture(t)
-	require.NoError(t, guard.Check(ctx, saved, LineageReadScope{}))
+	require.NoError(t, guard.CheckSourceLifecycle(ctx, saved))
 	for name, change := range map[string]func(*types.SourceIdentity){
 		"same knowledge reindexed etag":  func(s *types.SourceIdentity) { s.ETag = "new-etag" },
 		"same etag new build generation": func(s *types.SourceIdentity) { s.Revision++ },
@@ -189,19 +189,31 @@ func TestNextcloudSourceLineageChecksOriginalIdentityAndVersion(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			g, c, original, current, _ := lineagePolicyFixture(t)
 			change(&current.identity)
-			require.Error(t, g.Check(c, original, LineageReadScope{}))
+			require.Error(t, g.CheckSourceLifecycle(c, original))
 		})
 	}
 	// Name/path/observation bookkeeping is not part of the saved content identity.
 	snapshots.knowledge.Title = "renamed"
 	snapshots.knowledge.FileName = "renamed.md"
-	require.NoError(t, guard.Check(ctx, saved, LineageReadScope{}))
+	require.NoError(t, guard.CheckSourceLifecycle(ctx, saved))
 	resolved, err := guard.Resolve(ctx, 12, "kb-1", "document-1", LineageReadScope{})
 	require.NoError(t, err)
 	require.Equal(t, saved, resolved)
 }
 
-func TestNextcloudSourceLineageRechecksFreshGrantsAndLocalVersionAfterRemoteAuth(t *testing.T) {
+func TestNextcloudSourceLifecycleChecksPublicationWithoutReapplyingDirectoryACL(t *testing.T) {
+	guard, ctx, saved, snapshots, groups := lineagePolicyFixture(t)
+	guard.currentReadActor = nil
+	groups.allowed = false
+
+	require.NoError(t, guard.CheckSourceLifecycle(ctx, saved))
+	require.Empty(t, groups.callers)
+
+	snapshots.identity.ETag = "revoked-new-etag"
+	require.ErrorIs(t, guard.CheckSourceLifecycle(ctx, saved), ErrNextcloudPublicationDenied)
+}
+
+func TestNextcloudRetiredLineageDoesNotPerformRemoteRevocationHooks(t *testing.T) {
 	for _, changed := range []string{"KB directory grant", "org share", "shared agent", "local generation"} {
 		t.Run(changed, func(t *testing.T) {
 			guard, ctx, saved, snapshots, groups := lineagePolicyFixture(t)
@@ -236,6 +248,7 @@ func TestNextcloudSourceLineageRechecksFreshGrantsAndLocalVersionAfterRemoteAuth
 				scope.AgentID = "agent-1"
 				scope.AgentTenantID = 12
 			}
+			remoteCalls := 0
 			guard.publication.authorize = func(
 				context.Context,
 				*types.DataSourceConfig,
@@ -245,6 +258,7 @@ func TestNextcloudSourceLineageRechecksFreshGrantsAndLocalVersionAfterRemoteAuth
 				string,
 				int64,
 			) (nextcloud.AuthorizationDecision, error) {
+				remoteCalls++
 				switch changed {
 				case "KB directory grant":
 					groups.allowed = false
@@ -257,29 +271,40 @@ func TestNextcloudSourceLineageRechecksFreshGrantsAndLocalVersionAfterRemoteAuth
 				}
 				return nextcloud.AuthorizationDecision{Allow: true, SourceETag: "etag-42"}, nil
 			}
-			require.ErrorIs(t, guard.Check(ctx, saved, scope), ErrNextcloudPublicationDenied)
+			assertRetiredReadUnchanged(t, saved, func() error { return guard.Check(ctx, saved, scope) })
+			require.Zero(t, remoteCalls)
+			require.Zero(t, snapshots.calls)
+			require.Zero(t, shares.calls)
+			require.Empty(t, groups.callers)
+			require.True(t, groups.allowed)
+			require.True(t, shares.allowed)
+			require.True(t, agents.allowed)
 		})
 	}
 }
 
-func TestNextcloudSourceLineageSharedEffectiveTenantRequiresCurrentCallerGrant(t *testing.T) {
-	guard, ctx, saved, _, groups := lineagePolicyFixture(t)
+func TestRetainedKBReadPolicyUsesCallerGrantAcrossExecutionTenants(t *testing.T) {
+	guard, ctx, _, _, groups := lineagePolicyFixture(t)
 	ctx = types.WithCaller(ctx, types.Caller{TenantID: 99, UserID: "person-1", Role: types.TenantRoleViewer})
 	ctx = types.WithExecutionTenant(ctx, 12)
 	shares := &lineageSharesStub{allowed: true}
 	guard.shares = shares
-	require.NoError(t, guard.Check(ctx, saved, LineageReadScope{}))
+	require.NoError(t, guard.checkCurrentKBReads(ctx, types.CallerFromContext(ctx),
+		types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 12, KnowledgeBaseID: "kb-1"}},
+		nil, LineageReadScope{}))
 	for _, caller := range groups.callers {
 		require.Equal(t, uint64(99), caller.TenantID)
 		require.Equal(t, "person-1", caller.UserID)
 	}
 	shares.allowed = false
-	require.ErrorIs(t, guard.Check(ctx, saved, LineageReadScope{}), ErrNextcloudPublicationDenied)
+	require.ErrorIs(t, guard.checkCurrentKBReads(ctx, types.CallerFromContext(ctx),
+		types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 12, KnowledgeBaseID: "kb-1"}},
+		nil, LineageReadScope{}), ErrNextcloudPublicationDenied)
 	// Merely changing execution scope never creates a caller grant.
 	require.Equal(t, uint64(99), types.CallerFromContext(ctx).TenantID)
 }
 
-func TestNextcloudSourceLineageUnknownUnsupportedAndUnavailableDeny(t *testing.T) {
+func TestNextcloudRetiredLineageLeavesLegacyAndUnavailableInputsUntouched(t *testing.T) {
 	for _, name := range []string{
 		"legacy NULL",
 		"unknown",
@@ -358,50 +383,63 @@ func TestNextcloudSourceLineageUnknownUnsupportedAndUnavailableDeny(t *testing.T
 					return nextcloud.AuthorizationDecision{Allow: true, SourceETag: "new-etag"}, nil
 				}
 			}
-			require.Error(t, guard.Check(ctx, lineage, LineageReadScope{}))
+			assertRetiredReadUnchanged(t, lineage, func() error {
+				return guard.Check(ctx, lineage, LineageReadScope{})
+			})
+			require.Zero(t, snapshots.calls)
 		})
 	}
 }
 
-func TestNextcloudSourceLineageExplicitEmptyStillChecksOrdinaryKBAndAPIKeyScope(t *testing.T) {
+func TestRetainedKBReadPolicyChecksOrdinaryKBAndAPIKeyScope(t *testing.T) {
 	guard, ctx, _, _, _ := lineagePolicyFixture(t)
 	guard.snapshots = nil
 	guard.publication = nil
 	guard.groups = nil
 	guard.kbs.(*lineageKBStub).kb.EverHadNextcloudSource = false
-	lineage, err := types.NewCompleteSourceLineage()
-	require.NoError(t, err)
 	scope := LineageReadScope{
 		Targets: types.SearchTargets{
 			{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 12, KnowledgeBaseID: "kb-1"},
 		},
 	}
-	require.NoError(t, guard.Check(ctx, lineage, scope))
+	require.NoError(t, guard.checkCurrentKBReads(ctx, types.CallerFromContext(ctx), scope.Targets, nil, scope))
 	ctx = types.WithCaller(ctx, types.Caller{TenantID: 99, UserID: "person-1"})
-	require.ErrorIs(t, guard.Check(ctx, lineage, scope), ErrNextcloudPublicationDenied)
+	require.ErrorIs(
+		t,
+		guard.checkCurrentKBReads(ctx, types.CallerFromContext(ctx), scope.Targets, nil, scope),
+		ErrNextcloudPublicationDenied,
+	)
 	guard.shares = &lineageSharesStub{allowed: true}
-	require.NoError(t, guard.Check(ctx, lineage, scope))
+	require.NoError(t, guard.checkCurrentKBReads(ctx, types.CallerFromContext(ctx), scope.Targets, nil, scope))
 	apiCtx := types.WithCaller(ctx, types.Caller{TenantID: 12, Role: types.TenantRoleViewer})
 	apiCtx = types.WithPrincipal(apiCtx, types.Principal{Type: types.PrincipalAPITenant, ID: "api-key"})
 	apiCtx = types.WithTenantAPIKeyScope(
 		apiCtx,
 		types.TenantAPIKeyScope{KnowledgeBaseIDs: types.StringArray{"other-kb"}},
 	)
-	require.ErrorIs(t, guard.Check(apiCtx, lineage, scope), ErrNextcloudPublicationDenied)
+	require.ErrorIs(
+		t,
+		guard.checkCurrentKBReads(apiCtx, types.CallerFromContext(apiCtx), scope.Targets, nil, scope),
+		ErrNextcloudPublicationDenied,
+	)
 	apiCtx = types.WithTenantAPIKeyScope(apiCtx, types.TenantAPIKeyScope{KnowledgeBaseIDs: types.StringArray{"kb-1"}})
 	require.NoError(
 		t,
-		guard.Check(apiCtx, lineage, scope),
+		guard.checkCurrentKBReads(apiCtx, types.CallerFromContext(apiCtx), scope.Targets, nil, scope),
 		"explicit ordinary lineage preserves valid machine KB scope",
 	)
 	guard.kbs.(*lineageKBStub).kb.TenantID = 99 // Wrong persisted owner for requested scope.
-	require.ErrorIs(t, guard.Check(ctx, lineage, scope), ErrNextcloudPublicationDenied)
+	require.ErrorIs(
+		t,
+		guard.checkCurrentKBReads(ctx, types.CallerFromContext(ctx), scope.Targets, nil, scope),
+		ErrNextcloudPublicationDenied,
+	)
 }
 
-func TestNextcloudSourceLineageFinalSnapshotFailureIsUnavailable(t *testing.T) {
+func TestNextcloudRetiredLineageDoesNotConsultFinalSnapshot(t *testing.T) {
 	guard, ctx, saved, snapshots, _ := lineagePolicyFixture(t)
 	snapshots.batchErr = errors.New("snapshot store offline")
-	err := guard.Check(ctx, saved, LineageReadScope{})
-	require.ErrorIs(t, err, ErrNextcloudPublicationUnavailable)
-	require.NotErrorIs(t, err, ErrNextcloudPublicationDenied)
+	assertRetiredReadUnchanged(t, saved, func() error { return guard.Check(ctx, saved, LineageReadScope{}) })
+	require.Zero(t, snapshots.calls)
+	require.EqualError(t, snapshots.batchErr, "snapshot store offline")
 }

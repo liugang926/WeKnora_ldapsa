@@ -66,13 +66,12 @@ func TestCollectionHTTPReadLeaseBlocksGCThroughActualFAQTagAndList(t *testing.T)
 	for _, kind := range []string{"faq", "tag", "knowledge"} {
 		t.Run(kind, func(t *testing.T) {
 			var db *gorm.DB
-			var groups *outputHTTPGroups
 			var serve func() int
 			switch kind {
 			case "faq":
 				h, _, actualDB, inputs, _, _, ctx := faqActualHTTPFixture(t)
 				db = actualDB
-				groups = &outputHTTPGroups{allowed: true}
+				groups := &outputHTTPGroups{allowed: true}
 				guard := access.NewNextcloudSourceLineageGuard(
 					nil,
 					faqHTTPKB{collectionHTTPKB{db: db}},
@@ -93,8 +92,8 @@ func TestCollectionHTTPReadLeaseBlocksGCThroughActualFAQTagAndList(t *testing.T)
 					).Code
 				}
 			case "tag":
-				h, actualDB, _, actualGroups := tagHTTPFixture(t)
-				db, groups = actualDB, actualGroups
+				h, actualDB, _, _ := tagHTTPFixture(t)
+				db = actualDB
 				serve = func() int {
 					return serveTagHTTP(
 
@@ -106,25 +105,20 @@ func TestCollectionHTTPReadLeaseBlocksGCThroughActualFAQTagAndList(t *testing.T)
 					).Code
 				}
 			case "knowledge":
-				h, actualDB, _, actualGroups, _, _ := collectionHTTPFixture(t)
-				db, groups = actualDB, actualGroups
+				h, actualDB, _, _, _, _ := collectionHTTPFixture(t)
+				db = actualDB
 				serve = func() int {
 					return serveCollectionHTTP(h, "/knowledge-bases/kb/knowledge", false).Code
 				}
 			}
 			store, retired, notBefore := fixtureRetiredCollectionGeneration(t, db)
-			observed := false
-			groups.hook = func(int) {
-				if observed {
-					return
-				}
-				observed = true
+			observed := onKnowledgeOutputRead(t, db, "collection_gc_observation", func(_ *gorm.DB) {
 				require.Positive(t, activeCollectionLeases(t, db))
 				_, err := store.ClaimKnowledgeGC(context.Background(), retired, notBefore, time.Minute)
 				require.ErrorIs(t, err, repository.ErrNextcloudContentGCBusy)
-			}
+			})
 			require.Equal(t, http.StatusOK, serve())
-			require.True(t, observed)
+			require.True(t, *observed)
 			require.Zero(t, activeCollectionLeases(t, db))
 			_, err := store.ClaimKnowledgeGC(context.Background(), retired, notBefore, time.Minute)
 			require.NoError(t, err)
@@ -133,17 +127,14 @@ func TestCollectionHTTPReadLeaseBlocksGCThroughActualFAQTagAndList(t *testing.T)
 }
 
 func TestCollectionHTTPReadLeaseExpirationSuppressesActualOutput(t *testing.T) {
-	h, db, _, groups := tagHTTPFixture(t)
-	groups.hook = func(call int) {
-		if call == 1 {
-			require.Positive(t, activeCollectionLeases(t, db))
-			require.NoError(
-				t,
-				db.Exec("UPDATE nextcloud_content_leases SET expires_at_ms=1 WHERE released_at_ms IS NULL").Error,
-			)
-		}
-	}
+	h, db, _, _ := tagHTTPFixture(t)
+	observed := onKnowledgeOutputRead(t, db, "collection_expire_read", func(actual *gorm.DB) {
+		require.NoError(t, actual.Exec(
+			"UPDATE nextcloud_content_leases SET expires_at_ms=1 WHERE released_at_ms IS NULL",
+		).Error)
+	})
 	w := serveTagHTTP(collectionHumanInputContext(7), h, http.MethodGet, "/knowledge-bases/kb/tags", "")
+	require.True(t, *observed)
 	require.NotEqual(t, http.StatusOK, w.Code)
 	require.NotContains(t, w.Body.String(), "knowledge_count")
 	require.Zero(t, activeCollectionLeases(t, db))

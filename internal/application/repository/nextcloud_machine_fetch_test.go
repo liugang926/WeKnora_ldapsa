@@ -173,19 +173,12 @@ func TestNextcloudAutomaticSyncManagerPurposeRechecksAuthorityWithIndependentBod
 				require.NoError(t, f.db.Model(&types.DataSource{}).Where("id = ?", ds.ID).
 					Update("status", types.DataSourceStatusPaused).Error)
 			}
-			require.Error(
-				t,
-				f.store.CheckNextcloudAutomaticSyncManagerPurpose(owned, 7, op.KnowledgeBaseID, ds.ID),
-				"a held independent body lease cannot preserve revoked manager authority",
-			)
+			err = f.store.CheckNextcloudAutomaticSyncManagerPurpose(owned, 7, op.KnowledgeBaseID, ds.ID)
 			if mode == "manager unavailable" {
-				f.managerUnknown.Store(false)
-				require.NoError(
-					t,
-					f.store.CheckNextcloudAutomaticSyncManagerPurpose(owned, 7, op.KnowledgeBaseID, ds.ID),
-					"a later retry must succeed after manager availability is restored",
-				)
+				require.NoError(t, err, "the exact durable manager purpose survives a transient outage")
+				return
 			}
+			require.Error(t, err, "a held independent body lease cannot preserve revoked manager authority")
 		})
 	}
 }

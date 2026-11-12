@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
@@ -17,6 +18,37 @@ import (
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
 )
+
+type knowledgeQAHTTPCheckKey struct{}
+
+type knowledgeQAHTTPCheck struct {
+	ctx  context.Context
+	turn *types.RAGSourceLineage
+}
+
+// BeginKnowledgeQAHTTPBoundary shares the actual producer's current WeKnora
+// authorization and original-material owner with its HTTP sender. The check
+// uses the generation context, so a disconnected caller cannot revoke a valid
+// background generation. It does not invoke the retired Nextcloud read ACL.
+func BeginKnowledgeQAHTTPBoundary(
+	ctx context.Context,
+) (context.Context, func(context.Context) context.Context, func() error, func()) {
+	ctx, attachMaterial, checkMaterial, closeMaterial := BeginMessageMaterialHTTPBoundary(ctx)
+	current := &atomic.Pointer[knowledgeQAHTTPCheck]{}
+	ctx = context.WithValue(ctx, knowledgeQAHTTPCheckKey{}, current)
+	attach := func(target context.Context) context.Context {
+		return context.WithValue(attachMaterial(target), knowledgeQAHTTPCheckKey{}, current)
+	}
+	check := func() error {
+		if active := current.Load(); active != nil {
+			// The actual turn callback includes CheckHistoryMaterialLifetime;
+			// do not renew every original body twice at an idle checkpoint.
+			return active.turn.Check(active.ctx)
+		}
+		return checkMaterial()
+	}
+	return ctx, attach, check, closeMaterial
+}
 
 // KnowledgeQA performs knowledge base question answering with LLM summarization
 // Events are emitted through eventBus (references, answer chunks, completion)
@@ -288,7 +320,12 @@ func (s *sessionService) KnowledgeQA(
 	if req.CustomAgent != nil {
 		lineageScope.AgentID, lineageScope.AgentTenantID = req.CustomAgent.ID, req.CustomAgent.TenantID
 	}
-	ctx, err = s.eventManager.BeginSourceLineage(ctx, chatManage, lineageScope)
+	ctx, err = s.eventManager.BeginSourceLineage(
+		ctx,
+		chatManage,
+		lineageScope,
+		s.knowledgeQAAuthorizer(req.Session),
+	)
 	if err != nil {
 		return err
 	}
@@ -299,6 +336,9 @@ func (s *sessionService) KnowledgeQA(
 		"search_targets":     len(searchTargets),
 	}, nil, nil)
 	markMessageMaterialReady(ctx)
+	if current, ok := ctx.Value(knowledgeQAHTTPCheckKey{}).(*atomic.Pointer[knowledgeQAHTTPCheck]); ok {
+		current.Store(&knowledgeQAHTTPCheck{ctx: ctx, turn: types.RAGSourceLineageFromContext(ctx)})
+	}
 	err = s.KnowledgeQAByEvent(ctx, chatManage, pipeline)
 	if err == nil {
 		handoff = chatManage.SourceStreamResult != nil
@@ -806,6 +846,62 @@ func mergeTagScopesByKB(scopes []types.TagScope) map[string][]string {
 	return byKB
 }
 
+const knowledgeQAAuthorizationTimeout = 5 * time.Second
+
+// knowledgeQAAuthorizer revalidates ordinary knowledge chat against the
+// current WeKnora session owner and KB read policy. Nextcloud publication is a
+// source lifecycle proof, not a second read ACL for an attachment-free chat.
+func (s *sessionService) knowledgeQAAuthorizer(
+	expectedSession *types.Session,
+) func(context.Context, *types.SourceLineage, access.LineageReadScope) error {
+	if expectedSession == nil || expectedSession.ID == "" || expectedSession.TenantID == 0 ||
+		expectedSession.UserID == "" {
+		return func(context.Context, *types.SourceLineage, access.LineageReadScope) error {
+			return ErrResourceAccessDenied
+		}
+	}
+	return func(
+		checkCtx context.Context,
+		lineage *types.SourceLineage,
+		checkScope access.LineageReadScope,
+	) error {
+		if checkCtx == nil || checkCtx.Err() != nil {
+			if checkCtx != nil {
+				return checkCtx.Err()
+			}
+			return context.Canceled
+		}
+		if lineage == nil || lineage.RequireComplete() != nil {
+			return types.ErrSourceLineageInvalid
+		}
+		if s.sessionRepo == nil {
+			return access.ErrNextcloudPublicationUnavailable
+		}
+
+		authorizationCtx, cancel := context.WithTimeout(checkCtx, knowledgeQAAuthorizationTimeout)
+		defer cancel()
+		current, err := s.GetOwnedSession(authorizationCtx, expectedSession.ID)
+		if err != nil {
+			return fmt.Errorf("revalidate knowledge chat session authorization: %w", err)
+		}
+		if current == nil || current.ID != expectedSession.ID ||
+			current.TenantID != expectedSession.TenantID || current.UserID != expectedSession.UserID {
+			return ErrResourceAccessDenied
+		}
+		if err := s.revalidateSearchTargets(authorizationCtx, checkScope.Targets); err != nil {
+			return err
+		}
+		if lifecycle, ok := s.sourceLineageGuard.(interface {
+			CheckSourceLifecycle(context.Context, *types.SourceLineage) error
+		}); ok {
+			if err := lifecycle.CheckSourceLifecycle(authorizationCtx, lineage); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
 func uniqueNonEmptyStrings(values []string) []string {
 	seen := make(map[string]bool, len(values))
 	out := make([]string, 0, len(values))
@@ -1030,6 +1126,13 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 				"error_type":  err.ErrorType,
 				"description": err.Description,
 			})
+			if err.Err == nil {
+				// A stage failed without a cause must surface as a visible
+				// failure. Returning nil here used to end the turn as a
+				// silent success: no answer, no error event and an
+				// incomplete assistant message.
+				return fmt.Errorf("pipeline stage %s failed without a cause: %s", eventType, err.Description)
+			}
 			return err.Err
 		}
 
@@ -1197,8 +1300,12 @@ func (s *sessionService) handleFixedFallback(ctx context.Context, chatManage *ty
 
 // handleModelFallback handles model-based fallback response using streaming
 func (s *sessionService) handleModelFallback(ctx context.Context, chatManage *types.ChatManage) {
-	if turn := types.RAGSourceLineageFromContext(ctx); turn != nil {
-		// Document-listing metadata has no covered producer contract.
+	if turn := types.RAGSourceLineageFromContext(ctx); turn != nil && turn.RequiresCompleteProducerLineage() {
+		// Strict material turns have no producer contract for a document-
+		// listing fallback. Marking the turn unknown makes the caller's
+		// turn.Check fail loudly instead of silently streaming nothing.
+		// ACL-mode turns (ordinary WeKnora-authorized chat) keep the official
+		// behaviour: a marked, source-independent fallback answer streams.
 		_ = turn.Add(types.UnknownSourceLineage())
 		return
 	}
@@ -1347,32 +1454,30 @@ func (s *sessionService) renderFallbackPrompt(ctx context.Context, chatManage *t
 // associated with the current pipeline. This gives the LLM visibility into KB contents
 // when vector/keyword search returns empty (e.g., broad browse queries).
 func (s *sessionService) buildKBDocumentListing(ctx context.Context, chatManage *types.ChatManage) string {
-	// Collect unique KB IDs from search targets
-	kbIDs := make(map[string]struct{})
-	for _, t := range chatManage.SearchTargets {
-		kbIDs[t.KnowledgeBaseID] = struct{}{}
-	}
-	for _, id := range chatManage.KnowledgeBaseIDs {
-		kbIDs[id] = struct{}{}
-	}
-	if len(kbIDs) == 0 {
-		return ""
-	}
-
+	// The resolved targets already incorporate document mentions, tag filters
+	// and the KB group policy. Raw request IDs can include rejected targets.
 	const maxDocuments = 50
 	var b strings.Builder
 	total := 0
-
-	for kbID := range kbIDs {
+	seen := make(map[string]bool)
+	permissions := kbReadPermissions(ctx, s.kbShareService)
+	for _, target := range chatManage.SearchTargets {
 		if total >= maxDocuments {
 			break
 		}
-		kb, err := s.knowledgeBaseService.GetKnowledgeBaseByID(ctx, kbID)
-		if err != nil || kb == nil || kb.EverHadNextcloudSource {
-			// Generic fallback prompts cannot prove per-file AD authorization.
+		if target == nil || target.KnowledgeBaseID == "" || target.TenantID == 0 {
 			continue
 		}
-		knowledges, err := s.knowledgeService.ListKnowledgeByKnowledgeBaseID(ctx, kbID)
+		kbID := target.KnowledgeBaseID
+		kb, err := s.knowledgeBaseService.GetKnowledgeBaseByID(ctx, kbID)
+		if err != nil || kb == nil || kb.ID != kbID || kb.TenantID != target.TenantID {
+			continue
+		}
+		granted, err := permissions.Check(kbID, kb.TenantID, types.OrgRoleViewer)
+		if err != nil || !granted || s.revalidateSearchTargets(ctx, types.SearchTargets{target}) != nil {
+			continue
+		}
+		knowledges, err := s.fallbackTargetDocuments(types.WithExecutionTenant(ctx, kb.TenantID), target)
 		if err != nil {
 			logger.Warnf(ctx, "buildKBDocumentListing: failed to list knowledge for KB %s: %v", kbID, err)
 			continue
@@ -1381,7 +1486,8 @@ func (s *sessionService) buildKBDocumentListing(ctx context.Context, chatManage 
 			if total >= maxDocuments {
 				break
 			}
-			if k.EnableStatus != "enabled" {
+			if k == nil || k.ID == "" || k.TenantID != kb.TenantID || k.KnowledgeBaseID != kbID ||
+				k.EnableStatus != "enabled" || seen[k.ID] {
 				continue
 			}
 			title := k.Title
@@ -1391,6 +1497,7 @@ func (s *sessionService) buildKBDocumentListing(ctx context.Context, chatManage 
 			if title == "" {
 				continue
 			}
+			seen[k.ID] = true
 			fmt.Fprintf(&b, "- %s", title)
 			if k.FileType != "" {
 				fmt.Fprintf(&b, " (%s)", k.FileType)
@@ -1416,6 +1523,31 @@ func (s *sessionService) buildKBDocumentListing(ctx context.Context, chatManage 
 	}
 
 	return b.String()
+}
+
+// fallbackTargetDocuments reads only the documents selected for this turn.
+func (s *sessionService) fallbackTargetDocuments(
+	ctx context.Context, target *types.SearchTarget,
+) ([]*types.Knowledge, error) {
+	ids := target.KnowledgeIDs
+	tags := uniqueNonEmptyStrings(append(append([]string{}, target.TagIDs...), target.ScopeTagIDs...))
+	if len(tags) > 0 {
+		tagged, err := s.knowledgeService.ListKnowledgeIDsByTagIDs(ctx, target.TenantID, target.KnowledgeBaseID, tags)
+		if err != nil {
+			return nil, err
+		}
+		if len(ids) > 0 {
+			ids = intersectStrings(ids, tagged)
+		} else {
+			ids = tagged
+		}
+	} else if target.Type == types.SearchTargetTypeKnowledgeBase && len(ids) == 0 {
+		return s.knowledgeService.ListKnowledgeByKnowledgeBaseID(ctx, target.KnowledgeBaseID)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	return s.knowledgeService.GetKnowledgeBatch(ctx, target.TenantID, ids)
 }
 
 // consumeFallbackStream consumes the streaming response and emits events

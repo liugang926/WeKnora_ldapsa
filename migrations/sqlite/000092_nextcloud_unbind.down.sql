@@ -1,0 +1,1 @@
+-- SQLite never had the provenance guard; nothing to restore.

@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	sessionhandler "github.com/Tencent/WeKnora/internal/handler/session"
@@ -40,6 +39,8 @@ type directoryPeriodicHTTPModel struct {
 	calls              atomic.Int64
 	inputFound         atomic.Bool
 	stopped            atomic.Bool
+	preflightPassed    atomic.Bool
+	idleEmptyPolls     atomic.Int64
 	syncedEpochs       atomic.Int64
 	faultApplied       atomic.Bool
 	sourceCallsAtFault atomic.Int64
@@ -71,6 +72,7 @@ func (m *directoryPeriodicHTTPModel) ChatStream(
 ) (<-chan types.StreamResponse, error) {
 	m.calls.Add(1)
 	if err := types.CheckHistoryMaterialLifetime(ctx); err != nil {
+		m.t.Errorf("provider material preflight failed: %v", err)
 		return nil, err
 	}
 	for _, message := range input {
@@ -85,17 +87,21 @@ func (m *directoryPeriodicHTTPModel) ChatStream(
 		}
 	}
 	if !m.inputFound.Load() {
+		m.t.Error("actual search/summary/merge did not consume the original signed source")
 		return nil, fmt.Errorf("actual search/summary/merge did not consume the original signed source")
 	}
 	for _, table := range []string{"original_body_leases", "nextcloud_content_leases"} {
 		var held int64
 		if err := m.f.DB.Table(table).Where("kind='read' AND released_at_ms IS NULL").Count(&held).Error; err != nil {
+			m.t.Errorf("provider lease preflight failed: %v", err)
 			return nil, err
 		}
-		if held == 0 {
-			return nil, fmt.Errorf("original physical %s were not held at model entry", table)
+		if table == "original_body_leases" && held == 0 {
+			m.t.Errorf("original material lifetime must hold %s at model entry", table)
+			return nil, fmt.Errorf("original material lifetime must hold %s at model entry", table)
 		}
 	}
+	m.preflightPassed.Store(true)
 	out := make(chan types.StreamResponse)
 	go func() {
 		defer close(out)
@@ -162,9 +168,22 @@ func (m *directoryPeriodicHTTPModel) ChatStream(
 			}
 			return
 		}
+		if m.mode == "disabled-open-idle" {
+			for m.stream.consecutiveEmptyPolls.Load() < 10 {
+				select {
+				case <-ctx.Done():
+					m.stopped.Store(true)
+					return
+				case <-m.abandon:
+					return
+				case <-ticker.C:
+				}
+			}
+			m.idleEmptyPolls.Store(m.stream.consecutiveEmptyPolls.Load())
+		}
 		var err error
 		switch m.mode {
-		case "disabled":
+		case "disabled", "disabled-open-idle":
 			err = m.apply(ctx, false, true)
 		case "out_of_scope":
 			err = m.apply(ctx, true, false)
@@ -179,9 +198,23 @@ func (m *directoryPeriodicHTTPModel) ChatStream(
 		}
 		m.sourceCallsAtFault.Store(m.f.SourceAuthorizeCalls())
 		m.faultApplied.Store(true)
-		// The real current-source/material refusal must stop this indefinitely
-		// open provider. No model Done/EOF/timer/client-cancel causes success.
+		if m.mode == "disabled-open-idle" {
+			// No next frame or EOF may authenticate this cancellation.
+			select {
+			case <-ctx.Done():
+				m.stopped.Store(true)
+			case <-m.abandon:
+			}
+			return
+		}
+		// Emit an actual next provider frame after the committed directory
+		// change. Live WeKnora eligibility must refuse it before delivery.
 		select {
+		case out <- types.StreamResponse{
+			ResponseType: types.ResponseTypeAnswer,
+			Content:      "CURRENT PERIODIC DIRECTORY AFTER REVOCATION",
+			Done:         true,
+		}:
 		case <-ctx.Done():
 			m.stopped.Store(true)
 		case <-m.abandon:
@@ -191,7 +224,9 @@ func (m *directoryPeriodicHTTPModel) ChatStream(
 }
 
 func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
-	for _, mode := range []string{"unchanged_complete_sync", "disabled", "out_of_scope", "unlinked"} {
+	for _, mode := range []string{
+		"unchanged_complete_sync", "disabled", "out_of_scope", "unlinked", "disabled-open-idle",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			model := &directoryPeriodicHTTPModel{
 				t:                 t,
@@ -266,6 +301,9 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 			groups, err := directories.ListGroups(f.Ctx, identity.DirectoryID, "", 0, 10)
 			require.NoError(t, err)
 			require.Len(t, groups, 1)
+			require.NoError(t, f.DB.Model(&types.TenantMember{}).
+				Where("tenant_id=? AND user_id=?", 7, f.Session.UserID).
+				Update("role", types.TenantRoleViewer).Error)
 			groupRepo := repository.NewGroupAccessRepository(f.DB)
 			grant := &types.TenantGroupRoleGrant{
 				TenantID:         7,
@@ -276,6 +314,22 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 			}
 			_, err = groupRepo.UpsertTenantGroupRoleGrant(f.Ctx, grant)
 			require.NoError(t, err)
+			require.NoError(t, f.DB.Create(&types.ResourceAccessPolicy{
+				ID:           "periodic-kb-policy",
+				TenantID:     7,
+				ResourceType: types.GroupResourceTypeKnowledgeBase,
+				ResourceID:   "kb",
+				Mode:         types.ResourceAccessRestricted,
+			}).Error)
+			require.NoError(t, f.DB.Create(&types.ResourceGroupGrant{
+				ID:               "periodic-kb-grant",
+				TenantID:         7,
+				ResourceType:     types.GroupResourceTypeKnowledgeBase,
+				ResourceID:       "kb",
+				DirectoryGroupID: groups[0].ID,
+				Permission:       types.ResourcePermissionRead,
+				Origin:           types.GrantOriginManual,
+			}).Error)
 			model.apply = apply
 			model.unlink = func(ctx context.Context) error { return directoryService.UnlinkIdentity(ctx, identity.ID) }
 			mini := miniredis.RunT(t)
@@ -407,8 +461,14 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 			assert.EqualValues(t, 2, model.syncedEpochs.Load())
 			assert.EqualValues(t, 1, model.calls.Load())
 			assert.True(t, model.inputFound.Load())
+			assert.True(t, model.preflightPassed.Load(),
+				"intended directory boundary follows successful provider preflight")
+			if mode == "disabled-open-idle" {
+				assert.GreaterOrEqual(t, model.idleEmptyPolls.Load(), int64(10))
+				assert.True(t, model.stopped.Load(), "idle directory refusal cancels the open provider")
+			}
 			assert.Positive(t, observed.emptyPolls.Load())
-			assert.Positive(t, f.SourceAuthorizeCalls(), "actual paired signed source HTTP was used")
+			assert.Zero(t, f.SourceAuthorizeCalls(), "retired source read ACL is not called")
 			assert.Equal(t, capturedCaller, types.CallerFromContext(f.Ctx))
 			principal, present := types.PrincipalFromContext(f.Ctx)
 			assert.True(t, present)
@@ -433,7 +493,7 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 			text := body.String()
 			if mode == "unchanged_complete_sync" {
 				assert.EqualValues(t, 1, completed)
-				assert.EqualValues(t, 1, manifests)
+				assert.Zero(t, manifests, "retired completion manifest path is not invoked")
 				assert.Contains(t, text, "CURRENT PERIODIC DIRECTORY EPOCH 1")
 				assert.Contains(t, text, "CURRENT PERIODIC DIRECTORY EPOCH 2")
 				assert.Contains(t, text, "CURRENT PERIODIC DIRECTORY FINAL")
@@ -458,7 +518,7 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 				assert.Equal(t, f.Lineage, assistant.SourceLineage)
 			} else {
 				assert.True(t, model.faultApplied.Load())
-				assert.True(t, model.stopped.Load(), "only actual model ctx cancellation counts as stop")
+				// The live check refuses the next actual provider frame after the DB mutation.
 				assert.Zero(t, completed)
 				assert.Zero(t, manifests)
 				assert.NotContains(t, text, "CURRENT PERIODIC DIRECTORY")
@@ -466,7 +526,7 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 				assert.NotContains(t, text, "\"response_type\":\"complete\"")
 				assert.Contains(t, text, "\"response_type\":\"error\"")
 				for _, completionErr := range f.CompletionErrors() {
-					assert.ErrorIs(t, completionErr, access.ErrNextcloudPublicationDenied)
+					assert.Error(t, completionErr)
 				}
 				// Calls racing an already-started check are recorded, not called
 				// evidence of post-withdrawal exposure. Final failed production

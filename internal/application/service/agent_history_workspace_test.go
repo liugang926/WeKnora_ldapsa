@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -109,7 +110,7 @@ func (m *historyBoundaryModel) ChatStream(
 	return out, nil
 }
 
-func TestAgentHistoryAdmissionFallbackBlocksOldWorkspaceReadAndExec(t *testing.T) {
+func TestAgentHistoryAdmissionControlsOldWorkspaceReadAndExec(t *testing.T) {
 	for _, exclude := range []bool{false, true} {
 		t.Run(fmt.Sprintf("exclude-history-%t", exclude), func(t *testing.T) {
 			files := &historyBoundaryFileStore{}
@@ -191,15 +192,10 @@ func TestAgentHistoryAdmissionFallbackBlocksOldWorkspaceReadAndExec(t *testing.T
 				}
 				require.Contains(t, output.String(), "new plain answer")
 			} else {
-				require.Error(
-					t,
-					err,
-					"retained sandbox bytes have no typed source adapter in the accepted release scope",
-				)
-				require.Zero(t, files.reads)
-				require.Zero(t, shell.calls)
-				require.False(t, model.sawMarker)
-				require.NotContains(t, output.String(), protectedHistoryFileMarker)
+				require.NoError(t, err)
+				require.Positive(t, files.reads, "the current WeKnora session owns its retained workspace")
+				require.True(t, model.sawMarker)
+				require.Contains(t, output.String(), protectedHistoryFileMarker)
 			}
 		})
 	}
@@ -215,7 +211,7 @@ func (r *retainedContextHistoryRepo) GetSessionAttachments(context.Context, stri
 	return nil, nil
 }
 
-func TestAgentHistoryAdmissionBothModesIsolateRetainedWorkspaceAtAgentQA(t *testing.T) {
+func TestAgentHistoryAdmissionBothModesUseWeKnoraACLForRetainedWorkspaceAtAgentQA(t *testing.T) {
 	for _, multiTurn := range []bool{false, true} {
 		for _, scenario := range []string{
 			"ever-source",
@@ -284,43 +280,43 @@ func TestAgentHistoryAdmissionBothModesIsolateRetainedWorkspaceAtAgentQA(t *test
 				}
 				ctx := actualAgentHistoryRequest(t, svc, req)
 				err := svc.AgentQA(ctx, req, bus)
-				unadmittedWorkspace := scenario == "legacy-no-source-state" && !multiTurn
-				if unadmittedWorkspace {
-					require.ErrorIs(t, err, access.ErrNextcloudPublicationUnavailable)
-					require.Zero(t, model.calls, "single-turn cannot stage an unadmitted retained workspace")
-				} else {
-					require.NoError(t, err)
-				}
+				require.NoError(t, err, "Nextcloud source-state probes are not part of the WeKnora session ACL")
 				require.Equal(
 					t,
 					multiTurn,
 					req.CustomAgent.Config.MultiTurnEnabled,
 					"the single-turn case must not be defaulted into multi-turn",
 				)
-				// A global no-source fact cannot certify raw legacy history or sandbox bytes.
-				{
-					require.Zero(t, repo.attachmentLoads)
-					if scenario == "legacy-no-source-state" && multiTurn {
-						require.Equal(t, 1, repo.pages, "the literal legacy rows are rejected before model input")
-						require.Equal(t, 1, repo.checkpointReads)
-					} else {
-						require.Zero(t, repo.pages)
-						require.Zero(t, repo.checkpointReads)
-					}
-					require.Zero(t, files.reads)
-					require.Zero(t, shell.calls)
-					require.False(t, model.sawMarker)
-					require.NotContains(t, output.String(), protectedHistoryFileMarker)
-					if unadmittedWorkspace {
-						require.NotContains(t, output.String(), "new plain answer")
-					} else {
-						require.Contains(t, output.String(), "new plain answer")
-					}
-					for _, tool := range []string{tools.ToolReadFile, tools.ToolShellExec, tools.ToolListSandboxFiles} {
-						require.NotContains(t, model.offered, tool)
-					}
+				require.Equal(t, 1, repo.attachmentLoads)
+				if multiTurn {
+					require.Equal(t, 1, repo.pages)
+					require.Equal(t, 1, repo.checkpointReads)
+				} else {
+					require.Zero(t, repo.pages)
+					require.Zero(t, repo.checkpointReads)
+				}
+				require.Positive(t, files.reads, "WeKnora session ACL must allow the retained workspace")
+				require.True(t, model.sawMarker)
+				require.Contains(t, output.String(), protectedHistoryFileMarker)
+				for _, tool := range []string{tools.ToolReadFile, tools.ToolShellExec} {
+					require.Contains(t, model.offered, tool)
 				}
 			})
 		}
 	}
+}
+
+func TestSandboxShellLineageAdapterUsesWeKnoraSessionScope(t *testing.T) {
+	shell := &historyBoundaryShell{}
+	ctx := types.WithSessionID(context.Background(), "session")
+	result, err := tools.NewShellExecTool(shell, nil).ExecuteSourceLineage(
+		ctx,
+		json.RawMessage(`{"command":"cat /workspace/output/old-protected.txt"}`),
+	)
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	require.Contains(t, result.Output, protectedHistoryFileMarker)
+	require.NoError(t, result.SourceLineage.RequireComplete())
+	require.Empty(t, result.SourceLineage.Sources)
+	require.Equal(t, 1, shell.calls)
 }

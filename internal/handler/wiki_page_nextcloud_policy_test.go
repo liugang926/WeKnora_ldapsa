@@ -30,7 +30,7 @@ func (wikiDerivedSourceRepo) FindByKnowledgeBase(context.Context, string) ([]*ty
 	}}, nil
 }
 
-func TestWikiRouteRejectsNextcloudSourceBeforeReadingPage(t *testing.T) {
+func TestWikiRouteAcceptsWikiEnabledWorkspaceWithNextcloudSource(t *testing.T) {
 	h := &WikiPageHandler{
 		kbService: &stubKBService{get: func(_ context.Context, _ string) (*types.KnowledgeBase, error) {
 			return &types.KnowledgeBase{
@@ -42,8 +42,10 @@ func TestWikiRouteRejectsNextcloudSourceBeforeReadingPage(t *testing.T) {
 		dataSourceRepo: wikiDerivedSourceRepo{},
 	}
 	c := newKBLookupCtx(t, 7, "kb")
+	c.Set(types.TenantIDContextKey.String(), uint64(7))
 	c.Params = gin.Params{{Key: "kb_id", Value: "kb"}}
-	_, _, err := h.validateWikiKB(c)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Wiki is unavailable")
+	id, tenant, err := h.validateWikiKB(c)
+	require.NoError(t, err)
+	require.Equal(t, "kb", id)
+	require.EqualValues(t, 7, tenant)
 }

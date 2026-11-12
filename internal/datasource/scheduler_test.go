@@ -263,6 +263,19 @@ func (r *fakeDataSourceRepo) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+func (r *fakeDataSourceRepo) FindSchedulable(_ context.Context) ([]*types.DataSource, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var result []*types.DataSource
+	for _, ds := range r.dataSources {
+		if (ds.Status == types.DataSourceStatusActive || ds.Status == types.DataSourceStatusError) &&
+			ds.SyncSchedule != "" {
+			result = append(result, ds)
+		}
+	}
+	return result, nil
+}
+
 func (r *fakeDataSourceRepo) FindActive(_ context.Context) ([]*types.DataSource, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -365,6 +378,14 @@ func (r *fakeSyncLogRepo) CancelPendingByDataSource(_ context.Context, dsID stri
 }
 
 func (r *fakeSyncLogRepo) CleanupOldLogs(_ context.Context, retentionDays int) error {
+	return nil
+}
+
+func (r *fakeSyncLogRepo) ConsecutiveFailures(_ context.Context, _ string) (int, time.Time, error) {
+	return 0, time.Time{}, nil
+}
+
+func (r *fakeSyncLogRepo) UpdateProgress(_ context.Context, _ string, _ map[string]any) error {
 	return nil
 }
 

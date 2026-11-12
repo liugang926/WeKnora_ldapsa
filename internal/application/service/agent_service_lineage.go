@@ -18,22 +18,52 @@ import (
 // emitted citations. It is transferred to the shared HTTP owner before any
 // model call and must not reenter that owner's boundary while being checked.
 type agentPromptInputGuard struct {
-	mu           sync.Mutex
-	ctx          context.Context
-	knowledge    *knowledgeService
-	store        *repository.KnowledgeInputProvenanceStore
-	checker      knowledgeOutputLineageChecker
-	targets      types.SearchTargets
-	physical     *readlease.NextcloudReadGuard
-	bases        []*repository.KnowledgeBasePromptInputSnapshot
-	documents    []*types.KnowledgeBuildInputSnapshot
-	kbInfos      []*agent.KnowledgeBaseInfo
-	selectedDocs []*agent.SelectedDocumentInfo
-	origin       *agent.QuestionOriginInfo
-	body         string
-	builtinCheck func(context.Context) error
-	closed       bool
-	held         bool
+	mu            sync.Mutex
+	ctx           context.Context
+	physical      *readlease.NextcloudReadGuard
+	bases         []*repository.KnowledgeBasePromptInputSnapshot
+	documents     []*types.KnowledgeBuildInputSnapshot
+	kbInfos       []*agent.KnowledgeBaseInfo
+	selectedDocs  []*agent.SelectedDocumentInfo
+	origin        *agent.QuestionOriginInfo
+	body          string
+	builtinCheck  func(context.Context) error
+	closed        bool
+	held          bool
+	promptLineage *types.SourceLineage
+}
+
+type agentExplicitInputMaterialsKey struct{}
+
+// withAgentExplicitInputMaterials records the server-side request classification.
+// A KB, mentioned document, question origin or plain text is retrieval context,
+// not a Nextcloud material admission.
+func withAgentExplicitInputMaterials(ctx context.Context, explicit bool) context.Context {
+	return context.WithValue(ctx, agentExplicitInputMaterialsKey{}, explicit)
+}
+
+func agentExplicitInputMaterials(ctx context.Context) bool {
+	explicit, _ := ctx.Value(agentExplicitInputMaterialsKey{}).(bool)
+	return explicit
+}
+
+func shouldHoldAgentPromptInputs(
+	ctx context.Context,
+	inputs *agentPromptInputGuard,
+	builtinCheck func(context.Context) error,
+) bool {
+	if !agentExplicitInputMaterials(ctx) || inputs == nil {
+		return false
+	}
+	return len(inputs.bases) > 0 || len(inputs.documents) > 0 || builtinCheck != nil
+}
+
+func sourceIndependentPromptLineage() *types.SourceLineage {
+	lineage, err := types.NewCompleteSourceLineage()
+	if err != nil {
+		return types.UnknownSourceLineage()
+	}
+	return lineage
 }
 
 func agentPromptProjectionBody(g *agentPromptInputGuard) (string, error) {
@@ -65,7 +95,7 @@ func agentPromptProjectionBody(g *agentPromptInputGuard) (string, error) {
 	return string(body), err
 }
 
-// CheckHeld revalidates private producers without reentering the HTTP owner.
+// CheckHeld binds held prompt bytes and the server-selected template to their consumer.
 func (g *agentPromptInputGuard) CheckHeld() error {
 	if g == nil {
 		return access.ErrNextcloudPublicationUnavailable
@@ -75,85 +105,14 @@ func (g *agentPromptInputGuard) CheckHeld() error {
 	if g.closed || g.ctx == nil || g.ctx.Err() != nil {
 		return access.ErrNextcloudPublicationUnavailable
 	}
-	checkBody := func() error {
-		actual, err := agentPromptProjectionBody(g)
-		if err != nil || actual != g.body {
-			return access.ErrNextcloudPublicationDenied
-		}
-		return nil
-	}
-	if err := checkBody(); err != nil {
-		return err
+	body, err := agentPromptProjectionBody(g)
+	if err != nil || body != g.body {
+		return access.ErrNextcloudPublicationDenied
 	}
 	if g.builtinCheck != nil {
-		if err := g.builtinCheck(g.ctx); err != nil {
-			return err
-		}
+		return g.builtinCheck(g.ctx)
 	}
-	if g.physical == nil {
-		return checkBody()
-	}
-	if g.store == nil || g.knowledge == nil || g.checker == nil {
-		return access.ErrNextcloudPublicationUnavailable
-	}
-	if err := g.physical.Verify(); err != nil {
-		return err
-	}
-	if err := g.knowledge.CheckNextcloudReadTargets(g.ctx, g.targets); err != nil {
-		return err
-	}
-	scope := access.LineageReadScope{Targets: g.targets}
-	var proofs []*types.KnowledgeBuildInputProof
-	// Recheck local original bodies after every current remote authorization.
-	// Never acquire a newer original admission to certify retained prompt text.
-	for round := 0; round < 2; round++ {
-		for _, base := range g.bases {
-			metadata := base.Metadata()
-			if err := g.checker.Check(g.ctx, metadata.SourceLineage, scope); err != nil {
-				return err
-			}
-			if err := g.store.RecheckKnowledgeBasePromptInputs(g.ctx, base); err != nil {
-				return err
-			}
-		}
-		proofs = nil
-		for _, document := range g.documents {
-			if document == nil || document.Proof == nil {
-				return types.ErrSourceLineageUnknown
-			}
-			if err := g.checker.Check(g.ctx, document.Proof.SourceLineage, scope); err != nil {
-				return err
-			}
-			proofs = append(proofs, document.Proof)
-		}
-		if len(proofs) > 0 {
-			if err := g.store.RecheckKnowledgeOutputInputs(g.ctx, proofs); err != nil {
-				return err
-			}
-		}
-		if err := g.physical.Verify(); err != nil {
-			return err
-		}
-	}
-	if err := g.knowledge.CheckNextcloudReadTargets(g.ctx, g.targets); err != nil {
-		return err
-	}
-	// The last current-grant call may execute a remote callback. Recheck the
-	// retained local producer versions after it, without another remote pass.
-	for _, base := range g.bases {
-		if err := g.store.RecheckKnowledgeBasePromptInputs(g.ctx, base); err != nil {
-			return err
-		}
-	}
-	if len(proofs) > 0 {
-		if err := g.store.RecheckKnowledgeOutputInputs(g.ctx, proofs); err != nil {
-			return err
-		}
-	}
-	if err := g.physical.Verify(); err != nil {
-		return err
-	}
-	return checkBody()
+	return nil
 }
 
 func (g *agentPromptInputGuard) Close() error {
@@ -201,21 +160,10 @@ func (s *agentService) prepareAgentPromptInputs(
 	ctx context.Context,
 	config *types.AgentConfig,
 ) (*agentPromptInputGuard, error) {
-	if access.UseWeKnoraReadAuthority() {
-		return s.prepareWeKnoraAgentPromptInputs(ctx, config)
-	}
-	return s.prepareStrictAgentPromptInputs(ctx, config)
-}
-
-func (s *agentService) prepareWeKnoraAgentPromptInputs(
-	ctx context.Context,
-	config *types.AgentConfig,
-) (*agentPromptInputGuard, error) {
 	g := &agentPromptInputGuard{ctx: ragPhysicalReadLifetimeContext(ctx)}
-	emptyLineage, err := types.NewCompleteSourceLineage()
-	if err != nil {
-		return nil, err
-	}
+	emptyLineage := sourceIndependentPromptLineage()
+	g.promptLineage = emptyLineage
+	var err error
 
 	// WeKnora owns the read boundary for WeKnora knowledge. Nextcloud source
 	// receipts describe lifecycle and provenance; they must not turn ordinary
@@ -261,164 +209,6 @@ func (s *agentService) prepareWeKnoraAgentPromptInputs(
 	return g, nil
 }
 
-func (s *agentService) prepareStrictAgentPromptInputs(
-	ctx context.Context,
-	config *types.AgentConfig,
-) (*agentPromptInputGuard, error) {
-	g := &agentPromptInputGuard{ctx: ragPhysicalReadLifetimeContext(ctx)}
-	kbIDs, _ := knowledgeBaseScopesForPrompt(config)
-	if len(kbIDs) == 0 && len(config.KnowledgeIDs) == 0 && config.QuestionOrigin == nil {
-		var err error
-		g.body, err = agentPromptProjectionBody(g)
-		return g, err
-	}
-	knowledge, ok := s.knowledgeService.(*knowledgeService)
-	if !ok || knowledge == nil {
-		return nil, access.ErrNextcloudPublicationUnavailable
-	}
-	store, ok := knowledge.knowledgeInputs.(*repository.KnowledgeInputProvenanceStore)
-	messages, messageOK := s.messageService.(*messageService)
-	if !ok || store == nil || !messageOK || messages == nil || messages.sourceLineageGuard == nil {
-		return nil, access.ErrNextcloudPublicationUnavailable
-	}
-	targets, err := cloneCollection(config.SearchTargets)
-	if err != nil {
-		return nil, err
-	}
-	g.knowledge, g.store, g.checker, g.targets = knowledge, store, messages.sourceLineageGuard, targets
-	g.physical, err = knowledge.BeginNextcloudRead(g.ctx, targets)
-	if err != nil {
-		return nil, err
-	}
-	g.ctx = g.physical.ContextFor(g.ctx)
-	fail := func(err error) (*agentPromptInputGuard, error) { _ = g.Close(); return nil, err }
-	byKB := map[string]*agent.KnowledgeBaseInfo{}
-	addBase := func(id string) (*agent.KnowledgeBaseInfo, error) {
-		if existing := byKB[id]; existing != nil {
-			return existing, nil
-		}
-		tenant := targets.GetTenantIDForKB(id)
-		if id == "" || tenant == 0 || !targets.ContainsKB(id) {
-			return nil, access.ErrNextcloudPublicationDenied
-		}
-		original, err := store.CaptureKnowledgeBasePromptInputs(g.ctx, tenant, id)
-		if err != nil {
-			return nil, err
-		}
-		g.bases = append(g.bases, original)
-		metadata := original.Metadata()
-		if metadata.IsTemporary {
-			return nil, nil
-		}
-		info := &agent.KnowledgeBaseInfo{
-			ID:                   metadata.KnowledgeBaseID,
-			Name:                 metadata.Name,
-			Type:                 metadata.Type,
-			Capabilities:         metadata.Capabilities,
-			SourceLineage:        metadata.SourceLineage,
-			OmitDocumentMetadata: true,
-		}
-		byKB[id] = info
-		return info, nil
-	}
-	for _, id := range kbIDs {
-		info, err := addBase(id)
-		if err != nil {
-			return fail(err)
-		}
-		if info != nil {
-			g.kbInfos = append(g.kbInfos, info)
-		}
-	}
-	ids := dedupStrings(append([]string{}, config.KnowledgeIDs...))
-	byDoc := map[string]*agent.SelectedDocumentInfo{}
-	if len(ids) > 0 {
-		tenant, _ := types.TenantIDFromContext(g.ctx)
-		candidates, err := knowledge.GetKnowledgeBatchWithSharedAccess(g.ctx, tenant, ids)
-		if err != nil {
-			return fail(err)
-		}
-		candidatesByID := map[string]*types.Knowledge{}
-		for _, candidate := range candidates {
-			if candidate != nil {
-				candidatesByID[candidate.ID] = candidate
-			}
-		}
-		for _, id := range ids {
-			candidate := candidatesByID[id]
-			if candidate == nil || candidate.ID != id || !targets.ContainsKB(candidate.KnowledgeBaseID) ||
-				targets.GetTenantIDForKB(candidate.KnowledgeBaseID) != candidate.TenantID {
-				return fail(access.ErrNextcloudPublicationDenied)
-			}
-			if err := g.physical.PinKnowledge(candidate); err != nil {
-				return fail(err)
-			}
-			original, err := store.CaptureKnowledgeOutputInputs(
-				g.ctx,
-				types.KnowledgeBuildInputCaptureRequest{
-					TenantID:        candidate.TenantID,
-					KnowledgeBaseID: candidate.KnowledgeBaseID,
-					KnowledgeID:     id,
-				},
-			)
-			if err != nil {
-				return fail(err)
-			}
-			if original == nil || original.Knowledge == nil || original.Proof == nil ||
-				original.Proof.SourceLineage.RequireComplete() != nil {
-				return fail(types.ErrSourceLineageUnknown)
-			}
-			actual := original.Knowledge
-			if actual.ID != id || actual.TenantID != candidate.TenantID ||
-				actual.KnowledgeBaseID != candidate.KnowledgeBaseID {
-				return fail(repository.ErrKnowledgeInputChanged)
-			}
-			if err := g.physical.PinKnowledge(actual); err != nil {
-				return fail(err)
-			}
-			g.documents = append(g.documents, original)
-			byDoc[id] = &agent.SelectedDocumentInfo{
-				KnowledgeID:     actual.ID,
-				KnowledgeBaseID: actual.KnowledgeBaseID,
-				Title:           actual.Title,
-				FileName:        actual.FileName,
-				FileType:        actual.FileType,
-				SourceLineage:   original.Proof.SourceLineage,
-			}
-		}
-	}
-	for _, id := range config.KnowledgeIDs {
-		if doc := byDoc[id]; doc != nil {
-			g.selectedDocs = append(g.selectedDocs, doc)
-		}
-	}
-	if source := config.QuestionOrigin; source != nil && source.KnowledgeBaseID != "" &&
-		targets.ContainsKB(source.KnowledgeBaseID) {
-		base, err := addBase(source.KnowledgeBaseID)
-		if err != nil {
-			return fail(err)
-		}
-		if base != nil {
-			g.origin = &agent.QuestionOriginInfo{
-				KnowledgeBaseID:   base.ID,
-				KnowledgeBaseName: base.Name,
-				SourceLineage:     base.SourceLineage,
-			}
-			if doc := byDoc[source.KnowledgeID]; doc != nil && doc.KnowledgeBaseID == base.ID {
-				g.origin.Document = doc
-			}
-		}
-	}
-	g.body, err = agentPromptProjectionBody(g)
-	if err != nil {
-		return fail(err)
-	}
-	if err := g.CheckHeld(); err != nil {
-		return fail(err)
-	}
-	return g, nil
-}
-
 type agentPromptInputEngine struct {
 	*agent.AgentEngine
 	inputs *agentPromptInputGuard
@@ -456,9 +246,11 @@ func (e *agentPromptInputEngine) Execute(
 	return e.AgentEngine.Execute(ctx, session, message, query, history, images...)
 }
 
-// A current DB row is an authorization/value check, not original provenance.
-// Only the exact image-owned builtin factory and YAML template bytes certify
-// the rendered template. A custom override or retained copy remains unknown.
+// builtinAgentPromptInput binds the exact server-resolved prompt to the
+// current WeKnora caller, session owner, Agent identity and live generation.
+// Nextcloud publication receipts are intentionally not part of this check:
+// a system prompt is WeKnora-owned input, while explicit user materials keep
+// their separate native-material path.
 func (s *agentService) builtinAgentPromptInput(
 	ctx context.Context,
 	config *types.AgentConfig,
@@ -467,33 +259,14 @@ func (s *agentService) builtinAgentPromptInput(
 	if template == "" {
 		return nil, nil, nil
 	}
-	if !access.UseWeKnoraReadAuthority() {
-		return s.strictBuiltinAgentPromptInput(ctx, config, sessionID, assistantID, template)
-	}
-	lineage, err := types.NewCompleteSourceLineage()
-	if err != nil {
-		return nil, nil, err
-	}
-	// The prompt is server-owned and the Agent/session were authorized by the
-	// WeKnora route. Nextcloud material receipts are not a prompt-read ACL.
-	return lineage, func(context.Context) error { return nil }, nil
-}
-
-func (s *agentService) strictBuiltinAgentPromptInput(
-	ctx context.Context,
-	config *types.AgentConfig,
-	sessionID, assistantID, template string,
-) (*types.SourceLineage, func(context.Context) error, error) {
 	messages, ok := s.messageService.(*messageService)
-	if !ok || messages == nil || messages.materialStore == nil || messages.sessionRepo == nil || s.db == nil ||
-		s.cfg == nil {
-		return nil, nil, types.ErrSourceLineageUnknown
+	if !ok || messages == nil || messages.materialStore == nil || messages.sessionRepo == nil ||
+		s.db == nil || config == nil {
+		return nil, nil, access.ErrNextcloudPublicationUnavailable
 	}
 	control, generation, err := messages.materialStore.MessageLiveControl(ctx, sessionID, assistantID)
 	if err != nil || control == nil || generation == "" || control.Role != "assistant" || control.IsCompleted ||
-		control.AgentID == "" ||
-		control.AgentTenantID == 0 ||
-		!types.IsBuiltinAgentID(control.AgentID) {
+		control.AgentID == "" || control.AgentTenantID == 0 {
 		return nil, nil, types.ErrSourceLineageUnknown
 	}
 	caller, callerOK := ctx.Value(types.CallerContextKey).(types.Caller)
@@ -502,13 +275,14 @@ func (s *agentService) strictBuiltinAgentPromptInput(
 	if !callerOK || !principalOK || !principal.Valid() || owner == "" {
 		return nil, nil, types.ErrSourceLineageUnknown
 	}
+
 	check := func(current context.Context) error {
 		if current == nil || current.Err() != nil {
 			return access.ErrNextcloudPublicationUnavailable
 		}
-		actualCaller, ok := current.Value(types.CallerContextKey).(types.Caller)
-		actualPrincipal, pOK := current.Value(types.PrincipalContextKey).(types.Principal)
-		if !ok || !pOK || actualCaller != caller || actualPrincipal != principal ||
+		actualCaller, callerOK := current.Value(types.CallerContextKey).(types.Caller)
+		actualPrincipal, principalOK := current.Value(types.PrincipalContextKey).(types.Principal)
+		if !callerOK || !principalOK || actualCaller != caller || actualPrincipal != principal ||
 			types.SessionOwnerIDFromContext(current) != owner {
 			return access.ErrNextcloudPublicationDenied
 		}
@@ -527,20 +301,26 @@ func (s *agentService) strictBuiltinAgentPromptInput(
 			live.AgentTenantID != control.AgentTenantID {
 			return access.ErrNextcloudPublicationDenied
 		}
-		factory := types.GetBuiltinAgentWithContext(current, control.AgentID, control.AgentTenantID)
-		if factory == nil {
-			return types.ErrSourceLineageUnknown
-		}
-		expected, _ := s.cfg.ResolveCustomAgentPrompts(factory)
-		if expected == "" || expected != template {
-			return types.ErrSourceLineageUnknown
-		}
-		actual, err := repository.NewCustomAgentRepository(s.db).
-			GetAgentByID(current, control.AgentID, control.AgentTenantID)
-		if errors.Is(err, repository.ErrCustomAgentNotFound) {
-			actual = factory
-		} else if err != nil {
-			return access.ErrNextcloudPublicationUnavailable
+
+		var actual *types.CustomAgent
+		if types.IsBuiltinAgentID(control.AgentID) {
+			factory := types.GetBuiltinAgentWithContext(current, control.AgentID, control.AgentTenantID)
+			if factory == nil {
+				return types.ErrSourceLineageUnknown
+			}
+			actual, err = repository.NewCustomAgentRepository(s.db).
+				GetAgentByID(current, control.AgentID, control.AgentTenantID)
+			if errors.Is(err, repository.ErrCustomAgentNotFound) {
+				actual = factory
+			} else if err != nil {
+				return access.ErrNextcloudPublicationUnavailable
+			}
+		} else {
+			actual, err = repository.NewCustomAgentRepository(s.db).
+				GetAgentByID(current, control.AgentID, control.AgentTenantID)
+			if err != nil {
+				return access.ErrNextcloudPublicationUnavailable
+			}
 		}
 		if actual == nil || actual.ID != control.AgentID || actual.TenantID != control.AgentTenantID {
 			return access.ErrNextcloudPublicationDenied
@@ -556,5 +336,8 @@ func (s *agentService) strictBuiltinAgentPromptInput(
 		return nil, nil, err
 	}
 	lineage, err := types.NewCompleteSourceLineage()
-	return lineage, check, err
+	if err != nil {
+		return nil, nil, err
+	}
+	return lineage, check, nil
 }

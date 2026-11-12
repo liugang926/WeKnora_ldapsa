@@ -100,6 +100,7 @@ func TestListArtifactLibraryRefusesUnknownOrUnadmittedGeneratedFields(t *testing
 			lineage, err := types.NewCompleteSourceLineage()
 			require.NoError(t, err)
 			message := &types.Message{ID: "answer", SessionID: "session", Role: "assistant", SourceLineage: lineage}
+			message.ExecutionContext.ExplicitInputMaterials = true
 			if mode == "unknown lineage" {
 				message.SourceLineage = types.UnknownSourceLineage()
 			} else {

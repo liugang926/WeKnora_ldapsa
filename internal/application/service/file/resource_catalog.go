@@ -206,20 +206,7 @@ func (s *resourceCatalogFileService) GetFileURL(ctx context.Context, filePath st
 			return "", fmt.Errorf("resource cannot be published: %s provenance", provenance)
 		}
 		for _, owner := range owners {
-			if owner == nil || owner.DeletedAt.Valid {
-				return "", fmt.Errorf("resource owner is unavailable")
-			}
-			if s.publicationGuard == nil {
-				if owner.Channel == types.ConnectorTypeNextcloud {
-					return "", apperrors.NewProtocolError(fmt.Errorf(
-						"nextcloud resource requires a publication guard",
-					), "Nextcloud resource requires a publication guard")
-				}
-				continue
-			}
-			// A URL has no stable human caller. Always evaluate it as an
-			// anonymous principal, even when a logged-in user requests it.
-			if err := s.publicationGuard.CheckKnowledge(context.Background(), owner); err != nil {
+			if err := s.publicationGuard.CheckAnonymousPublication(ctx, owner); err != nil {
 				return "", apperrors.NewProtocolError(fmt.Errorf(
 					"resource cannot be published: %w",
 					err,

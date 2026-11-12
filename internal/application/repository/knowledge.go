@@ -858,8 +858,10 @@ func (r *knowledgeRepository) UpdateActiveDeletingKnowledgeColumns(
 func (r *knowledgeRepository) FinalizeSubtask(
 	ctx context.Context, id string,
 ) (int, bool, error) {
-	if err := PrecheckKnowledgeBuildWrite(ctx); err != nil {
-		return 0, false, err
+	if checked, _ := ctx.Value(wikiSettlementTransactionKey{}).(*gorm.DB); checked != r.db {
+		if err := PrecheckKnowledgeBuildWrite(ctx); err != nil {
+			return 0, false, err
+		}
 	}
 	now := time.Now()
 	var promoted bool
@@ -876,6 +878,15 @@ func (r *knowledgeRepository) FinalizeSubtask(
 				id,
 			); err != nil {
 				return err
+			}
+		}
+		if p, ok := ctx.Value(dingTalkGraphContextKey{}).(types.ExtractChunkPayload); ok {
+			owned, err := settleDingTalkGraphInTx(ctx, tx, p)
+			if err != nil {
+				return err
+			}
+			if !owned {
+				return nil
 			}
 		}
 		if operation, ok := types.GraphWriteOperationFromContext(ctx); ok {

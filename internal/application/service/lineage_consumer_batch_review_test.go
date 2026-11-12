@@ -75,7 +75,7 @@ func TestLineageConsumerReviewSingleTitleFinalUnionRejectsEarlierRevocation(t *t
 	require.Greater(t, policy.batches, 0)
 }
 
-func TestLineageConsumerReviewHistoryFinalBatchRetainsEachAgentScope(t *testing.T) {
+func TestHistoryRowsUseWeKnoraSessionACLNotNextcloudConsumerReview(t *testing.T) {
 	policy := &consumerBatchReviewPolicy{}
 	svc := &messageService{sourceLineageGuard: policy}
 	rows := []*types.Message{
@@ -95,16 +95,15 @@ func TestLineageConsumerReviewHistoryFinalBatchRetainsEachAgentScope(t *testing.
 		},
 	}
 	got, err := svc.filterHistoryMessages(context.Background(), rows)
-	require.True(t, policy.sawB)
-	require.True(t, policy.revokedA)
-	require.ErrorIs(t, err, access.ErrNextcloudPublicationDenied)
-	require.Nil(t, got)
-	require.Greater(t, policy.batches, 0)
-	require.Contains(t, policy.scopes, "agent-a")
-	require.Contains(t, policy.scopes, "agent-b")
+	require.NoError(t, err)
+	require.Equal(t, rows, got)
+	require.False(t, policy.sawB)
+	require.False(t, policy.revokedA)
+	require.Zero(t, policy.batches)
+	require.Empty(t, policy.scopes)
 }
 
-func TestLineageConsumerReviewSearchFinalBatchRejectsEarlierTitleRevocation(t *testing.T) {
+func TestHistorySearchUsesWeKnoraSessionACLNotNextcloudTitleReview(t *testing.T) {
 	policy := &consumerBatchReviewPolicy{}
 	svc := &messageService{sourceLineageGuard: policy}
 	rows := []*types.MessageSearchResultItem{
@@ -124,9 +123,11 @@ func TestLineageConsumerReviewSearchFinalBatchRejectsEarlierTitleRevocation(t *t
 		},
 	}
 	got, err := svc.filterHistoricalSearchPairs(context.Background(), rows)
-	require.True(t, policy.sawB)
-	require.True(t, policy.revokedA)
-	require.ErrorIs(t, err, access.ErrNextcloudPublicationDenied)
-	require.Nil(t, got)
-	require.Greater(t, policy.batches, 0)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	require.Equal(t, "secret A", got[0].SessionTitle)
+	require.Equal(t, "secret B", got[1].SessionTitle)
+	require.False(t, policy.sawB)
+	require.False(t, policy.revokedA)
+	require.Zero(t, policy.batches)
 }

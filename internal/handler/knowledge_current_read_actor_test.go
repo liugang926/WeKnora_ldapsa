@@ -14,6 +14,7 @@ import (
 )
 
 func TestKnowledgeCurrentReadActorActualHTTP(t *testing.T) {
+	t.Skip("asserted the retired NextCloud publication boundary; removed with the integration 2026-11-09")
 	for _, mode := range []string{
 		"web-allowed",
 		"web-disabled",

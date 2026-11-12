@@ -325,3 +325,24 @@ func (r *knowledgeBaseRepository) ListModelUsages(
 	}
 	return usages, nil
 }
+
+// GetKnowledgeBaseAuthorizationMetadata deliberately selects no retained fields.
+// Normal GORM query/retention callbacks remain installed: the existing selected-
+// field contract avoids reconstructing bodies when none were requested.
+func (r *knowledgeBaseRepository) GetKnowledgeBaseAuthorizationMetadata(
+	ctx context.Context, id string,
+) (*types.KnowledgeBaseAuthorizationMetadata, error) {
+	var metadata types.KnowledgeBaseAuthorizationMetadata
+	if id == "" {
+		return nil, ErrKnowledgeBaseNotFound
+	}
+	err := r.db.WithContext(ctx).Table("knowledge_bases").Select("id", "tenant_id", "deleted_at").
+		Where("id = ?", id).Take(&metadata).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrKnowledgeBaseNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &metadata, nil
+}

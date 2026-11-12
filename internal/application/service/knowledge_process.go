@@ -432,6 +432,10 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 	}
 	if err := s.chunkRepo.DeleteChunksByKnowledgeID(ctx, knowledge.TenantID, knowledge.ID); err != nil {
 		logger.Warnf(ctx, "Existing chunk cleanup unavailable: %v", err)
+		if knowledge.Channel == types.ConnectorTypeDingTalk {
+			s.failDingTalkProcessing(ctx, knowledge, "dingtalk_previous_chunks_cleanup_failed")
+			return
+		}
 	}
 	if err == nil && embeddingModel != nil {
 		if e := retrieveEngine.DeleteByKnowledgeIDList(
@@ -441,6 +445,10 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 			knowledge.Type,
 		); e != nil {
 			logger.Warnf(ctx, "Existing index cleanup unavailable: %v", e)
+			if knowledge.Channel == types.ConnectorTypeDingTalk {
+				s.failDingTalkProcessing(ctx, knowledge, "dingtalk_previous_index_cleanup_failed")
+				return
+			}
 		}
 	}
 	// Nextcloud graph output requires exact original writer/backend receipts;
@@ -698,7 +706,11 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 				return
 			}
 			// Check if there's enough storage quota available
-			if tenantInfo.StorageUsed+totalStorageSize > tenantInfo.StorageQuota {
+			projectedUsage := tenantInfo.StorageUsed + totalStorageSize
+			if knowledge.Channel == types.ConnectorTypeDingTalk {
+				projectedUsage -= knowledge.StorageSize
+			}
+			if projectedUsage > tenantInfo.StorageQuota {
 				knowledge.ParseStatus = types.ParseStatusFailed
 				knowledge.ErrorMessage = "存储空间不足"
 				knowledge.UpdatedAt = time.Now()
@@ -820,6 +832,7 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 		}
 		return
 	}
+	previousStorageSize := knowledge.StorageSize
 	finalizeIndexedKnowledgeState(
 		knowledge,
 		totalStorageSize,
@@ -828,7 +841,21 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 		now,
 	)
 
-	if err := s.updateKnowledgeUnlessSourceReplaced(ctx, knowledge); err != nil {
+	if knowledge.Channel == types.ConnectorTypeDingTalk {
+		store, ok := s.knowledgeInputs.(*repository.KnowledgeInputProvenanceStore)
+		var finishErr error
+		if !ok {
+			finishErr = types.ErrSourceLineageUnknown
+		} else {
+			finishErr = store.FinalizeDingTalkIndexedKnowledge(ctx, knowledge)
+		}
+		if finishErr != nil {
+			knowledge.StorageSize = previousStorageSize
+			s.failDingTalkProcessing(ctx, knowledge, "dingtalk_indexed_state_commit_failed")
+			logger.Errorf(ctx, "DingTalk indexed state commit failed: %v", finishErr)
+			return
+		}
+	} else if err := s.updateKnowledgeUnlessSourceReplaced(ctx, knowledge); err != nil {
 		logger.GetLogger(ctx).WithField("error", err).Errorf("processChunks update knowledge failed")
 	}
 
@@ -847,9 +874,11 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 	}
 
 	// Update tenant's storage usage
-	tenantInfo.StorageUsed += totalStorageSize
-	if err := s.tenantRepo.AdjustStorageUsed(ctx, tenantInfo.ID, totalStorageSize); err != nil {
-		logger.GetLogger(ctx).WithField("error", err).Errorf("processChunks update tenant storage used failed")
+	if knowledge.Channel != types.ConnectorTypeDingTalk {
+		tenantInfo.StorageUsed += totalStorageSize
+		if err := s.tenantRepo.AdjustStorageUsed(ctx, tenantInfo.ID, totalStorageSize); err != nil {
+			logger.GetLogger(ctx).WithField("error", err).Errorf("processChunks update tenant storage used failed")
+		}
 	}
 	logger.GetLogger(ctx).Infof("processChunks successfully")
 }
@@ -3049,7 +3078,7 @@ func (s *knowledgeService) ReparseKnowledge(
 	ctx context.Context,
 	knowledgeID string,
 	processOverrides *types.KnowledgeProcessOverrides,
-) (*types.Knowledge, error) {
+) (result *types.Knowledge, retErr error) {
 	logger.Info(ctx, "Start re-parsing knowledge")
 
 	existing, kb, err := loadKnowledgeWrite(ctx, s.repo, s.kbService, knowledgeID)
@@ -3059,6 +3088,39 @@ func (s *knowledgeService) ReparseKnowledge(
 	}
 	if err := rejectNextcloudSourceManagedMutation(existing); err != nil {
 		return nil, err
+	}
+	ctx, err = s.prepareRecoveryGate(ctx, existing)
+	if err != nil {
+		return nil, err
+	}
+	originalInput, err := s.admitDingTalkLocalReparseInput(ctx, existing, kb, processOverrides)
+	if err != nil {
+		return nil, err
+	}
+	if originalInput != nil {
+		ctx = repository.WithKnowledgeBuildInputProof(ctx, s.knowledgeInputs, originalInput)
+	}
+	if originalInput != nil {
+		defer func() {
+			if retErr != nil {
+				if store, ok := s.knowledgeInputs.(dingTalkRecoveryStore); ok {
+					failureCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+					defer cancel()
+					if e := store.FailDingTalkRecoveryHandoff(failureCtx, originalInput); e != nil {
+						logger.Warnf(ctx, "[Reparse] failed to record failed recovery handoff: %v", e)
+					}
+				}
+			}
+		}()
+	}
+
+	// An enqueue error can be an acknowledgement loss after the worker has
+	// started. DingTalk recovery must use only the deferred admission-scoped,
+	// still-pending transition above, never save this stale knowledge object.
+	markReparseEnqueueFailed := func() {
+		if existing.Channel != types.ConnectorTypeDingTalk {
+			s.markKnowledgeEnqueueFailed(ctx, existing)
+		}
 	}
 
 	tenantID := existing.TenantID
@@ -3134,7 +3196,7 @@ func (s *knowledgeService) ReparseKnowledge(
 
 		if _, err := s.enqueueManualProcessing(ctx, existing, meta.Content, true); err != nil {
 			logger.Errorf(ctx, "Failed to enqueue manual reparse task: %v", err)
-			s.markKnowledgeEnqueueFailed(ctx, existing)
+			markReparseEnqueueFailed()
 			return existing, werrors.NewInternalServerError("Failed to submit processing task")
 		} else {
 			recordReparseStarted()
@@ -3184,6 +3246,7 @@ func (s *knowledgeService) ReparseKnowledge(
 
 		lang := types.LanguageFromContextOrDefault(ctx)
 		taskPayload := types.DocumentProcessPayload{
+			OriginalInput:            originalInput,
 			TenantID:                 tenantID,
 			KnowledgeID:              existing.ID,
 			KnowledgeBaseID:          existing.KnowledgeBaseID,
@@ -3203,7 +3266,7 @@ func (s *knowledgeService) ReparseKnowledge(
 		payloadBytes, err := json.Marshal(taskPayload)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to marshal reparse task payload: %v", err)
-			s.markKnowledgeEnqueueFailed(ctx, existing)
+			markReparseEnqueueFailed()
 			return existing, werrors.NewInternalServerError("Failed to submit processing task")
 		}
 
@@ -3215,7 +3278,7 @@ func (s *knowledgeService) ReparseKnowledge(
 		info, err := s.task.Enqueue(task)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to enqueue reparse task: %v", err)
-			s.markKnowledgeEnqueueFailed(ctx, existing)
+			markReparseEnqueueFailed()
 			return existing, werrors.NewInternalServerError("Failed to submit processing task")
 		}
 		logger.Infof(ctx, "Enqueued reparse task: id=%s queue=%s knowledge_id=%s", info.ID, info.Queue, existing.ID)
@@ -3268,7 +3331,7 @@ func (s *knowledgeService) ReparseKnowledge(
 		payloadBytes, err := json.Marshal(taskPayload)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to marshal file URL reparse task payload: %v", err)
-			s.markKnowledgeEnqueueFailed(ctx, existing)
+			markReparseEnqueueFailed()
 			return existing, werrors.NewInternalServerError("Failed to submit processing task")
 		}
 
@@ -3280,7 +3343,7 @@ func (s *knowledgeService) ReparseKnowledge(
 		info, err := s.task.Enqueue(task)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to enqueue file URL reparse task: %v", err)
-			s.markKnowledgeEnqueueFailed(ctx, existing)
+			markReparseEnqueueFailed()
 			return existing, werrors.NewInternalServerError("Failed to submit processing task")
 		}
 		logger.Infof(
@@ -3336,7 +3399,7 @@ func (s *knowledgeService) ReparseKnowledge(
 		payloadBytes, err := json.Marshal(taskPayload)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to marshal URL reparse task payload: %v", err)
-			s.markKnowledgeEnqueueFailed(ctx, existing)
+			markReparseEnqueueFailed()
 			return existing, werrors.NewInternalServerError("Failed to submit processing task")
 		}
 
@@ -3348,7 +3411,7 @@ func (s *knowledgeService) ReparseKnowledge(
 		info, err := s.task.Enqueue(task)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to enqueue URL reparse task: %v", err)
-			s.markKnowledgeEnqueueFailed(ctx, existing)
+			markReparseEnqueueFailed()
 			return existing, werrors.NewInternalServerError("Failed to submit processing task")
 		}
 		logger.Infof(ctx, "Enqueued URL reparse task: id=%s queue=%s knowledge_id=%s", info.ID, info.Queue, existing.ID)

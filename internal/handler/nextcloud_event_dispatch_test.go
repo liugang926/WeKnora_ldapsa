@@ -824,6 +824,14 @@ type eventDispatchSyncLogs struct {
 	created *bool
 }
 
+func (r eventDispatchSyncLogs) ConsecutiveFailures(_ context.Context, _ string) (int, time.Time, error) {
+	return 0, time.Time{}, nil
+}
+
+func (r eventDispatchSyncLogs) UpdateProgress(_ context.Context, _ string, _ map[string]any) error {
+	return nil
+}
+
 func (r eventDispatchSyncLogs) HasRunningSync(context.Context, string) (bool, error) {
 	return false, nil
 }

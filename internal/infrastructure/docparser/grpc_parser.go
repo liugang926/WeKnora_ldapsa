@@ -105,7 +105,10 @@ func (p *GRPCDocumentReader) Close() error {
 	return nil
 }
 
-var errNotConnected = fmt.Errorf("docreader service not connected")
+// errNotConnected carries codes.Unavailable so callers (and the docreader
+// failure classifier) treat a missing connection as a retryable transport
+// problem rather than a parse defect (upstream v0.9.0).
+var errNotConnected = status.Error(codes.Unavailable, "docreader service not connected")
 
 func (p *GRPCDocumentReader) Read(ctx context.Context, req *types.ReadRequest) (*types.ReadResult, error) {
 	p.mu.RLock()

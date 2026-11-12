@@ -364,6 +364,36 @@ func (s *groupAccessService) EffectivePermission(
 	action types.ResourceAction,
 	now time.Time,
 ) (types.EffectiveResourcePermission, error) {
+	if scope, ok := types.IMChannelScopeFromContext(ctx); ok {
+		if s.directoryModuleDisabled(ctx) && resourceType == types.GroupResourceTypeKnowledgeBase {
+			if checker, ok := s.nextcloudScopes.(interface {
+				ManagedKB(context.Context, uint64, string) (bool, error)
+			}); ok {
+				managed, err := checker.ManagedKB(ctx, tenantID, resourceID)
+				if err != nil {
+					return types.EffectiveResourcePermission{}, err
+				}
+				if managed {
+					return types.EffectiveResourcePermission{
+							Action: action,
+							Reason: "nextcloud_directory_disabled",
+						},
+						nil
+				}
+			}
+		}
+		if err := scope.Check(ctx, tenantID, resourceType, resourceID, action); err != nil {
+			return types.EffectiveResourcePermission{Action: action, Reason: "im_channel_scope_denied"}, err
+		}
+		// Source publication/lineage checks remain in their existing services.
+		return types.EffectiveResourcePermission{
+				Allowed: true,
+				Action:  action,
+				Mode:    types.ResourceAccessRestricted,
+				Reason:  "im_channel_authorization",
+			},
+			nil
+	}
 	if s.directoryModuleDisabled(ctx) {
 		if checker, ok := s.nextcloudScopes.(interface {
 			ManagedKB(context.Context, uint64, string) (bool, error)

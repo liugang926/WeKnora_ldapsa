@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Tencent/WeKnora/internal/agent"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/searchutil"
@@ -331,10 +332,11 @@ const (
 // unexported and excluded from JSON so the persisted payload does not
 // duplicate the column.
 type WikiPendingOp struct {
-	Initiator   types.TaskInitiator `json:"initiator,omitempty"`
-	Attempt     int                 `json:"attempt,omitempty"`
-	Op          string              `json:"op"`
-	KnowledgeID string              `json:"knowledge_id"`
+	OriginalInput *types.KnowledgeBuildInputProof `json:"original_input,omitempty"`
+	Initiator     types.TaskInitiator             `json:"initiator,omitempty"`
+	Attempt       int                             `json:"attempt,omitempty"`
+	Op            string                          `json:"op"`
+	KnowledgeID   string                          `json:"knowledge_id"`
 	// Ingest fields
 	Language string `json:"language,omitempty"`
 	// Retract fields
@@ -550,11 +552,16 @@ func newWikiIngestPendingOp(
 ) (*types.TaskPendingOp, error) {
 	lang := types.LanguageFromContextOrDefault(ctx)
 	op := WikiPendingOp{
-		Initiator:   types.TaskInitiatorFromContext(ctx),
-		Attempt:     attemptFromCtx(ctx),
-		Op:          WikiOpIngest,
-		KnowledgeID: knowledgeID,
-		Language:    lang,
+		OriginalInput: repository.KnowledgeBuildInputProofFromContext(ctx),
+		Initiator:     types.TaskInitiatorFromContext(ctx),
+		Attempt:       attemptFromCtx(ctx),
+		Op:            WikiOpIngest,
+		KnowledgeID:   knowledgeID,
+		Language:      lang,
+	}
+	if op.OriginalInput != nil {
+		op.OriginalInput.BodyDigest, op.OriginalInput.Projection = "", ""
+		op.OriginalInput.ChunkIDs = nil
 	}
 	if len(attempts) > 0 {
 		op.Attempt = attempts[0]
@@ -564,13 +571,14 @@ func newWikiIngestPendingOp(
 		return nil, fmt.Errorf("marshal wiki ingest pending op: %w", err)
 	}
 	return &types.TaskPendingOp{
-		TenantID: tenantID,
-		TaskType: wikiTaskType,
-		Scope:    wikiTaskScope,
-		ScopeID:  kbID,
-		Op:       WikiOpIngest,
-		DedupKey: knowledgeID,
-		Payload:  payloadBytes,
+		EnqueuedAt: time.Now(),
+		TenantID:   tenantID,
+		TaskType:   wikiTaskType,
+		Scope:      wikiTaskScope,
+		ScopeID:    kbID,
+		Op:         WikiOpIngest,
+		DedupKey:   knowledgeID,
+		Payload:    payloadBytes,
 	}, nil
 }
 
@@ -1180,16 +1188,64 @@ func (s *wikiIngestService) trimPendingList(ctx context.Context, ids []int64) er
 // must only invoke this for ingest ops — retract ops are for deleted
 // knowledge that has no counter to drain.
 //
-// Safe to call on a row that is already completed or whose counter is
-// already zero: FinalizeSubtask guards both the decrement (count > 0) and
-// the promote (parse_status = finalizing AND count = 0), so an op enqueued
-// before this accounting shipped is a harmless no-op.
-func (s *wikiIngestService) finalizeWikiSubtask(ctx context.Context, knowledgeID string) {
-	// Wiki is only finalized when its op reaches a terminal state, so this is
-	// always an intended drain (retErr=nil, final=true). Detached context: the
-	// wiki batch worker may be mid-shutdown or have a cancelled ctx when this
-	// runs; a swallowed failure would strand the parent in "finalizing".
-	finalizeSubtaskDetached(ctx, s.knowledgeRepo, knowledgeID, "wiki", nil, false, true)
+// Counter settlement, completion handoff, receipt and queue acknowledgement are
+// one transaction. A failure keeps the durable operation available for retry.
+func (s *wikiIngestService) finalizeWikiSubtask(
+	ctx context.Context,
+	payload WikiIngestPayload,
+	op WikiPendingOp,
+	terminalError string,
+	failures int,
+) error {
+	finalizer, ok := s.knowledgeRepo.(interface {
+		SettleWikiPendingOp(context.Context, int64, string, int, string, int) error
+	})
+	if !ok {
+		return errors.New("wiki completion requires durable transactional settlement")
+	}
+	dctx, cancel := wikiIngestCleanupContext(ctx)
+	defer cancel()
+	dctx = wikiActorContext(dctx, payload, []types.TaskInitiator{op.Initiator})
+	if err := s.checkWikiTaskAuthorization(dctx); err != nil {
+		return err
+	}
+	if op.Attempt > 0 && s.tracker().LatestAttempt(dctx, op.KnowledgeID) != op.Attempt {
+		return finalizer.SettleWikiPendingOp(dctx, op.dbID, op.KnowledgeID, op.Attempt, "", 0)
+	}
+	knowledge, ok := s.knowledgeSvc.(*knowledgeService)
+	if !ok || knowledge.knowledgeInputs == nil {
+		return types.ErrSourceLineageUnknown
+	}
+	proof := op.OriginalInput
+	if proof == nil {
+		loader, ok := knowledge.knowledgeInputs.(interface {
+			LoadKnowledgeOriginalInput(context.Context, uint64, string, string) (*types.KnowledgeBuildInputProof, error)
+		})
+		if !ok {
+			return types.ErrSourceLineageUnknown
+		}
+		var err error
+		proof, err = loader.LoadKnowledgeOriginalInput(dctx, payload.TenantID, payload.KnowledgeBaseID, op.KnowledgeID)
+		if err != nil {
+			return err
+		}
+	}
+	if proof.KnowledgeID != op.KnowledgeID ||
+		proof.TenantID != payload.TenantID ||
+		proof.KnowledgeBaseID != payload.KnowledgeBaseID {
+
+		return types.ErrSourceLineageUnknown
+	}
+	var err error
+	dctx, err = knowledge.restoreKnowledgeTaskActor(dctx, proof)
+	if err != nil {
+		return err
+	}
+	if err := knowledge.knowledgeInputs.RecheckKnowledgeBuildInputs(dctx, proof); err != nil {
+		return err
+	}
+	dctx = repository.WithKnowledgeBuildInputProof(dctx, knowledge.knowledgeInputs, proof)
+	return finalizer.SettleWikiPendingOp(dctx, op.dbID, op.KnowledgeID, op.Attempt, terminalError, failures)
 }
 
 // requeueFailedOps records in-batch failures.
@@ -1248,7 +1304,16 @@ func (s *wikiIngestService) requeueFailedOps(ctx context.Context, payload WikiIn
 		// for deleted knowledge that has no counter to drain). The
 		// matching +1 was seeded by KnowledgePostProcess.SetFinalizing.
 		if op.Op == WikiOpIngest {
-			s.finalizeWikiSubtask(ctx, op.KnowledgeID)
+			if err := s.finalizeWikiSubtask(
+				ctx,
+				payload,
+				op,
+				fmt.Sprintf("exceeded wikiMaxFailRetries=%d (in-batch retries)",
+					wikiMaxFailRetries),
+				count); err != nil {
+				settleErrs = append(settleErrs, err)
+			}
+			continue
 		}
 		logger.Warnf(ctx, "wiki ingest: dropping op %s (%s) after %d failures (limit %d)", op.KnowledgeID, op.DocTitle, count, wikiMaxFailRetries)
 		if s.deadLetterRepo != nil {
@@ -1265,6 +1330,7 @@ func (s *wikiIngestService) requeueFailedOps(ctx context.Context, payload WikiIn
 			}); dlErr != nil {
 				logger.Warnf(ctx, "wiki ingest: failed to archive op %s to dead letters: %v", op.KnowledgeID, dlErr)
 				settleErrs = append(settleErrs, fmt.Errorf("archive dead letter id=%d: %w", op.dbID, dlErr))
+				continue
 			}
 		}
 		if err := s.pendingRepo.DeleteByIDs(ctx, []int64{op.dbID}); err != nil {
@@ -2254,19 +2320,31 @@ func splitSummaryLine(raw string) (summary string, content string) {
 
 // publishDraftPages transitions draft pages to published status after ingest completes.
 // This ensures users don't see half-built pages during the ingest process.
-func (s *wikiIngestService) publishDraftPages(ctx context.Context, kbID string, slugs []string) {
+func (s *wikiIngestService) publishDraftPages(ctx context.Context, kbID string, slugs []string) error {
 	for _, slug := range slugs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		page, err := s.wikiService.GetPageBySlug(ctx, kbID, slug)
-		if err != nil || page == nil {
+		// A concurrent user deletion leaves nothing to publish. Preserve that
+		// normal race without treating storage or authorization errors as success.
+		if errors.Is(err, repository.ErrWikiPageNotFound) || (err == nil && page == nil) {
 			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read Wiki page %s for publication: %w", slug, err)
 		}
 		if page.Status == types.WikiPageStatusDraft {
 			page.Status = types.WikiPageStatusPublished
 			if err := s.wikiService.UpdatePageMeta(ctx, page); err != nil {
-				logger.Warnf(ctx, "wiki ingest: failed to publish page %s: %v", slug, err)
+				if errors.Is(err, repository.ErrWikiPageNotFound) {
+					continue
+				}
+				return fmt.Errorf("publish Wiki page %s: %w", slug, err)
 			}
 		}
 	}
+	return ctx.Err()
 }
 
 // writeDedupCandidateGroup renders one new item together with its own
@@ -3213,6 +3291,72 @@ func hasSufficientTextContent(content string) bool {
 // rune slice for the count.
 func realTextRuneCount(content string) int {
 	return utf8.RuneCountInString(extractRealText(content))
+}
+
+// maxWikiFallbackImages caps how many document images the deterministic
+// fallback appends to a wiki summary page. Image-heavy documents (scanned CAD
+// sets, catalog PDFs) can carry dozens of pages; the fallback exists to
+// guarantee presence, not to mirror the whole gallery.
+const maxWikiFallbackImages = 12
+
+// collectWikiImageRefs returns the Markdown image references found in the
+// document's text chunks, de-duplicated, in first-seen order, capped at
+// maxWikiFallbackImages. Chunk contents (not the truncated wiki input) are
+// scanned because maxContentForWiki may cut the tail of very long documents,
+// which is exactly where late image references live.
+func collectWikiImageRefs(chunks []*types.Chunk) []string {
+	var refs []string
+	seen := make(map[string]bool)
+	for _, c := range chunks {
+		if c == nil {
+			continue
+		}
+		for _, ref := range mdImageRefRE.FindAllString(c.Content, -1) {
+			if seen[ref] {
+				continue
+			}
+			seen[ref] = true
+			refs = append(refs, ref)
+			if len(refs) >= maxWikiFallbackImages {
+				return refs
+			}
+		}
+	}
+	return refs
+}
+
+// wikiImageFallbackHeading returns a language-appropriate section heading for
+// the deterministically appended image section.
+func wikiImageFallbackHeading(lang string) string {
+	switch {
+	case strings.HasPrefix(strings.ToLower(lang), "zh"):
+		return "相关图片"
+	case strings.HasPrefix(strings.ToLower(lang), "ja"):
+		return "関連画像"
+	case strings.HasPrefix(strings.ToLower(lang), "ko"):
+		return "관련 이미지"
+	default:
+		return "Related Images"
+	}
+}
+
+// ensureWikiSummaryImages guarantees that a document's images appear on its
+// wiki summary page even when the summarizing LLM ignored the prompt's image
+// rule (it says SHOULD, not MUST). When the body already embeds at least one
+// Markdown image it is returned unchanged; otherwise the collected image
+// references are appended verbatim under a dedicated section. References are
+// treated as opaque tokens — URLs are copied exactly, never rebuilt.
+func ensureWikiSummaryImages(body string, refs []string, lang string) string {
+	if strings.Contains(body, "![") || len(refs) == 0 {
+		return body
+	}
+	var b strings.Builder
+	b.WriteString(strings.TrimRight(body, "\n"))
+	b.WriteString("\n\n## ")
+	b.WriteString(wikiImageFallbackHeading(lang))
+	b.WriteString("\n\n")
+	b.WriteString(strings.Join(refs, "\n\n"))
+	return b.String()
 }
 
 // cleanLLMJSON strips markdown code-fence wrappers and sanitizes control characters

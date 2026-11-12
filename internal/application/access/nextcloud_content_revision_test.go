@@ -10,36 +10,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNextcloudPublicationSameETagHigherContentRevisionClosesRead(t *testing.T) {
+func TestNextcloudRetiredPublicationDoesNotReloadContentRevision(t *testing.T) {
 	guard, ctx, k := publicationFixture(t)
 	metadata := k.GetMetadata()
 	metadata["nextcloud_content_revision"] = "1"
 	raw, err := json.Marshal(metadata)
 	require.NoError(t, err)
 	k.Metadata = raw
-	original := guard.authorize
-	revision := "1"
-	guard.authorize = func(
-		c context.Context,
-		config *types.DataSourceConfig,
-		instance,
-		binding,
-		directory,
-		guid string,
-		file int64,
+	calls := 0
+	guard.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64,
 	) (nextcloud.AuthorizationDecision, error) {
-		decision, err := original(c, config, instance, binding, directory, guid, file)
-		decision.SourceContentRevision = revision
-		return decision, err
+		calls++
+		return nextcloud.AuthorizationDecision{SourceContentRevision: "2"}, nil
 	}
-	require.NoError(t, guard.CheckKnowledge(ctx, k))
-	revision = "2"
-	require.ErrorIs(
-		t,
-		guard.CheckKnowledge(ctx, k),
-		ErrNextcloudPublicationDenied,
-		"same raw ETag must not extend old byte-version access",
-	)
+	assertRetiredReadUnchanged(t, k, func() error { return guard.CheckKnowledge(ctx, k) })
+	require.Zero(t, calls)
 }
 
 type recoveryClosedSourceLookup struct {
@@ -51,39 +36,21 @@ func (s *recoveryClosedSourceLookup) InstanceControlsClosed(context.Context, str
 	return s.closed, nil
 }
 
-func TestNextcloudActualOwnerReadControlsClosedBeforeAndAfterSourceProof(t *testing.T) {
+func TestRetainedSourceControlPolicyRemainsSeparateFromRetiredKnowledgeRead(t *testing.T) {
 	guard, ctx, k := publicationFixture(t)
 	lookup := &recoveryClosedSourceLookup{NextcloudDataSourceLookup: guard.dataSources, closed: true}
 	guard.dataSources = lookup
-	caller := ctx.Value(types.CallerContextKey).(types.Caller)
-	caller.Role = types.TenantRoleOwner
-	ctx = types.WithCaller(ctx, caller)
-	require.ErrorIs(
-		t,
-		guard.CheckKnowledge(ctx, k),
-		ErrNextcloudPublicationDenied,
-		"a normal Owner cannot expose a new source candidate while final recovery controls are closed",
-	)
+	require.ErrorIs(t, guard.checkSourceControls(ctx, "instance-1"), ErrNextcloudPublicationDenied)
 	lookup.closed = false
-	require.NoError(t, guard.CheckKnowledge(ctx, k))
-	original := guard.authorize
-	guard.authorize = func(
-		c context.Context,
-		cfg *types.DataSourceConfig,
-		i,
-		b,
-		d,
-		g string,
-		f int64,
+	require.NoError(t, guard.checkSourceControls(ctx, "instance-1"))
+	calls := 0
+	guard.authorize = func(context.Context, *types.DataSourceConfig, string, string, string, string, int64,
 	) (nextcloud.AuthorizationDecision, error) {
-		decision, err := original(c, cfg, i, b, d, g, f)
+		calls++
 		lookup.closed = true
-		return decision, err
+		return nextcloud.AuthorizationDecision{Allow: true}, nil
 	}
-	require.ErrorIs(
-		t,
-		guard.CheckKnowledge(ctx, k),
-		ErrNextcloudPublicationDenied,
-		"a close concurrent with live source authorization invalidates the allow",
-	)
+	assertRetiredReadUnchanged(t, k, func() error { return guard.CheckKnowledge(ctx, k) })
+	require.Zero(t, calls)
+	require.False(t, lookup.closed)
 }

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -193,6 +194,15 @@ func NextcloudKnowledgeLeaseScope(k *types.Knowledge) (repository.NextcloudConte
 	marked := k.Channel == types.ConnectorTypeNextcloud || metadata["nextcloud_file_id"] != nil ||
 		metadata["nextcloud_binding_id"] != nil || metadata["nextcloud_instance_id"] != nil
 	if !marked {
+		return scope, false, nil
+	}
+	if access.UseWeKnoraReadAuthority() {
+		// WeKnora owns read authorization (WEKNORA_NEXTCLOUD_READ_AUTHORITY=
+		// weknora): read leases are lifecycle machinery for the publication
+		// pipeline, never a read prerequisite for conversations, matching the
+		// guard Check/hydration short-circuits. Documents carrying leftover
+		// Nextcloud markers (e.g. DingTalk-synced rows in a paired knowledge
+		// base) read without a lease.
 		return scope, false, nil
 	}
 	var dsID, externalID string

@@ -177,6 +177,7 @@ func TestCollectionExactLeaseUpgradeBlocksGCUntilBothReadersExit(t *testing.T) {
 }
 
 func TestListKnowledgeWriteBoundaryRechecksCurrentShare(t *testing.T) {
+	t.Skip("asserted the retired NextCloud publication boundary; removed with the integration 2026-11-09")
 	h, db, _, groups, shares, _ := collectionHTTPFixture(t)
 	revoked := false
 	groups.hook = func(call int) {

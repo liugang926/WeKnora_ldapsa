@@ -67,6 +67,9 @@ func (s *sessionService) resolveKnowledgeBases(
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := types.AuthorizeIMKnowledgeBases(ctx, kbIDs...); err != nil {
+		return nil, nil, err
+	}
 	return kbIDs, knowledgeIDs, nil
 }
 

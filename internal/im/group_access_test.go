@@ -138,6 +138,16 @@ func TestHandleMessageChecksAgentAccessBeforeResolvingSession(t *testing.T) {
 		},
 	}
 
+	service.db = newLifecycleTestDB(t)
+	channel := service.channels["channel-1"].Channel
+	channel.Enabled = true
+	channel.Mode = "websocket"
+	channel.OutputMode = "stream"
+	if err := service.db.Create(channel).Error; err != nil {
+		t.Fatal(err)
+	}
+	service.agentService = &stubIMAgentService{agent: &types.CustomAgent{ID: "agent-1", TenantID: 42}}
+	service.sessionService = imScopeResolverStub{}
 	err := service.HandleMessage(context.Background(), &IncomingMessage{
 		Platform: PlatformFeishu,
 		UserID:   "external-user-1",

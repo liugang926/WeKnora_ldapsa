@@ -151,7 +151,7 @@ func stuckKnowledgeParseQuery(db *gorm.DB) *gorm.DB {
 			  AND task_pending_ops.op = ?
 		))`, types.ParseStatusFinalizing, types.TypeWikiIngest,
 			types.TaskScopeKnowledgeBase, "ingest")
-	return q
+	return repository.ExcludeDurableDingTalkGraphPlans(q)
 }
 
 func stuckKnowledgeSummaryQuery(db *gorm.DB) *gorm.DB {

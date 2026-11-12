@@ -847,6 +847,17 @@ func nextcloudProvenOrphanedFailedCandidate(tx *gorm.DB, tenantID uint64, kbID, 
 		metadata.NextcloudPath == "" {
 		return false, nil
 	}
+	var duplicateCandidates int64
+	if err := tx.Table("knowledges").
+		Where("tenant_id = ? AND knowledge_base_id = ? AND channel = ? AND deleted_at IS NULL AND id <> ?",
+			tenantID, kbID, types.ConnectorTypeNextcloud, candidate.ID).
+		Where("metadata->>'datasource_id' = ? AND metadata->>'external_id' = ?", dsID, externalID).
+		Count(&duplicateCandidates).Error; err != nil {
+		return false, err
+	}
+	if duplicateCandidates != 0 {
+		return false, nil
+	}
 	for _, bindingID := range bindings {
 		if metadata.NextcloudBindingID == bindingID && metadata.SourceResourceID == bindingID {
 			return true, nil

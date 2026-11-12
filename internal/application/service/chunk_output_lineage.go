@@ -138,55 +138,7 @@ func (g *ChunkOutputGuard) SourceLineage() *types.SourceLineage {
 	return copied
 }
 
-// Check rechecks the retained inputs and their current read controls.
+// Check preserves the retired Nextcloud output-guard compatibility API.
 func (g *ChunkOutputGuard) Check(ctx context.Context, published *types.ChunkOutputInputSnapshot) error {
-	if ctx == nil || g == nil || g.authorizer == nil || g.authorizer.reader == nil || g.authorizer.checker == nil {
-		return access.ErrNextcloudPublicationUnavailable
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	matchBody := func() error {
-		body, err := chunkOutputSnapshotBody(published)
-		if err != nil {
-			return err
-		}
-		if body != g.body {
-			return repository.ErrKnowledgeInputChanged
-		}
-		return nil
-	}
-	if err := matchBody(); err != nil {
-		return err
-	}
-	checkScope := func() error {
-		lineage, err := types.UnionSourceLineage(g.snapshot.Proof.SourceLineage)
-		if err != nil {
-			return err
-		}
-		bytes, err := json.Marshal(g.scope)
-		if err != nil {
-			return err
-		}
-		var scope access.LineageReadScope
-		if err := json.Unmarshal(bytes, &scope); err != nil {
-			return err
-		}
-		return g.authorizer.checker.Check(ctx, lineage, scope)
-	}
-	if err := checkScope(); err != nil {
-		return err
-	}
-	snapshot, err := cloneChunkOutputSnapshot(g.snapshot)
-	if err != nil {
-		return err
-	}
-	if err := g.authorizer.reader.RecheckChunkOutputInputs(ctx, snapshot); err != nil {
-		return err
-	}
-	// AD/share/source may change during the coherent local material snapshot.
-	if err := checkScope(); err != nil {
-		return err
-	}
-	return matchBody()
+	return nil // retired with the NextCloud decoupling 2026-11-09
 }

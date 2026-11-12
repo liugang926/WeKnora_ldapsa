@@ -36,8 +36,12 @@ func (s *knowledgeBaseService) processSearchResults(ctx context.Context,
 	// related images. A direct caller without a guard must fail closed for a
 	// source-backed row.
 	guard := readlease.NextcloudReadGuardFromContext(ctx)
-	for _, knowledge := range knowledgeMap {
+	for id, knowledge := range knowledgeMap {
 		if err := guard.PinKnowledge(knowledge); err != nil {
+			if _, _, identityErr := readlease.NextcloudKnowledgeLeaseScope(knowledge); identityErr != nil {
+				delete(knowledgeMap, id)
+				continue
+			}
 			return nil, err
 		}
 	}

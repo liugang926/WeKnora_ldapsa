@@ -386,6 +386,10 @@ func (h *InitializationHandler) UpdateKBConfig(c *gin.Context) {
 	if req.VLMConfig != nil {
 		kb.VLMConfig.DescriptionLanguage = strings.TrimSpace(req.VLMConfig.DescriptionLanguage)
 		kb.VLMConfig.CustomInstructions = strings.TrimSpace(req.VLMConfig.CustomInstructions)
+		// KB opt-in: VLM image classification before OCR. Meaningful only
+		// when multimodal processing is enabled; kept as a plain passthrough
+		// so the editor toggle round-trips exactly.
+		kb.VLMConfig.EnableImageClassification = req.VLMConfig.EnableImageClassification
 	}
 
 	// Storage backends resolve per workspace and belong to the owner's

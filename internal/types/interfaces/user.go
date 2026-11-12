@@ -23,6 +23,52 @@ type UserService interface {
 		redirectURI string,
 		provisioning types.TenantProvisioningMode,
 	) (*types.OIDCCallbackResponse, error)
+	// GetDingTalkAuthConfig reports the public DingTalk SSO provider
+	// configuration (enabled flag, display name, corp id when enabled).
+	GetDingTalkAuthConfig(ctx context.Context) (*types.DingTalkConfigResponse, error)
+	// BuildDingTalkAuthorizeURL builds the DingTalk authorization page URL
+	// plus the signed state whose nonce is bound to the browser cookie.
+	BuildDingTalkAuthorizeURL(
+		ctx context.Context,
+		callbackURL string,
+	) (*types.DingTalkAuthURLResponse, error)
+	// LoginWithDingTalkCode completes the web authorization-code flow. The
+	// caller has already verified the signed state against the cookie. It
+	// never auto-creates accounts: logins resolve through the job-number
+	// matched AD identity or an existing binding, and are rejected otherwise.
+	LoginWithDingTalkCode(ctx context.Context, code string) (*types.OIDCCallbackResponse, error)
+	// LoginWithDingTalkAuthCode completes the DingTalk workbench免登 flow
+	// from the client-issued in-app auth code. Same binding rules as the
+	// web flow; enterprise membership is proven by resolving the code.
+	LoginWithDingTalkAuthCode(ctx context.Context, authCode string) (*types.LoginResponse, error)
+	// UnlinkDingTalkIdentity removes the target user's active DingTalk
+	// binding and revokes their sessions. The caller authorizes the
+	// operation; operatorID is only recorded in the audit trail.
+	UnlinkDingTalkIdentity(ctx context.Context, operatorID, targetUserID string) error
+	// DingTalkEffectiveAuthInfo reports the effective (file- or
+	// database-resolved) runtime state: whether the module is enabled and
+	// the registered redirect URL. Secret-free by construction.
+	DingTalkEffectiveAuthInfo(ctx context.Context) (*types.DingTalkAuthInfo, error)
+	// GetDingTalkAdminConfig returns the secret-free DingTalk provider
+	// configuration for the system-admin settings UI.
+	GetDingTalkAdminConfig(ctx context.Context) (*types.DingTalkAdminConfig, error)
+	// UpdateDingTalkAdminConfig stores UI-managed DingTalk settings
+	// (database config source only; file-managed deployments are read-only
+	// and get ErrDingTalkConfigFileManaged semantics from the service).
+	// AdoptDingTalkEnvConfig copies the env/YAML configuration (secret
+	// re-sealed) into the settings row, switching to UI management.
+	AdoptDingTalkEnvConfig(ctx context.Context) (*types.DingTalkAdminConfig, error)
+	UpdateDingTalkAdminConfig(
+		ctx context.Context,
+		update *types.DingTalkAdminConfigUpdate,
+	) (*types.DingTalkAdminConfig, error)
+	// TestDingTalkConnection verifies candidate DingTalk credentials
+	// (unspecified fields fall back to the effective values) against the
+	// enterprise access-token endpoint without saving anything.
+	TestDingTalkConnection(
+		ctx context.Context,
+		candidate *types.DingTalkAdminConfigUpdate,
+	) (*types.DingTalkTestResult, error)
 	// GetUserByID gets a user by ID
 	GetUserByID(ctx context.Context, id string) (*types.User, error)
 	// GetUsersByIDs batch-fetches users by id, returning a map keyed by

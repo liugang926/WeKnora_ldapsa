@@ -178,6 +178,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(repository.NewUserRepository))
 	must(container.Provide(repository.NewAuthTokenRepository))
 	must(container.Provide(repository.NewDirectoryRepository))
+	must(container.Provide(repository.NewDingTalkRepository))
 	must(container.Provide(repository.NewGroupAccessRepository))
 	must(container.Provide(repository.NewSystemSettingRepository))
 	must(container.Provide(func(db *gorm.DB, driver neo4j.Driver) interfaces.RetrieveGraphRepository {
@@ -265,6 +266,11 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewEvaluationService))
 	must(container.Provide(service.NewDirectoryService))
 	must(container.Provide(service.NewGroupAccessService))
+	// DingTalk enterprise SSO: the outbound client is config-driven so the
+	// userService can gate every call on dingtalk_auth.enable.
+	must(container.Provide(func(cfg *config.Config) service.DingTalkClient {
+		return service.NewDingTalkClient(cfg.DingTalkAuth)
+	}))
 	must(container.Provide(service.NewUserService))
 	must(container.Provide(service.NewDirectoryRuntimeService))
 	must(container.Provide(service.NewSystemSettingService))
@@ -785,7 +791,6 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(handler.NewTenantInvitationHandler))
 	must(container.Provide(handler.NewAuditLogHandler))
 	must(container.Provide(handler.NewKnowledgeBaseHandler))
-	must(container.Invoke(handler.ConfigureKnowledgeBaseSourceMetadataGuard))
 	must(container.Provide(handler.NewKnowledgeHandler))
 	must(container.Provide(handler.NewChunkHandler))
 	must(container.Provide(handler.NewFAQHandler))
@@ -816,6 +821,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 		return handler.NewAuthHandler(cfg, users, tenants, settings, invitations, directory)
 	}))
 	must(container.Provide(handler.NewDirectoryHandler))
+	must(container.Provide(handler.NewDingTalkAuthHandler))
 	must(container.Provide(handler.NewGroupAccessHandler))
 	must(container.Invoke(handler.ConfigureGroupAccessResourceCatalog))
 	must(container.Invoke(handler.ConfigureKnowledgeHandlerGroupAccess))
@@ -863,7 +869,6 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	}))
 	must(container.Provide(handler.NewOrganizationHandler))
 	must(container.Invoke(handler.ConfigureOrganizationGroupAccess))
-	must(container.Invoke(handler.ConfigureOrganizationSourceMetadataGuard))
 	must(container.Provide(handler.NewMemoryHandler))
 
 	// Data source handler

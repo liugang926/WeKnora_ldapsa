@@ -569,6 +569,22 @@ func (r *DataSourceRepository) FindActive(ctx context.Context) ([]*types.DataSou
 	return dataSources, nil
 }
 
+// FindSchedulable retrieves every data source the cron scheduler should
+// register: active sources plus error-state ones so they keep retrying with
+// backoff instead of being silently dropped until a manual resume.
+func (r *DataSourceRepository) FindSchedulable(ctx context.Context) ([]*types.DataSource, error) {
+	var dataSources []*types.DataSource
+	if err := r.db.WithContext(ctx).
+		Where("status IN ?", []string{types.DataSourceStatusActive, types.DataSourceStatusError}).
+		Where("deleted_at IS NULL").
+		Where("sync_schedule != ''").
+		Order("created_at DESC").
+		Find(&dataSources).Error; err != nil {
+		return nil, err
+	}
+	return dataSources, nil
+}
+
 // SyncLogRepository provides data access for sync logs
 type SyncLogRepository struct {
 	db *gorm.DB
@@ -655,6 +671,51 @@ func (r *SyncLogRepository) FindLatest(ctx context.Context, dsID string) (*types
 		return nil, err
 	}
 	return &log, nil
+}
+
+// ConsecutiveFailures counts how many of the most recent sync logs ended in
+// failure (scanning stops at the first non-failed log) and returns the
+// finished time of the newest failed one. It powers scheduler retry backoff
+// for error-state sources.
+func (r *SyncLogRepository) ConsecutiveFailures(ctx context.Context, dsID string) (int, time.Time, error) {
+	if dsID == "" {
+		return 0, time.Time{}, errors.New("data source id is empty")
+	}
+	var logs []types.SyncLog
+	if err := r.db.WithContext(ctx).
+		Select("status", "finished_at").
+		Where("data_source_id = ?", dsID).
+		Order("started_at DESC").
+		Limit(30).
+		Find(&logs).Error; err != nil {
+		return 0, time.Time{}, err
+	}
+	count := 0
+	var lastFailedAt time.Time
+	for i := range logs {
+		if logs[i].Status != types.SyncLogStatusFailed {
+			break
+		}
+		if count == 0 && logs[i].FinishedAt != nil {
+			lastFailedAt = *logs[i].FinishedAt
+		}
+		count++
+	}
+	return count, lastFailedAt, nil
+}
+
+// UpdateProgress writes live progress columns (items_total and the result
+// JSON carrying the in-flight progress payload) for a still-running sync log.
+// Only the supplied keys are touched; the authoritative finalize keeps
+// ownership of terminal state.
+func (r *SyncLogRepository) UpdateProgress(ctx context.Context, logID string, updates map[string]any) error {
+	if logID == "" || len(updates) == 0 {
+		return errors.New("sync log progress update requires id and updates")
+	}
+	return r.db.WithContext(ctx).
+		Model(&types.SyncLog{}).
+		Where("id = ? AND status = ?", logID, types.SyncLogStatusRunning).
+		Updates(updates).Error
 }
 
 // HasRunningSync checks if a data source has any sync currently in "running" status.

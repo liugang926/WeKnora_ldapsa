@@ -110,7 +110,9 @@ func (h *TagHandler) ListTags(c *gin.Context) {
 			_ = c.Error(directErr)
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"success": true, "data": directTags})
+		h.writeTagOutput(c, func() error {
+			return knowledgeOutputHTTPError(h.outputAuthorizer.CheckWorkspaceRead(ctx, kbID))
+		}, directTags)
 		return
 	}
 	if !h.requireTagOutput(c) {

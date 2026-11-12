@@ -2,6 +2,57 @@ import { directoryAccessLocale } from './directoryAccessLocale'
 
 export default {
   ...directoryAccessLocale,
+  dingtalkAdmin: {
+    title: 'DingTalk ログイン',
+    description: 'DingTalk 企業シングルサインオンの設定：有効化、資格情報の管理、接続テスト。',
+    refresh: '更新',
+    loading: 'DingTalk 設定を読み込み中…',
+    readOnlyHint: 'DingTalk 設定はデプロイファイルで管理されています（config_source=file）。ここでは読み取り専用です。DINGTALK_AUTH_CONFIG_SOURCE=database を設定するとこのページで管理できます。',
+    copy: 'コピー',
+    copied: 'コピーしました',
+    source: { file: '環境変数で管理', database: 'UI で管理' },
+    secretSource: { database: 'シークレット：データベース', env: 'シークレット：環境変数', none: 'シークレットなし' },
+    status: { enabled: '有効', disabled: '無効' },
+    sections: { redirect: 'リダイレクト URL' },
+    fields: {
+      enabled: 'DingTalk ログインを有効化',
+      enabledHint: 'パスワード・OIDC・LDAP ログインには影響しません。',
+      corpId: '企業 Corp ID',
+      corpIdHint: 'DingTalk オープンプラットフォームの企業識別子。',
+      appKey: 'アプリ AppKey',
+      appSecret: 'アプリ AppSecret',
+      secretPlaceholder: '保存済みシークレットを置き換える場合のみ入力',
+      clearSecret: '保存済みシークレットを削除（環境変数へフォールバック）',
+      agentId: 'Agent ID',
+      agentIdHint: '記録用です。ログインでは使用されません。',
+      displayName: 'ログイン入口の表示名',
+      displayNameHint: 'ログインページの QR 入口の横に表示されます。',
+      redirectUrl: '登録済みリダイレクト URL',
+      redirectUrlHint: 'この URL を DingTalk アプリのリダイレクト URL として登録してください。ドメイン変更時はプラットフォーム側も更新が必要です。',
+      secretManaged: '{source} で管理されており、値は返されません。',
+      secretStored: 'シークレットはデータベースに保存済みです。空欄で変更なし。',
+      secretFromEnv: '現在のシークレットは環境変数由来です。ここで保存するとデータベースに保存されます。',
+      secretMissing: 'AppSecret が未設定です。有効化には必要です。',
+    },
+    actions: {
+      test: '接続テスト',
+      adopt: '環境設定から取り込む',
+      adoptConfirm: '現在の環境変数の DingTalk 設定（AppSecret は暗号化して保存）をこのページに取り込み、ページ管理に切り替えます。取り込み後は環境変数を整理できます。DINGTALK_AUTH_CONFIG_SOURCE=file でいつでも環境変数管理に戻せます。取り込みますか？'
+    },
+    messages: {
+      testSuccess: 'DingTalk がアプリ資格情報を受け入れました。',
+      testFailed: 'DingTalk 接続テストに失敗しました。',
+      testRejected: 'DingTalk が資格情報を拒否しました（{code}）：{detail}',
+      loadFailed: 'DingTalk 設定の読み込みに失敗しました。',
+      saved: 'DingTalk 設定を保存しました。',
+      saveFailed: 'DingTalk 設定の保存に失敗しました。',
+      required: 'DingTalk ログインを有効化するには Corp ID と AppKey が必要です。',
+      copyFailed: 'リダイレクト URL をコピーできませんでした。',
+      adoptSuccess: '環境設定を取り込み、ページ管理に切り替えました。',
+      adoptFailed: '環境設定の取り込みに失敗しました。',
+    },
+  },
+
   localBrowser: {
     pipOpen: "プレビューを別ウィンドウで表示",
     pipReturn: "会話内のプレビューに戻す",
@@ -2415,6 +2466,24 @@ export default {
     redirectingToOIDC: 'IDプロバイダにリダイレクトしています...',
     orContinueWith: 'または次の方法で続行',
     oidcLoginFailed: 'OIDCログインに失敗しました',
+    dingtalkLogin: 'DingTalk QRコードでログイン',
+    dingtalkLoginWithProvider: '{provider}でログイン',
+    redirectingToDingTalk: 'DingTalkへ移動しています...',
+    dingtalkLoginFailed: 'DingTalkログインに失敗しました',
+    dingtalkInAppFailed: 'DingTalk自動ログインに失敗しました。再試行するかアカウントでログインしてください',
+    dingtalkErrors: {
+      not_enterprise_member: 'このDingTalkアカウントはこの組織に属していないためログインできません',
+      no_ad_match: 'DingTalkの社員番号に一致するアカウントが見つかりません。管理者に連絡してください',
+      identity_link_required: '同名のローカルアカウントが既に存在します。管理者による紐付けが必要です',
+      empty_job_number: 'DingTalkアカウントに社員番号がありません。管理者に登録を依頼してください',
+      duplicate_job_number: '社員番号が複数のアカウントに一致します。管理者に連絡してください',
+      binding_conflict: 'アカウントの関連付けに競合があります。管理者に連絡してください',
+      user_inactive: 'アカウントは無効化されています。管理者に連絡してください',
+      invalid_state: 'ログインセッションの有効期限が切れました。再度スキャンしてください',
+      dingtalk_unavailable: 'DingTalkサービスが一時的に利用できません。後ほど再試行するかADでログインしてください',
+      wrong_corp: '組織情報の検証に失敗しました。ログインできません',
+      fallback: 'DingTalkログインに失敗しました。再試行するかアカウントでログインしてください'
+    },
     username: 'ユーザ名',
     email: 'メールアドレス',
     password: 'パスワード',
@@ -3641,7 +3710,9 @@ export default {
         descriptionLanguageAuto: 'ドキュメントの言語に従う',
         customInstructionsLabel: '画像処理の指示',
         customInstructionsDescription: 'OCRとMarkdown出力の仕様は固定したまま、視覚的に優先する対象を追加できます',
-        customInstructionsPlaceholder: '例: 銘板、型番、アラームコード、表の単位を優先する…'
+        customInstructionsPlaceholder: '例: 銘板、型番、アラームコード、表の単位を優先する…',
+        imageClassificationLabel: '画像タイプ分類',
+        imageClassificationDescription: 'OCR の前にビジョンモデルが各画像を分類（図面・製品画像・通常ページ）します。図面または製品画像と判定された場合のみ専用プロンプト（図面名称/番号、製品名称/型番を優先）に切り替えます。画像ごとにモデル呼び出しが1回増えます'
       }
     }
   },
@@ -6650,6 +6721,7 @@ export default {
     refreshLogs: 'ログを更新',
     noLogs: '同期記録はまだありません',
     logStatus: {
+      syncProgress: '同期済み {done} / {total}（{pct}%）',
       running: '同期中',
       success: '成功',
       partial: '一部成功',
@@ -6804,6 +6876,8 @@ export default {
     schedule6h: '6時間ごと',
     schedule12h: '12時間ごと',
     schedule24h: '毎日',
+      scheduleDailyCustom: '毎日固定時刻（カスタム）',
+      scheduleDailyTime: '時刻',
     scheduleHuman: {
       '30min': '30分ごと',
       '1h': '1時間ごと',

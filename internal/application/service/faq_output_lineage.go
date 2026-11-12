@@ -29,7 +29,7 @@ func NewFAQOutputAuthorizer(
 	store *repository.KnowledgeInputProvenanceStore,
 	guard *access.NextcloudSourceLineageGuard,
 ) *FAQOutputAuthorizer {
-	return &FAQOutputAuthorizer{store, guard}
+	return &FAQOutputAuthorizer{store, workspaceOutputChecker{guard}}
 }
 
 // FAQOutputGuard holds the original FAQ inputs selected for output.
@@ -277,7 +277,7 @@ func (s *knowledgeService) beginFAQOutput(
 		}
 		return nil, nil
 	}
-	return (&FAQOutputAuthorizer{s.faqInputs, s.faqLineageChecker}).Begin(
+	return NewFAQOutputAuthorizer(s.faqInputs, s.faqLineageChecker).Begin(
 		ctx,
 		types.FAQInputReadRequest{TenantID: kb.TenantID, KnowledgeBaseID: kb.ID, ChunkIDs: ids, AllEntries: all},
 	)

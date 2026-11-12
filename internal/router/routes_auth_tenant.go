@@ -233,6 +233,25 @@ func RegisterAuthRoutes(r *gin.RouterGroup, handler *handler.AuthHandler, g *rba
 	r.POST("/auth/change-password", handler.ChangePassword)
 }
 
+// RegisterDingTalkAuthRoutes wires the DingTalk enterprise SSO endpoints
+// beside the OIDC routes. config/url are plain JSON surfaces; callback is a
+// browser 302; inapp is the workbench免登 POST. The code-exchanging
+// endpoints (callback/inapp) share the public-auth IP rate limiter so the
+// unauthenticated surface cannot be hammered.
+//
+// dingTalk may be nil in environments built without the dependency wired;
+// that's a no-op registration, as with the invitation inbox.
+func RegisterDingTalkAuthRoutes(r *gin.RouterGroup, dingTalk *handler.DingTalkAuthHandler) {
+	if dingTalk == nil {
+		return
+	}
+	publicAuthRL := middleware.PublicAuthRateLimit()
+	r.GET("/auth/dingtalk/config", dingTalk.GetDingTalkConfig)
+	r.GET("/auth/dingtalk/url", dingTalk.GetDingTalkAuthorizationURL)
+	r.GET("/auth/dingtalk/callback", publicAuthRL, dingTalk.DingTalkRedirectCallback)
+	r.POST("/auth/dingtalk/inapp", publicAuthRL, dingTalk.DingTalkInAppLogin)
+}
+
 // RegisterSystemRoutes registers system information routes
 //
 // Reads (GetSystemInfo / ListParserEngines / GetStorageEngineStatus)

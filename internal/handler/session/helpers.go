@@ -292,18 +292,22 @@ func (h *Handler) createUserMessage(
 		lineage, _ = types.NewCompleteSourceLineage()
 	}
 	return h.messageService.CreateMessage(ctx, &types.Message{
-		SessionID:        sessionID,
-		Role:             "user",
-		Content:          query,
-		RequestID:        requestID,
-		CreatedAt:        time.Now(),
-		IsCompleted:      true,
-		MentionedItems:   mentionedItems,
-		Images:           images,
-		Attachments:      attachments,
-		Channel:          channel,
-		ExecutionContext: types.MessageExecutionContext{SuggestionAttribution: attribution},
-		SourceLineage:    lineage,
+		SessionID:      sessionID,
+		Role:           "user",
+		Content:        query,
+		RequestID:      requestID,
+		CreatedAt:      time.Now(),
+		IsCompleted:    true,
+		MentionedItems: mentionedItems,
+		Images:         images,
+		Attachments:    attachments,
+		Channel:        channel,
+		ExecutionContext: types.MessageExecutionContext{
+			SuggestionAttribution: attribution,
+			ExplicitInputMaterials: len(images) > 0 ||
+				len(attachments) > 0,
+		},
+		SourceLineage: lineage,
 	})
 }
 
@@ -346,11 +350,27 @@ func (h *Handler) setupStopEventHandler(
 	sessionID string,
 	sessionTenantID uint64,
 	assistantMessage *types.Message,
-	cancel context.CancelFunc,
+	producerSavesStop bool,
+	cancel context.CancelCauseFunc,
 ) {
 	eventBus.On(event.EventStop, func(ctx context.Context, evt event.Event) error {
 		logger.Infof(ctx, "Received stop event, cancelling async operations for session: %s", sessionID)
-		cancel()
+		data, _ := evt.Data.(event.StopData)
+		if data.Reason == "user_requested" {
+			cancel(errGenerationStoppedByUser)
+		} else {
+			cancel(nil)
+		}
+		// A steerable producer saves a user stop after its last event, while
+		// it still holds the original inputs. Other causes leave it incomplete.
+		if producerSavesStop {
+			return nil
+		}
+		if data.Reason == "original_material_unavailable" || data.Reason == "source_access_changed" {
+			// Revocation terminates the producer without granting its partial
+			// answer a completed body. Only a user stop preserves completion.
+			return nil
+		}
 		// Preserve whatever has been streamed so far; do not overwrite Content.
 		// Use session's tenant for message update (ctx may have effectiveTenantID when using shared agent).
 		// Use WithoutCancel so the GORM UPDATE survives the upcoming ctx.Done triggered by cancel()/client disconnect.

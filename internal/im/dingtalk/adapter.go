@@ -3,6 +3,7 @@ package dingtalk
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -769,15 +770,26 @@ func (a *Adapter) streamingUpdateCard(ctx context.Context, outTrackID, content s
 
 type streamState struct {
 	mu             sync.Mutex
+	ioMu           sync.Mutex // orders card updates before final delivery
 	content        strings.Builder
 	sessionWebhook string
 	outTrackID     string    // non-empty when using AI card streaming
 	lastUpdate     time.Time // for card update throttling
-	createdAt      time.Time // for orphan stream detection
+	createdAt      time.Time // absolute safety ceiling
+	lastActivity   time.Time
+	completedAt    time.Time
+	requestDone    <-chan struct{}
+	ready          chan struct{}
+	receiptDone    chan struct{}
+	ended          bool
+	finalized      bool
+	endDone        chan struct{}
+	endErr         error
 }
 
 const (
 	streamOrphanTTL      = 5 * time.Minute
+	streamMaxLifetime    = 24 * time.Hour
 	streamReaperInterval = 1 * time.Minute
 )
 
@@ -799,14 +811,7 @@ func startStreamReaper() {
 			for {
 				select {
 				case <-ticker.C:
-					cutoff := time.Now().Add(-streamOrphanTTL)
-					streamsMu.Lock()
-					for id, state := range dStreams {
-						if state.createdAt.Before(cutoff) {
-							delete(dStreams, id)
-						}
-					}
-					streamsMu.Unlock()
+					reapStreams(time.Now())
 				case <-reaperStopCh:
 					return
 				}
@@ -815,35 +820,143 @@ func startStreamReaper() {
 	})
 }
 
+// reapStreams distinguishes a live request from an abandoned stream. Completion
+// gets its own retention interval; slow but live QA is not an orphan.
+func reapStreams(now time.Time) {
+	streamsMu.Lock()
+	defer streamsMu.Unlock()
+	for id, state := range dStreams {
+		if state.ready != nil {
+			select {
+			case <-state.ready:
+			default:
+				continue
+			}
+		}
+		state.mu.Lock()
+		remove := false
+		if state.ended {
+			// Never remove a send in flight: concurrent End callers share its result.
+			if !state.completedAt.IsZero() {
+				remove = now.Sub(state.completedAt) > streamOrphanTTL
+			}
+		} else {
+			live := false
+			if state.requestDone != nil {
+				select {
+				case <-state.requestDone:
+				default:
+					live = true
+				}
+			}
+			last := state.lastActivity
+			if last.IsZero() {
+				last = state.createdAt
+			}
+			remove = (!live && now.Sub(last) > streamOrphanTTL) || now.Sub(state.createdAt) > streamMaxLifetime
+		}
+		if remove {
+			state.content.Reset()
+			state.sessionWebhook = ""
+			state.outTrackID = ""
+			delete(dStreams, id)
+		}
+		state.mu.Unlock()
+	}
+}
+
+// Lock registry and state together so a refresh cannot succeed on a state that
+// the reaper has already removed. No network call holds the registry lock.
+func lockStreamState(id string) (*streamState, error) {
+	streamsMu.Lock()
+	defer streamsMu.Unlock()
+	state, ok := dStreams[id]
+	if !ok {
+		return nil, fmt.Errorf("unknown DingTalk stream")
+	}
+	state.mu.Lock()
+	return state, nil
+}
+
+const (
+	processingReceiptTimeout = 2 * time.Second
+	processingReceiptText    = "收到，正在处理，请稍候。"
+)
+
+// StartStream is reached only after the IM service authorizes and dequeues the request.
+// A receipt is transport feedback, never assistant content or a QA completion.
 func (a *Adapter) StartStream(ctx context.Context, incoming *im.IncomingMessage) (string, error) {
-	sessionWebhook := ""
-	if incoming.Extra != nil {
-		sessionWebhook = incoming.Extra["session_webhook"]
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
-
-	streamID := fmt.Sprintf("dt:%s:%s", incoming.UserID, incoming.MessageID)
-
-	state := &streamState{
-		sessionWebhook: sessionWebhook,
-		createdAt:      time.Now(),
+	if incoming == nil {
+		return "", fmt.Errorf("missing DingTalk message")
 	}
-
-	// If card template is configured, create an AI card for streaming
+	messageID := incoming.MessageID
+	if messageID == "" {
+		messageID = uuid.NewString()
+	}
+	identity, _ := json.Marshal([]string{a.clientID, incoming.UserID, incoming.ChatID, incoming.ThreadID, messageID})
+	streamID := fmt.Sprintf("dt:%x", sha256.Sum256(identity))
+	streamsMu.Lock()
+	state, exists := dStreams[streamID]
+	if !exists {
+		state = &streamState{
+			createdAt:    time.Now(),
+			lastActivity: time.Now(),
+			requestDone:  ctx.Done(),
+			ready:        make(chan struct{}),
+		}
+		if incoming.Extra != nil {
+			state.sessionWebhook = incoming.Extra["session_webhook"]
+		}
+		dStreams[streamID] = state
+	}
+	streamsMu.Unlock()
+	if exists {
+		select {
+		case <-state.ready:
+			return streamID, ctx.Err()
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	defer close(state.ready)
 	if a.cardTemplateID != "" {
 		outTrackID, err := a.createAndDeliverCard(ctx, incoming)
 		if err != nil {
-			logger.Warnf(ctx, "[DingTalk] Failed to create AI card, falling back to sessionWebhook: %v", err)
+			logger.Warn(ctx, "[DingTalk] AI card unavailable; using plain reply")
 		} else {
 			state.outTrackID = outTrackID
 		}
 	}
+	if state.outTrackID == "" && ctx.Err() == nil {
+		a.sendProcessingReceipt(ctx, incoming, state)
+	}
+	logger.Infof(ctx, "[DingTalk] Streaming started: card=%v", state.outTrackID != "")
+	return streamID, ctx.Err()
+}
 
-	streamsMu.Lock()
-	dStreams[streamID] = state
-	streamsMu.Unlock()
-
-	logger.Infof(ctx, "[DingTalk] Streaming started: stream_id=%s, card=%v", streamID, state.outTrackID != "")
-	return streamID, nil
+func (a *Adapter) sendProcessingReceipt(ctx context.Context, incoming *im.IncomingMessage, state *streamState) {
+	receiptCtx, cancel := context.WithTimeout(ctx, processingReceiptTimeout)
+	defer cancel()
+	done := make(chan error, 1)
+	state.receiptDone = make(chan struct{})
+	// Also bound local token-lock/transport setup waiting, not just the HTTP call.
+	go func() {
+		defer close(state.receiptDone)
+		done <- a.SendReply(receiptCtx, incoming, &im.ReplyMessage{Content: processingReceiptText})
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			logger.Warn(ctx, "[DingTalk] Processing receipt failed; QA continues")
+		} else {
+			logger.Info(ctx, "[DingTalk] Processing receipt sent")
+		}
+	case <-receiptCtx.Done():
+		logger.Warn(ctx, "[DingTalk] Processing receipt cancelled or timed out; QA continues")
+	}
 }
 
 func (a *Adapter) UpdateStreamContent(ctx context.Context, incoming *im.IncomingMessage, streamID string, fullContent string) error {
@@ -851,14 +964,15 @@ func (a *Adapter) UpdateStreamContent(ctx context.Context, incoming *im.Incoming
 		return nil
 	}
 
-	streamsMu.Lock()
-	state, ok := dStreams[streamID]
-	streamsMu.Unlock()
-	if !ok {
-		return fmt.Errorf("unknown stream ID: %s", streamID)
+	state, err := lockStreamState(streamID)
+	if err != nil {
+		return err
 	}
-
-	state.mu.Lock()
+	if state.ended || state.finalized {
+		state.mu.Unlock()
+		return fmt.Errorf("DingTalk stream already ended")
+	}
+	state.lastActivity = time.Now()
 	state.content.Reset()
 	state.content.WriteString(fullContent)
 
@@ -876,68 +990,118 @@ func (a *Adapter) UpdateStreamContent(ctx context.Context, incoming *im.Incoming
 	outTrackID := state.outTrackID
 	state.mu.Unlock()
 
-	if err := a.streamingUpdateCard(ctx, outTrackID, fullContent, false); err != nil {
+	if err := a.updateActiveCard(ctx, state, outTrackID, fullContent); err != nil {
 		logger.Warnf(ctx, "[DingTalk] Failed to update card stream: %v", err)
 	}
 	return nil
 }
 
 func (a *Adapter) FinalizeStream(ctx context.Context, incoming *im.IncomingMessage, streamID string, finalContent string) error {
-	streamsMu.Lock()
-	state, ok := dStreams[streamID]
-	streamsMu.Unlock()
-	if !ok {
-		return fmt.Errorf("unknown stream ID: %s", streamID)
+	state, err := lockStreamState(streamID)
+	if err != nil {
+		return err
 	}
-
-	state.mu.Lock()
+	if state.ended {
+		state.mu.Unlock()
+		return fmt.Errorf("DingTalk stream already ended")
+	}
+	state.lastActivity = time.Now()
+	state.finalized = true
 	state.content.Reset()
 	state.content.WriteString(finalContent)
 	outTrackID := state.outTrackID
 	state.mu.Unlock()
 
 	if outTrackID != "" {
-		if err := a.streamingUpdateCard(ctx, outTrackID, finalContent, false); err != nil {
-			logger.Warnf(ctx, "[DingTalk] Failed to finalize card stream: %v", err)
+		if err := a.updateActiveCard(ctx, state, outTrackID, finalContent); err != nil {
+			logger.Warn(ctx, "[DingTalk] Failed to finalize card stream")
+			return streamDeliveryError(ctx)
 		}
 	}
 	return nil
+}
+
+// Do not let a delayed card update overtake the final delivery.
+func (a *Adapter) updateActiveCard(ctx context.Context, state *streamState, id, content string) error {
+	state.ioMu.Lock()
+	defer state.ioMu.Unlock()
+	state.mu.Lock()
+	ended := state.ended
+	state.mu.Unlock()
+	if ended {
+		return fmt.Errorf("DingTalk stream already ended")
+	}
+	return a.streamingUpdateCard(ctx, id, content, false)
 }
 
 func (a *Adapter) SendStreamChunk(ctx context.Context, incoming *im.IncomingMessage, streamID string, content string) error {
 	return a.UpdateStreamContent(ctx, incoming, streamID, content)
 }
 
-func (a *Adapter) EndStream(ctx context.Context, incoming *im.IncomingMessage, streamID string) error {
-	streamsMu.Lock()
-	state, ok := dStreams[streamID]
-	delete(dStreams, streamID)
-	streamsMu.Unlock()
-
-	if !ok {
-		return nil
+// EndStream completes delivery once and preserves the terminal result on repeated calls.
+func (a *Adapter) EndStream(ctx context.Context, incoming *im.IncomingMessage, streamID string) (retErr error) {
+	state, err := lockStreamState(streamID)
+	if err != nil {
+		return err
 	}
-
-	state.mu.Lock()
+	if state.ended {
+		done := state.endDone
+		state.mu.Unlock()
+		select {
+		case <-done:
+			state.mu.Lock()
+			err := state.endErr
+			state.mu.Unlock()
+			return err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	state.ended = true
+	state.endDone = make(chan struct{})
+	defer func() {
+		state.mu.Lock()
+		state.endErr = retErr
+		state.completedAt = time.Now()
+		state.requestDone = nil
+		close(state.endDone)
+		state.mu.Unlock()
+	}()
 	fullContent := state.content.String()
+	state.content.Reset()
 	outTrackID := state.outTrackID
 	sessionWebhook := state.sessionWebhook
+	state.sessionWebhook = ""
+	state.outTrackID = ""
 	state.mu.Unlock()
+	state.ioMu.Lock()
+	defer state.ioMu.Unlock()
 
 	if outTrackID != "" {
 		if err := a.streamingUpdateCard(ctx, outTrackID, fullContent, true); err != nil {
-			logger.Warnf(ctx, "[DingTalk] Failed to finalize card stream: %v", err)
+			logger.Warn(ctx, "[DingTalk] Failed to finalize card stream")
+			return streamDeliveryError(ctx)
 		}
 	} else if sessionWebhook != "" {
 		if err := a.replyViaSessionWebhook(ctx, sessionWebhook, fullContent); err != nil {
-			logger.Warnf(ctx, "[DingTalk] Failed to end stream: %v", err)
+			logger.Warn(ctx, "[DingTalk] Failed to end stream")
+			return streamDeliveryError(ctx)
 		}
 	} else {
 		if err := a.replyViaOpenAPI(ctx, incoming, fullContent); err != nil {
-			logger.Warnf(ctx, "[DingTalk] Failed to end stream via OpenAPI: %v", err)
+			logger.Warn(ctx, "[DingTalk] Failed to end stream via OpenAPI")
+			return streamDeliveryError(ctx)
 		}
 	}
 
-	logger.Infof(ctx, "[DingTalk] Streaming ended: stream_id=%s", streamID)
+	logger.Info(ctx, "[DingTalk] Streaming ended")
 	return nil
+}
+
+// Avoid leaking webhook credentials or provider response bodies through callers' logs.
+func streamDeliveryError(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return fmt.Errorf("dingtalk final stream delivery failed")
 }

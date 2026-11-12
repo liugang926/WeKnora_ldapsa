@@ -173,7 +173,7 @@ func TestSQLiteMultisourceUpgradePreservesExistingControlRows(t *testing.T) {
 		"sqlite3://unused", MigrationOptions{SQLiteDBPath: dbPath},
 	))
 	version, dirty := sqliteMigrationState(t, db)
-	require.Equal(t, expectedSQLiteMigrationVersion, version)
+	require.Equal(t, latestSQLiteMigration(t, repoRoot), version)
 	require.False(t, dirty)
 
 	for table, identity := range map[string][2]string{

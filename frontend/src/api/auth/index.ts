@@ -268,6 +268,68 @@ export async function getOIDCConfig(): Promise<OIDCConfigResponse> {
   }
 }
 
+// ---- DingTalk SSO ---------------------------------------------------------
+
+export interface DingTalkConfigResponse {
+  success: boolean
+  enabled: boolean
+  provider_display_name?: string
+  corp_id?: string
+  message?: string
+}
+
+/**
+ * 获取钉钉扫码登录配置（enabled=false 时其余字段为空）。
+ * 请求失败按“未启用”处理，登录页按钮直接不渲染。
+ */
+export async function getDingTalkAuthConfig(): Promise<DingTalkConfigResponse> {
+  try {
+    const response = await get('/api/v1/auth/dingtalk/config')
+    return response as unknown as DingTalkConfigResponse
+  } catch (error: any) {
+    return {
+      success: false,
+      enabled: false,
+      message: error.message || t('error.auth.loginFailed')
+    }
+  }
+}
+
+export interface DingTalkAuthURLResponse {
+  success: boolean
+  authorization_url?: string
+  message?: string
+}
+
+/**
+ * 获取钉钉扫码登录跳转地址（后端同时会种 dingtalk_state cookie）。
+ */
+export async function getDingTalkAuthorizationURL(): Promise<DingTalkAuthURLResponse> {
+  try {
+    const response = await get('/api/v1/auth/dingtalk/url')
+    return response as unknown as DingTalkAuthURLResponse
+  } catch (error: any) {
+    return {
+      success: false,
+      message: error.message || t('error.auth.loginFailed')
+    }
+  }
+}
+
+/**
+ * 钉钉工作台内免登：用 JSAPI 拿到的 auth_code 换会话。
+ * 响应与 ldapLogin 同构，走 authStore 现有 login 落库路径；
+ * 失败（401/403/503）由 request.ts 公开认证路径分支透出 message。
+ */
+export async function dingtalkInAppLogin(authCode: string): Promise<LoginResponse> {
+  try {
+    const response = await post('/api/v1/auth/dingtalk/inapp', { auth_code: authCode })
+    return response as unknown as LoginResponse
+  } catch (error: any) {
+    return { success: false, message: error.message || t('error.auth.loginFailed') }
+  }
+}
+
 /**
  * 获取认证配置（仅返回前端渲染需要的公开字段，例如注册模式）。
  *

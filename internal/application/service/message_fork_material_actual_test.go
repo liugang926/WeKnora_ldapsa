@@ -374,7 +374,7 @@ func TestMessageForkNativeCopyPreservesHiddenMaterialAndDoesNotAliasOriginal(t *
 	require.NoError(t, original.SourceLineage.RequireComplete())
 }
 
-func TestMessageForkActualSignedSourceCloneAndFinalWriterRevoke(t *testing.T) {
+func TestMessageForkActualSignedSourceCloneWithoutSecondReadACL(t *testing.T) {
 	f, _, _, allow, scope := sourceBuildFixture(t, false)
 	// Publish the actual parsed original; this fixture does not invoke a model.
 	require.NoError(t, f.db.Where("id=?", f.k.ID).Take(f.k).Error)
@@ -501,7 +501,7 @@ func TestMessageForkActualSignedSourceCloneAndFinalWriterRevoke(t *testing.T) {
 	require.NoError(t, check())
 	closeRead()
 	assertForkMaterialReadLeases(t, f.db, false)
-	for _, stage := range []string{"session_control", "atomic_writer"} {
+	for i, stage := range []string{"session_control", "atomic_writer"} {
 		allow.Store(true)
 		port.beforeControl = nil
 		sessions.beforeWrite = nil
@@ -524,14 +524,21 @@ func TestMessageForkActualSignedSourceCloneAndFinalWriterRevoke(t *testing.T) {
 		} else {
 			sessions.beforeWrite = revoke
 		}
-		_, err = fork.Fork(ctx, 7, session.UserID, session.ID, assistant.ID, "")
-		require.Error(t, err, stage)
-		require.True(t, observed, "signed source revocation must occur while the exact original lease is held")
+		result, err = fork.Fork(ctx, 7, session.UserID, session.ID, assistant.ID, "")
+		// The current owner/material boundary retains the exact original;
+		// changing the remote source read ACL is not a second authorization.
+		require.NoError(t, err, stage)
+		require.True(t, observed, "the source decision must change while the exact original lease is held")
+		require.False(t, allow.Load())
+		copied = types.Message{}
+		require.NoError(t, f.db.Where("session_id=? AND role='assistant'", result.SessionID).Take(&copied).Error)
+		require.Equal(t, assistant.Content, copied.Content)
+		require.Equal(t, assistant.SourceLineage, copied.SourceLineage)
 		require.Empty(t, port.deleted)
 		require.Zero(t, port.snapshotCalls)
 		var children int64
 		require.NoError(t, f.db.Model(&types.Session{}).Where("parent_session_id=?", session.ID).Count(&children).Error)
-		require.EqualValues(t, 1, children, "revocation at "+stage+" cannot create a second branch")
+		require.EqualValues(t, i+2, children, stage)
 		assertForkMaterialReadLeases(t, f.db, false)
 	}
 	require.Zero(t, f.model.calls, "source transfer cannot invoke a paid model")

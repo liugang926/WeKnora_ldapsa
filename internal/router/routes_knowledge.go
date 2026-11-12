@@ -181,6 +181,12 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 			g.KBAccessWriteFromKnowledgeIDParam("id"),
 			handler.UpdateManualKnowledge,
 		)
+		k.GET(
+			"/:id/recovery-eligibility",
+			g.EditableKnowledgeKBOrAdmin(),
+			g.KBAccessWriteFromKnowledgeIDParam("id"),
+			handler.KnowledgeRecoveryEligibility,
+		)
 		k.POST(
 			"/:id/reparse",
 			g.EditableKnowledgeKBOrAdmin(),

@@ -20,7 +20,7 @@ func runMessageMaterialOwnGrowthActual(t *testing.T, pg bool) {
 		"no-kb",
 		"cross-kb",
 		"source-after-content",
-		"actor-after-content",
+		"session-owner-after-content",
 		"caller-after-content",
 		"guard-after-content",
 		"epoch-after-content",
@@ -175,9 +175,9 @@ func runMessageMaterialOwnGrowthActual(t *testing.T, pg bool) {
 					},
 				),
 			)
-			_, err = messages.GetMessage(writer, session.ID, parent.ID)
+			_, err = readContractMessageInput(writer, messages, session.ID, parent.ID)
 			require.NoError(t, err)
-			_, err = messages.GetMessage(writer, session.ID, user.ID)
+			_, err = readContractMessageInput(writer, messages, session.ID, user.ID)
 			require.NoError(t, err)
 
 			slot := writer.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot)
@@ -208,13 +208,13 @@ func runMessageMaterialOwnGrowthActual(t *testing.T, pg bool) {
 				switch mode {
 				case "source-after-content":
 					m.allow.Store(false)
-				case "actor-after-content":
+				case "session-owner-after-content":
 					require.NoError(
 						t,
 						tx.Session(&gorm.Session{NewDB: true}).
-							Model(&types.User{}).
-							Where("id=?", types.CallerFromContext(ctx).UserID).
-							Update("is_active", false).
+							Model(&types.Session{}).
+							Where("id=?", session.ID).
+							Update("user_id", "another-session-owner").
 							Error,
 					)
 				case "caller-after-content":
@@ -336,7 +336,8 @@ func runMessageMaterialOwnGrowthActual(t *testing.T, pg bool) {
 			)
 			_ = m.f.db.Callback().Create().Remove("actual-own-growth-late-refusal")
 			_ = m.f.db.Callback().Raw().Remove("actual-own-growth-late-refusal")
-			positive := mode == "no-kb" || mode == "cross-kb" || mode == "raw-unconsumed"
+			positive := mode == "no-kb" || mode == "cross-kb" || mode == "raw-unconsumed" ||
+				mode == "source-after-content"
 			if !positive {
 				require.True(t, triggered)
 				require.Error(t, writeErr)
@@ -352,6 +353,12 @@ func runMessageMaterialOwnGrowthActual(t *testing.T, pg bool) {
 				)
 				require.Zero(t, addedHeld, "only newly added content pins are rolled back")
 			} else {
+				if mode == "source-after-content" {
+					// The original input is already admitted. A remote Nextcloud read
+					// decision is no longer a second ACL for the owning message.
+					require.True(t, triggered)
+					require.False(t, m.allow.Load())
+				}
 				require.NoError(t, writeErr)
 				require.NoError(t, userGuard.Recheck())
 				require.NoError(t, oldCtx.Err(), "original guard cancellation relationship remains")
@@ -391,7 +398,7 @@ func runMessageMaterialOwnGrowthActual(t *testing.T, pg bool) {
 					require.Equal(t, 1, ordinary)
 				}
 				if mode == "raw-unconsumed" {
-					_, err = messages.GetMessage(writer, session.ID, user.ID)
+					_, err = readContractMessageInput(writer, messages, session.ID, user.ID)
 					require.NoError(t, err)
 					require.Empty(t, userGuard.snapshot.Messages[0].Images)
 				}

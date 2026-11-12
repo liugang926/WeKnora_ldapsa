@@ -267,10 +267,11 @@ func recoveryClosureContract(t *testing.T, pg bool) {
 	var persisted types.Knowledge
 	require.NoError(t, db.Unscoped().Where("id=?", old.ID).Take(&persisted).Error)
 	require.Equal(t, types.ParseStatusCompleted, persisted.ParseStatus)
-	// The actual public guard, RAG source snapshot and history lineage snapshot all
-	// deny the restored ready row. An old build lease also cannot complete writes.
+	// The retired read guard is a compatibility no-op, not the recovery write
+	// fence. Durable lineage snapshots and the old build lease must still reject
+	// the restored ready row after the withdrawal has been replayed.
 	guard := access.NewNextcloudPublicationGuard(nil, recoveryGuardDS{db})
-	require.ErrorIs(t, guard.CheckKnowledge(ctx, &persisted), access.ErrNextcloudPublicationDenied)
+	require.NoError(t, guard.CheckKnowledge(ctx, &persisted))
 	_, _, e = r.ResolveNextcloudSourceLineage(ctx, 7, "kb", old.ID)
 	require.ErrorIs(t, e, ErrNextcloudLineageSnapshotDenied)
 	matches, e := r.RecheckNextcloudSourceLineage(ctx, lineage)

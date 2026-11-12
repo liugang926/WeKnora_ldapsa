@@ -230,7 +230,7 @@
                 </t-button>
               </div>
 
-              <div v-if="oidcEnabled" class="oidc-divider">
+              <div v-if="oidcEnabled || (dingtalkEnabled && !isDingTalkContainer())" class="oidc-divider">
                 <span>{{ $t('auth.orContinueWith') }}</span>
               </div>
 
@@ -238,6 +238,24 @@
                 class="oidc-button" @click="handleOIDCLogin">
                 {{ oidcLoading ? $t('auth.redirectingToOIDC') : oidcLoginText }}
               </t-button>
+
+              <!-- 钉钉扫码登录（QR-01）：点击整页跳转钉钉官方授权页（自带
+                   扫码二维码）。dingtalkEnabled 来自 /auth/dingtalk/config，
+                   未启用或请求失败时按钮不渲染，AD/LDAP 与本地登录不受影响
+                   （AC-10）。品牌蓝 #0089FF + 内联 logo，不引外链图片。
+                   钉钉容器（桌面/移动端内置浏览器）内不渲染：其 webview 在
+                   OAuth 回跳时会丢弃 query 参数，授权码永远到不了回调，
+                   只会留下 invalid_state 报错；容器内由免登通道覆盖。 -->
+              <button v-if="dingtalkEnabled && !isDingTalkContainer()" type="button" class="dingtalk-button" :disabled="dingtalkLoading || loading"
+                @click="handleDingTalkLogin">
+                <svg class="dingtalk-logo" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M21 11.6c0 4.1-4 7.4-9 7.4-.97 0-1.9-.12-2.77-.35l-2.9 1.9a.5.5 0 0 1-.77-.54l.72-2.65C4.05 16.15 3 13.98 3 11.6 3 7.5 7 4.2 12 4.2s9 3.3 9 7.4Z"
+                    fill="currentColor" fill-opacity=".22" />
+                  <path d="M13.4 7.4 9 13h2.7l-1 4.2 4.6-6h-2.8l.9-3.8Z" fill="currentColor" />
+                </svg>
+                <span>{{ dingtalkLoading ? $t('auth.redirectingToDingTalk') : dingtalkLoginText }}</span>
+              </button>
             </t-form>
 
             <!-- Features list -->
@@ -363,6 +381,9 @@ import {
   register,
   getOIDCAuthorizationURL,
   getOIDCConfig,
+  getDingTalkAuthConfig,
+  getDingTalkAuthorizationURL,
+  dingtalkInAppLogin,
   autoSetup,
   getAuthConfig,
   userInfoFromApi,
@@ -371,6 +392,11 @@ import {
   type InviteLookup,
 } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth'
+import {
+  isDingTalkContainer,
+  requestDingTalkAuthCode,
+  lookupDingTalkErrorKey,
+} from '@/utils/dingtalk'
 import { useI18n } from 'vue-i18n'
 
 // Import screenshot images
@@ -423,6 +449,15 @@ const isRegisterMode = ref(false)
 const showLanguageMenu = ref(false)
 const oidcEnabled = ref(false)
 const oidcProviderName = ref('')
+// 钉钉扫码登录（QR-01）：config.enabled=false 或请求失败都视为未启用。
+// corp_id 供钉钉容器内免登（W-AUTH-01）的 requestAuthCode 使用。
+const dingtalkEnabled = ref(false)
+const dingtalkProviderName = ref('')
+const dingtalkCorpId = ref('')
+const dingtalkLoading = ref(false)
+// 免登只自动尝试一次，失败即保留表单，防止钉钉容器异常时死循环。
+const dingtalkInAppAttempted = ref(false)
+const dingtalkInAppLoading = ref(false)
 const ldapEnabled = ref(false)
 const ldapProviderName = ref('')
 const loginMode = ref<'local' | 'ldap'>('local')
@@ -458,6 +493,12 @@ const oidcLoginText = computed(() => {
     return t('auth.oidcLoginWithProvider', { provider: oidcProviderName.value })
   }
   return t('auth.oidcLogin')
+})
+const dingtalkLoginText = computed(() => {
+  if (dingtalkProviderName.value) {
+    return t('auth.dingtalkLoginWithProvider', { provider: dingtalkProviderName.value })
+  }
+  return t('auth.dingtalkLogin')
 })
 const currentLangOption = computed(() => languageOptions.find(l => l.value === currentLanguage.value))
 
@@ -623,6 +664,77 @@ const loadOIDCConfig = async () => {
   } catch {
     oidcEnabled.value = false
     oidcProviderName.value = ''
+  }
+}
+
+// 钉钉扫码登录配置（QR-01）。未启用 / 请求失败 → 按钮不渲染（AC-10：
+// AD/LDAP 与本地登录入口不受影响）。
+const loadDingTalkConfig = async () => {
+  try {
+    const response = await getDingTalkAuthConfig()
+    dingtalkEnabled.value = !!response.success && !!response.enabled
+    dingtalkProviderName.value = response.provider_display_name || ''
+    dingtalkCorpId.value = response.corp_id || ''
+  } catch {
+    dingtalkEnabled.value = false
+    dingtalkProviderName.value = ''
+    dingtalkCorpId.value = ''
+  }
+  return dingtalkEnabled.value
+}
+
+// 钉钉扫码登录（QR-01）：取授权地址后整页跳转钉钉官方授权页（自带扫码
+// 二维码）。钉钉容器内不自动走这条路径——免登已覆盖，且外部授权页在
+// 钉钉内置浏览器里体验差（W-AUTH-01 备注）。
+const handleDingTalkLogin = async () => {
+  try {
+    dingtalkLoading.value = true
+    const response = await getDingTalkAuthorizationURL()
+    const authorizationURL = response.authorization_url
+
+    if (!response.success || !authorizationURL) {
+      MessagePlugin.error(response.message || t('auth.dingtalkLoginFailed'))
+      return
+    }
+
+    rememberNextcloudAskReturn(route.query.next)
+    window.location.href = authorizationURL
+  } catch (error: any) {
+    console.error('钉钉登录跳转失败:', error)
+    MessagePlugin.error(error.message || t('auth.dingtalkLoginFailed'))
+  } finally {
+    dingtalkLoading.value = false
+  }
+}
+
+// 钉钉工作台内免登（W-AUTH-01）：注入官方 JSAPI → requestAuthCode →
+// /auth/dingtalk/inapp 换会话 → 复用现有登录落库路径进入 AI 对话。
+// 前置条件（容器 + 已启用 + corp_id）由调用方 onMounted 判断；任何一步
+// 失败（非企业内 / 超时 8s / JSAPI 加载失败）只提示一次并保留 AD 登录
+// 表单，不自动重试（防死循环）。
+const tryDingTalkInAppLogin = async () => {
+  if (dingtalkInAppAttempted.value) return
+  dingtalkInAppAttempted.value = true
+  if (!dingtalkCorpId.value) return
+
+  dingtalkInAppLoading.value = true
+  try {
+    const authCode = await requestDingTalkAuthCode(dingtalkCorpId.value)
+    const response = await dingtalkInAppLogin(authCode)
+    if (!response.success || !response.token) {
+      // 免登失败 message 可能是 reason code（与回跳错误码同一套）：
+      // 已知码映射成本地化文案，未知则透出后端原始 message。
+      const knownKey = lookupDingTalkErrorKey(response.message)
+      MessagePlugin.error(knownKey ? t(knownKey) : (response.message || t('auth.dingtalkLoginFailed')))
+      return
+    }
+    await persistLoginResponse(response)
+    notifyLoginSuccess(response, t, tm, formatRole, roleIcon)
+  } catch (error: any) {
+    console.error('钉钉免登失败:', error)
+    MessagePlugin.error(error?.message || t('auth.dingtalkInAppFailed'))
+  } finally {
+    dingtalkInAppLoading.value = false
   }
 }
 
@@ -802,12 +914,14 @@ onMounted(async () => {
       } else {
         inviteLookupError.value = resp.message || t('inviteRegister.invalidBody')
         loadOIDCConfig()
+        loadDingTalkConfig()
         loadAuthConfig()
         return
       }
     } catch {
       inviteLookupError.value = t('inviteRegister.invalidBody')
       loadOIDCConfig()
+      loadDingTalkConfig()
       loadAuthConfig()
       return
     } finally {
@@ -829,6 +943,7 @@ onMounted(async () => {
     ldapProviderName.value = cfg.ldap_provider_display_name || ''
     isRegisterMode.value = !inviteOnly
     loadOIDCConfig()
+    loadDingTalkConfig()
     return
   }
 
@@ -855,6 +970,12 @@ onMounted(async () => {
 
   loadOIDCConfig()
   loadAuthConfig()
+  // 钉钉：先加载配置（渲染扫码按钮）；钉钉容器内再自动尝试免登
+  // （W-AUTH-01），普通浏览器不自动跳外部授权页。
+  const dingtalkReady = await loadDingTalkConfig()
+  if (dingtalkReady && isDingTalkContainer()) {
+    await tryDingTalkInAppLogin()
+  }
 })
 </script>
 
@@ -1603,6 +1724,49 @@ onMounted(async () => {
   border-radius: var(--app-radius-md);
   font-size: var(--app-text-lg);
   font-weight: 500;
+}
+
+// 钉钉扫码登录按钮（QR-01）：钉钉品牌蓝 #0089FF，logo 为内联 SVG。
+// 原生 button 而非 t-button——品牌色不走 TDesign 主题变量，直接写死
+// 样式最稳，不必与组件库的 CSS 变量优先级纠缠。
+.dingtalk-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 46px;
+  margin-top: 12px;
+  border: 1px solid #0089FF;
+  border-radius: var(--app-radius-md);
+  background: #0089FF;
+  color: #fff;
+  font-size: var(--app-text-lg);
+  font-weight: 500;
+  font-family: var(--app-font-family);
+  cursor: pointer;
+  transition: background var(--app-motion-base), border-color var(--app-motion-base);
+
+  .dingtalk-logo {
+    width: 20px;
+    height: 20px;
+    flex: none;
+  }
+
+  &:hover:not(:disabled) {
+    background: #1E97FF;
+    border-color: #1E97FF;
+  }
+
+  &:active:not(:disabled) {
+    background: #0077DB;
+    border-color: #0077DB;
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
 }
 
 .form-footer {

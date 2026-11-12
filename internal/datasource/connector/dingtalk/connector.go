@@ -175,7 +175,7 @@ func (c *Connector) ListResources(
 	}
 	resources := make([]types.Resource, 0, len(children))
 	for _, child := range children {
-		if !child.isFolder() && !child.isDocument() {
+		if !child.isFolder() && !child.isSyncableFile() {
 			continue
 		}
 		if child.WorkspaceID != "" && child.WorkspaceID != parentRef.WorkspaceID {
@@ -242,6 +242,46 @@ func (c *Connector) ResolveResourceAncestors(
 		}
 	}
 	return ancestors, nil
+}
+
+// dingTalkBinaryContentTypes maps the wiki node extensions the connector
+// syncs as raw files onto their MIME types; the ingestion pipeline routes
+// them through the normal document parser (PDF/Office/text alike).
+var dingTalkBinaryContentTypes = map[string]string{
+	"pdf":  "application/pdf",
+	"doc":  "application/msword",
+	"docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	"ppt":  "application/vnd.ms-powerpoint",
+	"pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	"xls":  "application/vnd.ms-excel",
+	"xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	"txt":  "text/plain",
+	"md":   "text/markdown",
+	"csv":  "text/csv",
+}
+
+// isBinaryDocument reports a wiki FILE node carrying a document extension
+// the pipeline can parse (finance folders hold PDF/PPT/Word files alongside
+// the ALIDOC wiki documents; skipping them silently emptied whole sync runs).
+func (n node) isBinaryDocument() bool {
+	if !strings.EqualFold(n.Type, "FILE") || !strings.EqualFold(n.Category, "DOCUMENT") {
+		return false
+	}
+	_, supported := dingTalkBinaryContentTypes[strings.ToLower(strings.TrimSpace(n.Extension))]
+	return supported
+}
+
+func (n node) isWorkbook() bool {
+	return strings.EqualFold(n.Type, "FILE") && strings.EqualFold(n.Category, "ALIDOC") &&
+		strings.EqualFold(strings.TrimSpace(n.Extension), "axls")
+}
+
+func (n node) isSyncableFile() bool {
+	return n.isDocument() || n.isBinaryDocument() || n.isWorkbook()
+}
+
+func (n node) binaryContentType() string {
+	return dingTalkBinaryContentTypes[strings.ToLower(strings.TrimSpace(n.Extension))]
 }
 
 func sortResources(resources []types.Resource) {
@@ -390,6 +430,10 @@ func (c *Connector) sync(
 		return nil, nil, errors.New("no DingTalk resources selected")
 	}
 
+	configDigest, err := originalArtifactConfigDigest(dataSourceConfig, selected)
+	if err != nil {
+		return nil, nil, err
+	}
 	api := c.api(cfg)
 	workspaces, err := api.listWorkspaces(ctx)
 	if err != nil {
@@ -409,6 +453,14 @@ func (c *Connector) sync(
 	failedDocuments := 0
 	complete := len(failures) == 0
 	seenDocuments := make(map[string]struct{})
+	fetchSeen := 0
+	fetchDone := 0
+	reportFetch := func() {
+		datasource.ReportFetchProgress(ctx, datasource.FetchProgress{
+			Enumerated: fetchSeen,
+			Processed:  fetchDone,
+		})
+	}
 	type deletionCandidate struct {
 		resourceID string
 		documentID string
@@ -453,14 +505,43 @@ func (c *Connector) sync(
 			}
 			seenDocuments[document.ID] = struct{}{}
 			currentDocuments[document.ID] = struct{}{}
+			fetchSeen++
 			revision := document.revision()
 			oldRevision, existed := oldRevisions[document.ID]
 			if mode.skipUnchanged && revision != "" && existed && revision == oldRevision {
 				newRevisions[document.ID] = revision
+				fetchDone++
+				reportFetch()
 				continue
 			}
 
-			blocks, err := api.documentBlocks(ctx, document.ID)
+			if document.isBinaryDocument() {
+				body, derr := api.downloadWikiNode(ctx, document.WorkspaceID, document.ID)
+				if derr == nil {
+					item := fetchedBinaryDocument(scope.ResourceID, scope.Reference.WorkspaceID, document, body)
+					sealFetchedArtifact(ctx, &item, scope, document, configDigest)
+					items = append(items, item)
+					newRevisions[document.ID] = revision
+					fetchDone++
+					reportFetch()
+					continue
+				}
+				if isContextError(derr) {
+					return nil, nil, derr
+				}
+				items = append(items, failedDocument(
+					scope.ResourceID, scope.Reference.WorkspaceID, document, derr,
+				))
+				failedDocuments++
+				fetchDone++
+				reportFetch()
+				if existed {
+					newRevisions[document.ID] = oldRevision
+				}
+				continue
+			}
+
+			rendered, err := readOnlineDocument(ctx, api, document)
 			if err != nil {
 				if isContextError(err) {
 					return nil, nil, err
@@ -469,6 +550,8 @@ func (c *Connector) sync(
 					scope.ResourceID, scope.Reference.WorkspaceID, document, err,
 				))
 				failedDocuments++
+				fetchDone++
+				reportFetch()
 				if existed {
 					// Do not advance failed documents. The next incremental run
 					// must retry them even if modifiedTime remains unchanged.
@@ -476,11 +559,12 @@ func (c *Connector) sync(
 				}
 				continue
 			}
-			rendered := renderDocument(document.title(), blocks)
-			items = append(items, fetchedDocument(
-				scope.ResourceID, scope.Reference.WorkspaceID, document, rendered,
-			))
+			item := fetchedDocument(scope.ResourceID, scope.Reference.WorkspaceID, document, rendered)
+			sealFetchedArtifact(ctx, &item, scope, document, configDigest)
+			items = append(items, item)
 			newRevisions[document.ID] = revision
+			fetchDone++
+			reportFetch()
 		}
 
 		if mode.reconcileDeletions {
@@ -607,7 +691,7 @@ func resolveSyncScopes(
 			return syncScope{
 				ResourceID: canonicalID, Reference: ref, StartNodeID: selectedNode.ID,
 			}, nil
-		case selectedNode.isDocument():
+		case selectedNode.isSyncableFile():
 			document := selectedNode
 			return syncScope{
 				ResourceID: canonicalID, Reference: ref, Document: &document,
@@ -717,7 +801,7 @@ func scanWorkspace(
 			if len(seenNodes) > maxTraversalNodes {
 				return nil, fmt.Errorf("DingTalk workspace exceeds %d nodes", maxTraversalNodes)
 			}
-			if child.isDocument() {
+			if child.isSyncableFile() {
 				documents = append(documents, child)
 			}
 			if child.isFolder() || child.HasChildren {
@@ -742,6 +826,18 @@ func cloneRevisions(revisions map[string]string) map[string]string {
 type renderResult struct {
 	Markdown     string
 	UnknownTypes []string
+}
+
+func readOnlineDocument(ctx context.Context, api dingTalkAPI, document node) (renderResult, error) {
+	if document.isWorkbook() {
+		content, err := api.workbookMarkdown(ctx, document)
+		return renderResult{Markdown: content}, err
+	}
+	blocks, err := api.documentBlocks(ctx, document.ID)
+	if err != nil {
+		return renderResult{}, err
+	}
+	return renderDocument(document.title(), blocks), nil
 }
 
 func fetchedDocument(
@@ -770,6 +866,42 @@ func fetchedDocument(
 		Content:          []byte(rendered.Markdown),
 		ContentType:      "text/markdown",
 		FileName:         sanitizeFilename(document.title()) + ".md",
+		URL:              documentURL,
+		UpdatedAt:        document.modifiedAt(),
+		Metadata:         metadata,
+		SourceResourceID: sourceResourceID,
+	}
+}
+
+// fetchedBinaryDocument wraps a downloaded wiki FILE node (PDF/Office/
+// text) for ingestion; the pipeline's regular document parser takes over
+// from the content type.
+func fetchedBinaryDocument(
+	sourceResourceID string,
+	workspaceID string,
+	document node,
+	body []byte,
+) types.FetchedItem {
+	metadata := map[string]string{
+		"channel":      types.ChannelDingtalk,
+		"workspace_id": workspaceID,
+		"node_id":      document.ID,
+		"category":     document.Category,
+		"extension":    document.Extension,
+		"sync_kind":    "binary_file",
+	}
+	documentURL := strings.TrimSpace(document.URL)
+	if documentURL == "" {
+		documentURL = "https://alidocs.dingtalk.com/i/nodes/" + url.PathEscape(document.ID)
+	}
+	extension := strings.ToLower(strings.TrimSpace(document.Extension))
+	title := document.title()
+	return types.FetchedItem{
+		ExternalID:       document.ID,
+		Title:            title,
+		Content:          body,
+		ContentType:      document.binaryContentType(),
+		FileName:         sanitizeFilename(title) + "." + extension,
 		URL:              documentURL,
 		UpdatedAt:        document.modifiedAt(),
 		Metadata:         metadata,
@@ -927,4 +1059,49 @@ func sanitizeFilename(name string) string {
 		return "untitled"
 	}
 	return name
+}
+
+// RawNodeType reports one wiki node's raw classification as the DingTalk
+// API returns it, before any connector filtering. It exists for the
+// dtwiki-probe diagnostics: a folder whose children are all non-adoc types
+// is invisible to both resource browsing and sync, and operators need to
+// see the actual type mix to understand a "synced 0 documents" run.
+type RawNodeType struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Category  string `json:"category"`
+	Extension string `json:"extension"`
+}
+
+// ListRawNodes lists the direct children of a wiki node WITHOUT the
+// isFolder/isDocument filter, exposing what the sync walk actually sees.
+func (c *Connector) ListRawNodes(
+	ctx context.Context,
+	dataSourceConfig *types.DataSourceConfig,
+	parentNodeID string,
+) ([]RawNodeType, error) {
+	cfg, err := parseConfig(dataSourceConfig)
+	if err != nil {
+		return nil, err
+	}
+	nodes, err := c.api(cfg).listNodes(ctx, parentNodeID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]RawNodeType, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, RawNodeType{
+			ID: n.ID, Name: n.Name, Type: n.Type,
+			Category: n.Category, Extension: n.Extension,
+		})
+	}
+	return out, nil
+}
+
+// BinarySyncContentType reports the MIME type the connector fetches for a
+// binary wiki extension, or "" when the extension is not synced. The
+// provenance binding shares this table to validate fetched artifacts.
+func BinarySyncContentType(extension string) string {
+	return dingTalkBinaryContentTypes[strings.ToLower(strings.TrimSpace(extension))]
 }

@@ -276,6 +276,8 @@ type AdapterFactory func(ctx context.Context, channel *IMChannel, msgHandler fun
 
 // inflightEntry tracks a running QA request, keyed by userKey in the inflight map.
 type inflightEntry struct {
+	mu                 sync.Mutex
+	token              string
 	cancel             context.CancelFunc
 	sessionID          string // set after assistant message is created
 	assistantMessageID string // set after assistant message is created
@@ -339,7 +341,8 @@ type Service struct {
 	// inflight tracks in-progress QA requests, keyed by userKey
 	// ("channelID:userID:chatID"). Allows /stop to abort a running request
 	// on this instance and look up (sessionID, messageID) for StreamManager.
-	inflight sync.Map // userKey -> *inflightEntry
+	inflight             sync.Map       // userKey -> *inflightEntry
+	inflightRegistration [64]sync.Mutex // bounded registration locks, never held during QA
 
 	// qaQueue manages bounded queuing and worker-pool execution of QA requests,
 	// providing backpressure to protect downstream LLM resources.
@@ -457,6 +460,13 @@ func withIMIdentity(ctx context.Context, tenantID uint64, channelID string, msg 
 		ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalIMUser, ID: principalID})
 	}
 	ctx = context.WithValue(ctx, types.TenantRoleContextKey, types.TenantRoleViewer)
+	ctx = types.WithCaller(ctx,
+		types.Caller{
+			TenantID: tenantID,
+			UserID: fmt.Sprintf("system-%d",
+				tenantID),
+			Role: types.TenantRoleViewer,
+		})
 	// IM bots have no live client that can complete an in-conversation MCP OAuth
 	// prompt, so mark the context non-interactive: the agent emits a one-shot
 	// authorization notice (surfaced in the reply) instead of blocking until the
@@ -1493,42 +1503,6 @@ func (s *Service) checkAndClearStopMarker(ctx context.Context, userKey string) b
 	return deleted > 0
 }
 
-// storeInflightMapping writes the (sessionID, assistantMessageID) to Redis so
-// that /stop on any instance can look it up and write to StreamManager.
-func (s *Service) storeInflightMapping(ctx context.Context, userKey, sessionID, messageID string) {
-	if s.redis == nil {
-		return
-	}
-	val := sessionID + ":" + messageID
-	if err := s.redis.Set(ctx, RedisKeyInflight+userKey, val, 10*time.Minute).Err(); err != nil {
-		logger.Warnf(ctx, "[IM] Failed to store inflight mapping: %v", err)
-	}
-}
-
-// clearInflightMapping removes the inflight mapping from Redis.
-func (s *Service) clearInflightMapping(ctx context.Context, userKey string) {
-	if s.redis == nil {
-		return
-	}
-	s.redis.Del(ctx, RedisKeyInflight+userKey)
-}
-
-// loadInflightMapping retrieves (sessionID, messageID) from Redis.
-func (s *Service) loadInflightMapping(ctx context.Context, userKey string) (sessionID, messageID string, ok bool) {
-	if s.redis == nil {
-		return "", "", false
-	}
-	val, err := s.redis.Get(ctx, RedisKeyInflight+userKey).Result()
-	if err != nil {
-		return "", "", false
-	}
-	parts := strings.SplitN(val, ":", 2)
-	if len(parts) != 2 {
-		return "", "", false
-	}
-	return parts[0], parts[1], true
-}
-
 // writeStopEvent writes a stop event to StreamManager, matching the web
 // StopSession pattern. The QA watcher goroutine detects it and cancels.
 func (s *Service) writeStopEvent(ctx context.Context, sessionID, messageID string) {
@@ -1699,6 +1673,9 @@ func (s *Service) isDuplicate(ctx context.Context, messageID string) bool {
 
 // HandleMessage processes an incoming IM message end-to-end using channel config.
 func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, channelID string) error {
+	if msg == nil {
+		return fmt.Errorf("missing IM message")
+	}
 	// Dedup: skip if this message was already processed (IM platforms may retry)
 	if msg.MessageID != "" {
 		if s.isDuplicate(ctx, msg.MessageID) {
@@ -1715,21 +1692,12 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 	}
 
 	// Get channel config (moved before rate limit so we can reply to the user)
-	adapter, channel, ok := s.GetChannelAdapter(channelID)
-	if !ok {
-		// Try loading from DB (channel might have been created after service start)
-		ch, err := s.GetChannelByID(channelID)
-		if err != nil {
-			return fmt.Errorf("channel not found: %s", channelID)
-		}
-		// Start it dynamically
-		if err := s.StartChannel(ch); err != nil {
-			return fmt.Errorf("start channel %s: %w", channelID, err)
-		}
-		adapter, channel, ok = s.GetChannelAdapter(channelID)
-		if !ok {
-			return fmt.Errorf("channel adapter not available after start: %s", channelID)
-		}
+	adapter, channel, err := s.EnsureChannelAdapter(channelID)
+	if err != nil {
+		return fmt.Errorf("validate IM channel: %w", err)
+	}
+	if string(msg.Platform) != channel.Platform {
+		return fmt.Errorf("IM platform does not match channel")
 	}
 
 	// Resolve threadID for key building — only include in thread mode to avoid
@@ -1795,6 +1763,10 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 	}
 	sessionCtx := context.WithValue(ctx, types.TenantInfoContextKey, tenant)
 	sessionCtx = withIMIdentity(sessionCtx, tenantID, channelID, msg)
+	sessionCtx, customAgent, err := s.authorizeChannelContext(sessionCtx, channel, msg)
+	if err != nil {
+		return err
+	}
 	if err := s.authorizeIMAgentUse(sessionCtx, tenantID, agentID); err != nil {
 		return err
 	}
@@ -1805,15 +1777,8 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 		return fmt.Errorf("resolve session: %w", err)
 	}
 
-	// 3. Resolve custom agent (optional)
-	var customAgent *types.CustomAgent
-	if agentID != "" {
-		agent, err := s.agentService.GetAgentByID(sessionCtx, agentID)
-		if err != nil {
-			logger.Warnf(ctx, "[IM] Failed to get agent %s: %v, using default", agentID, err)
-		} else {
-			customAgent = agent
-		}
+	if err := s.ensureChannelSessionOwner(sessionCtx, channelSession); err != nil {
+		return fmt.Errorf("validate IM session owner: %w", err)
 	}
 
 	// ── Slash-command dispatch ──
@@ -1962,9 +1927,8 @@ func (s *Service) executeQARequest(req *qaRequest) {
 	defer req.cancel()
 
 	// Track in-flight request so /stop can cancel it.
-	entry := &inflightEntry{cancel: req.cancel}
-	s.inflight.Store(req.userKey, entry)
-	defer s.inflight.Delete(req.userKey)
+	ctx, entry := s.beginInflight(ctx, req.userKey, req.cancel)
+	defer s.finishInflight(ctx, req.userKey, entry)
 
 	// Check if a pre-execution /stop was issued while this request was queued.
 	if s.checkAndClearStopMarker(ctx, req.userKey) {
@@ -1976,7 +1940,7 @@ func (s *Service) executeQARequest(req *qaRequest) {
 	// runQA after the assistant message is created (that's when we have the
 	// sessionID + messageID needed to poll StreamManager).
 
-	// kbIDs is left empty so the QA pipeline resolves them from the agent config.
+	// QA still resolves agent settings; the trusted scope constrains every read.
 	var kbIDs []string
 	attachments, imageURLs, downloaded, err := s.prepareIMAttachments(ctx, req.msg, req.adapter)
 	if err != nil {
@@ -2172,8 +2136,10 @@ func (s *Service) handleCommand(
 			e := raw.(*inflightEntry)
 			e.cancel()
 			localStopped = true
+			e.mu.Lock()
 			localSessionID = e.sessionID
 			localMessageID = e.assistantMessageID
+			e.mu.Unlock()
 			logger.Infof(ctx, "[IM] Cancelled in-flight QA: key=%s", inflightKey)
 		}
 
@@ -2181,7 +2147,7 @@ func (s *Service) handleCommand(
 		//    For local stop with known IDs, write directly.
 		//    For cross-instance, look up Redis inflight mapping to get IDs.
 		sessionID, messageID := localSessionID, localMessageID
-		if sessionID == "" || messageID == "" {
+		if !localStopped && (sessionID == "" || messageID == "") {
 			// Try cross-instance lookup.
 			sessionID, messageID, _ = s.loadInflightMapping(ctx, inflightKey)
 		}
@@ -2327,8 +2293,11 @@ func imInitialSessionTitle(msg *IncomingMessage, identityTitle func(*IncomingMes
 // re-maps an existing session, that JOIN needs a one-row-per-session guard.
 func (s *Service) resolveUserSession(ctx context.Context, msg *IncomingMessage, tenantID uint64, agentID string, imChannelID string) (*ChannelSession, error) {
 	var cs ChannelSession
-	result := s.db.Where("platform = ? AND user_id = ? AND chat_id = ? AND tenant_id = ? AND agent_id = ? AND deleted_at IS NULL",
-		string(msg.Platform), msg.UserID, msg.ChatID, tenantID, agentID).
+	result := s.db.Where("platform = ? AND user_id = ? AND chat_id = ? AND "+
+		"tenant_id = ? AND agent_id = ? AND im_channel_id = ? "+
+		"AND deleted_at IS NULL",
+
+		string(msg.Platform), msg.UserID, msg.ChatID, tenantID, agentID, imChannelID).
 		First(&cs)
 
 	if result.Error == nil {
@@ -2371,8 +2340,11 @@ func (s *Service) resolveUserSession(ctx context.Context, msg *IncomingMessage, 
 			logger.Warnf(ctx, "[IM] Failed to clean up orphaned session %s: %v", createdSession.ID, delErr)
 		}
 		var existing ChannelSession
-		if findErr := s.db.Where("platform = ? AND user_id = ? AND chat_id = ? AND tenant_id = ? AND agent_id = ? AND deleted_at IS NULL",
-			string(msg.Platform), msg.UserID, msg.ChatID, tenantID, agentID).
+		if findErr := s.db.Where("platform = ? AND user_id = ? AND chat_id = ? AND "+
+			"tenant_id = ? AND agent_id = ? AND im_channel_id = ? "+
+			"AND deleted_at IS NULL",
+
+			string(msg.Platform), msg.UserID, msg.ChatID, tenantID, agentID, imChannelID).
 			First(&existing).Error; findErr != nil {
 			return nil, fmt.Errorf("create channel session: %w (lookup fallback: %v)", err, findErr)
 		}
@@ -2401,8 +2373,11 @@ func (s *Service) resolveThreadSession(ctx context.Context, msg *IncomingMessage
 
 	var cs ChannelSession
 	result := s.db.Where(
-		"platform = ? AND chat_id = ? AND thread_id = ? AND tenant_id = ? AND agent_id = ? AND deleted_at IS NULL",
-		string(msg.Platform), msg.ChatID, threadID, tenantID, agentID,
+		"platform = ? AND chat_id = ? AND thread_id = ? AND "+
+			"tenant_id = ? AND agent_id = ? AND im_channel_id = ? "+
+			"AND deleted_at IS NULL",
+
+		string(msg.Platform), msg.ChatID, threadID, tenantID, agentID, imChannelID,
 	).First(&cs)
 
 	if result.Error == nil {
@@ -2446,8 +2421,11 @@ func (s *Service) resolveThreadSession(ctx context.Context, msg *IncomingMessage
 		}
 		var existing ChannelSession
 		if findErr := s.db.Where(
-			"platform = ? AND chat_id = ? AND thread_id = ? AND tenant_id = ? AND agent_id = ? AND deleted_at IS NULL",
-			string(msg.Platform), msg.ChatID, threadID, tenantID, agentID,
+			"platform = ? AND chat_id = ? AND thread_id = ? AND "+
+				"tenant_id = ? AND agent_id = ? AND im_channel_id = ? "+
+				"AND deleted_at IS NULL",
+
+			string(msg.Platform), msg.ChatID, threadID, tenantID, agentID, imChannelID,
 		).First(&existing).Error; findErr != nil {
 			return nil, fmt.Errorf("create thread session: %w (lookup fallback: %v)", err, findErr)
 		}
@@ -2528,6 +2506,21 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 
 	useAgent := customAgent != nil && customAgent.IsAgentMode()
 	eventBus := event.NewEventBus()
+	provenance := &imMessageProvenance{}
+	eventBus.On(event.EventAgentFinalAnswer,
+		func(_ context.Context,
+			evt event.Event,
+		) error {
+			provenance.observe(evt)
+			return nil
+		})
+	eventBus.On(event.EventAgentComplete,
+		func(_ context.Context,
+			evt event.Event,
+		) error {
+			provenance.observe(evt)
+			return nil
+		})
 
 	var (
 		bufMu           sync.Mutex
@@ -2799,20 +2792,19 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 	}
 
 	// Create placeholder assistant message
-	assistantMsg, err = s.messageService.CreateMessage(qaCtx, createIMAssistantMessagePayload(session.ID, requestID))
+	assistantMsg,
+		err = s.messageService.CreateMessage(qaCtx,
+		imAssistantMessage(ctx,
+			session.ID,
+			requestID,
+			customAgent))
 	if err != nil {
 		return fmt.Errorf("create assistant message: %w", err)
 	}
 
 	// Register inflight mapping so cross-instance /stop can find this request
 	// and write a stop event to StreamManager.
-	if raw, ok := s.inflight.Load(userKey); ok {
-		e := raw.(*inflightEntry)
-		e.sessionID = session.ID
-		e.assistantMessageID = assistantMsg.ID
-	}
-	s.storeInflightMapping(qaCtx, userKey, session.ID, assistantMsg.ID)
-	defer s.clearInflightMapping(ctx, userKey)
+	s.bindInflight(qaCtx, userKey, session.ID, assistantMsg.ID)
 
 	// Start StreamManager stop watcher — mirrors web's handleAgentEventsForSSE
 	// stop detection. Cancels qaCtx if a stop event is written by any instance.
@@ -2855,10 +2847,19 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 	defer ticker.Stop()
 
 	flush := func() {
+		if provenance.check(ctx) != nil {
+			return
+		}
 		bufMu.Lock()
 		parts := getStreamParts()
+		snapshot := *assistantMsg
+		snapshot.KnowledgeReferences = append(types.References(nil), assistantMsg.KnowledgeReferences...)
 		agentRunning := useAgent && !agentDone
 		bufMu.Unlock()
+
+		if s.checkIMMessagePublication(ctx, provenance, &snapshot) != nil {
+			return
+		}
 
 		displaySource := FormatIMIntermediateFromParts(parts, agentRunning)
 		if displaySource == "" {
@@ -2908,6 +2909,10 @@ loop:
 	authServices := append([]imMCPAuthService(nil), mcpAuthServices...)
 	bufMu.Unlock()
 
+	if err := s.checkIMMessagePublication(ctx, provenance, assistantMsg); err != nil {
+		return fmt.Errorf("IM answer provenance: %w", err)
+	}
+
 	outCtx := imOutboundContext(ctx)
 	finalDisplay := cleanIMContent(outCtx, FormatIMFinalFromParts(parts), tenant, s.defaultFileSvc, s.storageResolver)
 	if noVisibleContent || finalDisplay == "" {
@@ -2923,6 +2928,12 @@ loop:
 	if notice := s.buildIMMCPAuthNotice(ctx, authServices); notice != "" {
 		finalDisplay = appendIMAuthNotice(finalDisplay, notice)
 		answer = appendIMAuthNotice(answer, notice)
+	}
+
+	assistantMsg.Content = answer
+	assistantMsg.IsCompleted = true
+	if err := s.messageService.UpdateMessage(outCtx, assistantMsg); err != nil {
+		return fmt.Errorf("persist IM answer: %w", err)
 	}
 
 	finalizeErr := streamer.FinalizeStream(outCtx, msg, streamID, finalDisplay)
@@ -2950,17 +2961,14 @@ loop:
 		answer = imNoAnswerFallback
 	}
 
-	assistantMsg.Content = answer
-	assistantMsg.IsCompleted = true
-	if err := s.messageService.UpdateMessage(outCtx, assistantMsg); err != nil {
-		logger.Warnf(ctx, "[IM] Failed to update assistant message: %v", err)
-	}
-
 	if finalizeErr != nil && fallbackErr != nil {
 		return errors.Join(finalizeErr, endErr, fallbackErr)
 	}
+	if endErr != nil && (finalizeErr == nil || fallbackErr != nil) {
+		return endErr
+	}
 	logger.Infof(ctx, "[IM] Stream reply sent: platform=%s user=%s answer_len=%d", msg.Platform, msg.UserID, len(answer))
-	return endErr
+	return nil
 }
 
 // fallbackNonStream is used when streaming initialization fails.
@@ -2986,6 +2994,21 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	defer cancel()
 
 	eventBus := event.NewEventBus()
+	provenance := &imMessageProvenance{}
+	eventBus.On(event.EventAgentFinalAnswer,
+		func(_ context.Context,
+			evt event.Event,
+		) error {
+			provenance.observe(evt)
+			return nil
+		})
+	eventBus.On(event.EventAgentComplete,
+		func(_ context.Context,
+			evt event.Event,
+		) error {
+			provenance.observe(evt)
+			return nil
+		})
 
 	// Thread-safe answer collection
 	var answerMu sync.Mutex
@@ -3057,7 +3080,12 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	}
 
 	// Create a placeholder assistant message
-	assistantMsg, err := s.messageService.CreateMessage(ctx, createIMAssistantMessagePayload(session.ID, requestID))
+	assistantMsg,
+		err := s.messageService.CreateMessage(ctx,
+		imAssistantMessage(ctx,
+			session.ID,
+			requestID,
+			customAgent))
 	if err != nil {
 		return "", fmt.Errorf("create assistant message: %w", err)
 	}
@@ -3091,13 +3119,7 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	})
 
 	// Register inflight mapping for cross-instance /stop via StreamManager.
-	if raw, ok := s.inflight.Load(userKey); ok {
-		e := raw.(*inflightEntry)
-		e.sessionID = session.ID
-		e.assistantMessageID = assistantMsg.ID
-	}
-	s.storeInflightMapping(ctx, userKey, session.ID, assistantMsg.ID)
-	defer s.clearInflightMapping(ctx, userKey)
+	s.bindInflight(ctx, userKey, session.ID, assistantMsg.ID)
 
 	// Start StreamManager stop watcher.
 	go s.watchStreamManagerStop(ctx, session.ID, assistantMsg.ID, cancel)
@@ -3164,11 +3186,15 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 		answer = appendIMAuthNotice(answer, notice)
 	}
 
+	if err := s.checkIMMessagePublication(ctx, provenance, assistantMsg); err != nil {
+		return "", fmt.Errorf("IM answer provenance: %w", err)
+	}
+
 	// Update assistant message with the full answer (including citation tags for web rendering).
 	assistantMsg.Content = answer
 	assistantMsg.IsCompleted = true
 	if err := s.messageService.UpdateMessage(ctx, assistantMsg); err != nil {
-		logger.Warnf(ctx, "[IM] Failed to update assistant message: %v", err)
+		return "", fmt.Errorf("persist IM answer: %w", err)
 	}
 
 	// Return raw answer — callers apply cleanIMContent with the appropriate FileService.
@@ -3459,6 +3485,9 @@ func (s *Service) processDownloadedFileToKnowledgeBase(ctx context.Context, chan
 		logger.Errorf(ctx, "[IM] Failed to get tenant %d for file processing: %v", tenantID, err)
 		return
 	}
+	// File persistence retains its separate, pre-existing upload authorization.
+	// A QA read scope must neither grant writes nor change the upload target.
+	ctx = context.WithValue(ctx, types.IMChannelScopeContextKey, nil)
 	kbCtx := context.WithValue(ctx, types.TenantIDContextKey, tenantID)
 	kbCtx = context.WithValue(kbCtx, types.TenantInfoContextKey, tenant)
 

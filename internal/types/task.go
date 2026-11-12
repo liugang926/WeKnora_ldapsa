@@ -304,8 +304,10 @@ type MemoryExtractPayload struct {
 
 // ExtractChunkPayload represents the extract chunk task payload
 type ExtractChunkPayload struct {
-	Initiator     TaskInitiator             `json:"initiator,omitempty"`
-	OriginalInput *KnowledgeBuildInputProof `json:"original_input_proof,omitempty"`
+	GraphSettlementOnly bool                      `json:"graph_settlement_only,omitempty"`
+	GraphTaskID         string                    `json:"graph_task_id,omitempty"`
+	Initiator           TaskInitiator             `json:"initiator,omitempty"`
+	OriginalInput       *KnowledgeBuildInputProof `json:"original_input_proof,omitempty"`
 	TracingContext
 	TenantID uint64 `json:"tenant_id"`
 	ChunkID  string `json:"chunk_id"`

@@ -499,6 +499,7 @@ func TestMessageActualFirstQAPersistedPlaceholderHistoryAndFinalStream(t *testin
 		eventManager:       manager,
 		lineageVerifier:    messages,
 		sourceLineageGuard: messages.sourceLineageGuard,
+		sessionRepo:        messages.sessionRepo,
 	}
 	bus := event.NewEventBus()
 	require.NoError(t, repository.UpgradeMessageProducerAdvanceSchema(db))

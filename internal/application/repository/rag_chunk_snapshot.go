@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
+
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"gorm.io/gorm"
@@ -108,8 +110,15 @@ func (r *RAGChunkSnapshotReader) HydrateRAGChunkSnapshots(
 				Error; err != nil {
 				return lineageSnapshotReadError(err)
 			}
-			if !request.MetadataOnly &&
-				(knowledge.ParseStatus != types.ParseStatusCompleted || knowledge.EnableStatus != "enabled") {
+			if !request.MetadataOnly && knowledge.EnableStatus != "enabled" {
+				return ErrNextcloudLineageSnapshotDenied
+			}
+			// Under the WeKnora read authority the per-chunk checks below
+			// (enabled, indexed) are the read gate; a document-level
+			// parse_status left mid-flight by a stalled sync pipeline must
+			// not strand its indexed chunks and block conversations.
+			if !request.MetadataOnly && !access.UseWeKnoraReadAuthority() &&
+				knowledge.ParseStatus != types.ParseStatusCompleted {
 				return ErrNextcloudLineageSnapshotDenied
 			}
 			var kb types.KnowledgeBase
@@ -122,6 +131,17 @@ func (r *RAGChunkSnapshotReader) HydrateRAGChunkSnapshots(
 			controlled, err := ragKnowledgeIsControlled(tx, &knowledge)
 			if err != nil {
 				return err
+			}
+			if access.UseWeKnoraReadAuthority() {
+				// WeKnora owns read authorization
+				// (WEKNORA_NEXTCLOUD_READ_AUTHORITY=weknora): the publication
+				// lineage is lifecycle metadata for the sync pipeline and
+				// never a read prerequisite, matching the guard's Check
+				// short-circuit. Route every document through the ordinary
+				// WeKnora lineage producer instead of the Nextcloud
+				// resolver, so DingTalk/local documents in paired knowledge
+				// bases hydrate without a publication chain.
+				controlled = false
 			}
 			var sourceLineage *types.SourceLineage
 			if controlled {

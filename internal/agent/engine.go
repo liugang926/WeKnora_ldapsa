@@ -84,9 +84,11 @@ type AgentEngine struct {
 	roundGuard                    func(context.Context) error
 	lineageVerifier               func(context.Context, *types.SourceLineage) error
 	turnLineage                   *types.RAGSourceLineage
+	requireCompleteSourceLineage  bool
 	lineageMu                     sync.Mutex
 	lineageEmitMu                 sync.Mutex
 	lineageErr                    error
+	lineageDiagnostic             string
 	lineageCancel                 context.CancelFunc
 	systemPromptLineage           *types.SourceLineage
 	memoryPromptLineage           *types.SourceLineage
@@ -336,9 +338,13 @@ func (e *AgentEngine) Execute(
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	e.lineageMu.Lock()
-	e.lineageErr, e.lineageCancel = nil, cancel
+	e.lineageErr, e.lineageDiagnostic, e.lineageCancel = nil, "", cancel
 	e.lineageMu.Unlock()
-	e.turnLineage = types.NewRAGSourceLineage(e.lineageVerifier)
+	if e.requireCompleteSourceLineage {
+		e.turnLineage = types.NewRAGSourceLineage(e.lineageVerifier)
+	} else {
+		e.turnLineage = types.NewWeKnoraACLSourceLineage(e.lineageVerifier)
+	}
 	ctx = types.WithRAGSourceLineage(ctx, e.turnLineage)
 	defer func() { e.lineageMu.Lock(); e.lineageCancel = nil; e.lineageMu.Unlock() }()
 	logger.Infof(ctx, "[Agent] Starting execution: session=%s, message=%s, query_len=%d, context_msgs=%d",
@@ -434,7 +440,12 @@ func (e *AgentEngine) Execute(
 	})
 
 	_, err := e.executeLoop(ctx, state, query, messages, tools, sessionID, messageID)
-	if boundaryErr := e.lineageFailure(); boundaryErr != nil {
+	// A lineage boundary failure recorded mid-flight only becomes the
+	// turn's error when the loop itself did not fail: when both exist the
+	// loop error is the root cause (the recorded denial is usually a
+	// downstream artifact of the same stall), and overriding it hid the
+	// real failure behind "lineage unavailable or unauthorized".
+	if boundaryErr := e.lineageFailure(); boundaryErr != nil && err == nil {
 		err = boundaryErr
 	}
 	state.SourceLineage = e.SourceLineageSnapshot()

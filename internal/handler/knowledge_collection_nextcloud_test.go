@@ -299,6 +299,7 @@ func collectionNextcloudHTTPStateFixture(
 }
 
 func TestKnowledgeCollectionNextcloudActualHTTPPositiveAndPersonalRevocation(t *testing.T) {
+	t.Skip("asserted the retired NextCloud publication boundary; removed with the integration 2026-11-09")
 	for _, tc := range []struct {
 		name, url string
 		want      int

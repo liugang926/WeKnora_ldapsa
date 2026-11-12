@@ -52,7 +52,7 @@ func (s *reviewLineageSnapshots) RecheckNextcloudSourceLineage(
 
 // A later source's slow remote authorization must not hide a local generation
 // change to an earlier source in the same dependency set.
-func TestNextcloudSourceLineageReviewEarlierSourceChangesDuringLaterRemoteCall(t *testing.T) {
+func TestNextcloudRetiredLineageReviewDoesNotInvokeLaterRemoteCall(t *testing.T) {
 	guard, ctx, saved, single, _ := lineagePolicyFixture(t)
 	first := saved.Sources[0]
 	second := first
@@ -77,6 +77,7 @@ func TestNextcloudSourceLineageReviewEarlierSourceChangesDuringLaterRemoteCall(t
 	lineage, err := types.NewCompleteSourceLineage(first, second)
 	require.NoError(t, err)
 	require.Equal(t, first, lineage.Sources[0], "the changed source must be checked before the delayed source")
+	remoteCalls := 0
 	guard.publication.authorize = func(
 		_ context.Context,
 		_ *types.DataSourceConfig,
@@ -86,6 +87,7 @@ func TestNextcloudSourceLineageReviewEarlierSourceChangesDuringLaterRemoteCall(t
 		_ string,
 		fileID int64,
 	) (nextcloud.AuthorizationDecision, error) {
+		remoteCalls++
 		if fileID == 43 {
 			current := snapshots.identity[first.KnowledgeID]
 			current.Revision++
@@ -94,20 +96,19 @@ func TestNextcloudSourceLineageReviewEarlierSourceChangesDuringLaterRemoteCall(t
 		}
 		return nextcloud.AuthorizationDecision{Allow: true, SourceETag: first.ETag}, nil
 	}
-	require.ErrorIs(t, guard.Check(ctx, lineage, LineageReadScope{}), ErrNextcloudPublicationDenied)
-	require.NotEqual(
-		t,
-		first.Revision,
-		snapshots.identity[first.KnowledgeID].Revision,
-		"the later remote call must actually change the earlier source",
-	)
+	assertRetiredReadUnchanged(t, lineage, func() error {
+		return guard.Check(ctx, lineage, LineageReadScope{})
+	})
+	require.Zero(t, remoteCalls)
+	require.Equal(t, first.Revision, snapshots.identity[first.KnowledgeID].Revision)
 }
 
 // An identity can become disabled while the source response is in flight,
 // although the KB's group-resource policy still inherits workspace access.
-func TestNextcloudSourceLineageReviewDirectoryRevokedDuringRemoteCall(t *testing.T) {
+func TestNextcloudRetiredLineageReviewDoesNotInvokeDirectoryRevocationHook(t *testing.T) {
 	guard, ctx, saved, _, _ := lineagePolicyFixture(t)
 	directory := guard.publication.directories.(*publicationDirectoryLookup)
+	remoteCalls := 0
 	guard.publication.authorize = func(
 		context.Context,
 		*types.DataSourceConfig,
@@ -117,31 +118,26 @@ func TestNextcloudSourceLineageReviewDirectoryRevokedDuringRemoteCall(t *testing
 		string,
 		int64,
 	) (nextcloud.AuthorizationDecision, error) {
+		remoteCalls++
 		directory.identities[0].Status = types.DirectoryObjectDisabled
 		return nextcloud.AuthorizationDecision{Allow: true, SourceETag: saved.Sources[0].ETag}, nil
 	}
-	require.ErrorIs(t, guard.Check(ctx, saved, LineageReadScope{}), ErrNextcloudPublicationDenied)
-	require.Equal(
-		t,
-		types.DirectoryObjectDisabled,
-		directory.identities[0].Status,
-		"the remote callback must actually revoke the identity",
-	)
+	assertRetiredReadUnchanged(t, saved, func() error { return guard.Check(ctx, saved, LineageReadScope{}) })
+	require.Zero(t, remoteCalls)
+	require.Equal(t, types.DirectoryObjectActive, directory.identities[0].Status)
 }
 
-func TestNextcloudSourceLineageReviewCompleteEmptyRequiresCurrentSharedAgent(t *testing.T) {
+func TestRetainedReadPolicyRequiresCurrentSharedAgentWithoutKBTargets(t *testing.T) {
 	guard, ctx, _, _, _ := lineagePolicyFixture(t)
 	ctx = types.WithCaller(ctx, types.Caller{TenantID: 99, UserID: "person-1", Role: types.TenantRoleViewer})
 	agents := &reviewLineageAgents{}
 	guard.agents = agents
-	lineage, err := types.NewCompleteSourceLineage()
-	require.NoError(t, err)
 	// This plain-chat turn still uses the selected shared Agent's configuration
 	// and system prompt, even though it consulted no knowledge base.
 	scope := LineageReadScope{AgentID: "agent-1", AgentTenantID: 12}
 	require.ErrorIs(
 		t,
-		guard.Check(ctx, lineage, scope),
+		guard.checkCurrentKBReads(ctx, types.CallerFromContext(ctx), nil, nil, scope),
 		ErrNextcloudPublicationDenied,
 		"revoked Agent must not be admitted by an empty source set",
 	)
@@ -188,7 +184,7 @@ func (g *reviewLineageGroups) EffectivePermission(
 	return types.EffectiveResourcePermission{Allowed: true}, nil
 }
 
-func TestNextcloudSourceLineageReviewLocalRechecksFollowFinalGrantLookup(t *testing.T) {
+func TestNextcloudRetiredLineageReviewDoesNotInvokeFinalGrantHooks(t *testing.T) {
 	for _, change := range []string{"generation", "directory identity"} {
 		t.Run(change, func(t *testing.T) {
 			guard, ctx, saved, snapshots, _ := lineagePolicyFixture(t)
@@ -218,8 +214,10 @@ func TestNextcloudSourceLineageReviewLocalRechecksFollowFinalGrantLookup(t *test
 					directory.identities[0].Status = types.DirectoryObjectDisabled
 				}
 			}}
-			require.ErrorIs(t, guard.Check(ctx, saved, LineageReadScope{}), ErrNextcloudPublicationDenied)
-			require.True(t, changed, "the final grant lookup must be exercised")
+			assertRetiredReadUnchanged(t, saved, func() error { return guard.Check(ctx, saved, LineageReadScope{}) })
+			require.False(t, remoteDone)
+			require.False(t, changed)
+			require.Equal(t, types.DirectoryObjectActive, directory.identities[0].Status)
 		})
 	}
 }
@@ -268,7 +266,7 @@ func (g *reviewLineageAgentUseDenied) EffectivePermission(
 	return types.EffectiveResourcePermission{Allowed: true, Action: action}, nil
 }
 
-func TestNextcloudSourceLineageReviewCompleteEmptyRequiresAgentUseGroupGrant(t *testing.T) {
+func TestRetainedReadPolicyRequiresAgentUseGroupGrantWithoutKBTargets(t *testing.T) {
 	for _, callerTenant := range []uint64{12, 99} {
 		t.Run(fmt.Sprintf("caller-%d", callerTenant), func(t *testing.T) {
 			guard, ctx, _, _, _ := lineagePolicyFixture(t)
@@ -279,10 +277,12 @@ func TestNextcloudSourceLineageReviewCompleteEmptyRequiresAgentUseGroupGrant(t *
 			guard.agents = &lineageAgentsStub{allowed: true, agent: &types.CustomAgent{ID: "agent-1", TenantID: 12}}
 			groups := &reviewLineageAgentUseDenied{}
 			guard.groups = groups
-			lineage, err := types.NewCompleteSourceLineage()
-			require.NoError(t, err)
 			scope := LineageReadScope{AgentID: "agent-1", AgentTenantID: 12}
-			require.ErrorIs(t, guard.Check(ctx, lineage, scope), ErrNextcloudPublicationDenied)
+			require.ErrorIs(
+				t,
+				guard.checkCurrentKBReads(ctx, types.CallerFromContext(ctx), nil, nil, scope),
+				ErrNextcloudPublicationDenied,
+			)
 			require.Positive(t, groups.agentCalls, "existing Agent/use directory-resource permission must be checked")
 		})
 	}

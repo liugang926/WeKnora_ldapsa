@@ -2,6 +2,57 @@ import { directoryAccessLocale } from './directoryAccessLocale'
 
 export default {
   ...directoryAccessLocale,
+  dingtalkAdmin: {
+    title: 'DingTalk SSO',
+    description: 'Configure the DingTalk enterprise single sign-on provider: enable it, manage credentials, and verify the connection.',
+    refresh: 'Refresh',
+    loading: 'Loading DingTalk configuration…',
+    readOnlyHint: 'DingTalk settings are managed by deployment files (config_source=file) and are read-only here. Set DINGTALK_AUTH_CONFIG_SOURCE=database to manage them in this page.',
+    copy: 'Copy',
+    copied: 'Copied',
+    source: { file: 'Env managed', database: 'UI managed' },
+    secretSource: { database: 'Secret: database', env: 'Secret: environment', none: 'No secret' },
+    status: { enabled: 'Enabled', disabled: 'Disabled' },
+    sections: { redirect: 'Redirect URL' },
+    fields: {
+      enabled: 'Enable DingTalk login',
+      enabledHint: 'Password, OIDC and LDAP login remain available.',
+      corpId: 'Corp ID',
+      corpIdHint: 'The enterprise identifier from DingTalk open platform.',
+      appKey: 'App key',
+      appSecret: 'App secret',
+      secretPlaceholder: 'Enter only to replace the stored secret',
+      clearSecret: 'Clear stored secret (fall back to environment)',
+      agentId: 'Agent ID',
+      agentIdHint: 'Recorded for future messaging features; login does not use it.',
+      displayName: 'Provider display name',
+      displayNameHint: 'Shown on the login page next to the QR entry.',
+      redirectUrl: 'Registered redirect URL',
+      redirectUrlHint: 'Register this exact URL as the redirect URL of your DingTalk app. Changing servers or domains requires updating it on the DingTalk open platform.',
+      secretManaged: 'Managed by {source}; the value is never returned.',
+      secretStored: 'A secret is stored in the database. Leave blank to keep it.',
+      secretFromEnv: 'The secret comes from the environment. Saving a new secret here stores it in the database.',
+      secretMissing: 'No app secret is configured; enable requires one.',
+    },
+    actions: {
+      test: 'Test connection',
+      adopt: 'Import from environment',
+      adoptConfirm: 'Copy the current environment DingTalk configuration (app secret stored encrypted) into this page and switch to UI management. The env entries can be cleaned up afterwards; DINGTALK_AUTH_CONFIG_SOURCE=file rolls back to env management at any time. Import now?'
+    },
+    messages: {
+      testSuccess: 'DingTalk accepted the app credentials.',
+      testFailed: 'DingTalk connection test failed.',
+      testRejected: 'DingTalk rejected the credentials ({code}): {detail}',
+      loadFailed: 'Failed to load the DingTalk configuration.',
+      saved: 'DingTalk configuration saved.',
+      saveFailed: 'Failed to save the DingTalk configuration.',
+      required: 'Corp ID and app key are required when DingTalk login is enabled.',
+      copyFailed: 'Could not copy the redirect URL.',
+      adoptSuccess: 'Environment configuration imported; now managed in this page.',
+      adoptFailed: 'Failed to import the environment configuration.',
+    },
+  },
+
   localBrowser: {
     pipOpen: "Pop out preview",
     pipReturn: "Return to conversation",
@@ -2415,6 +2466,24 @@ export default {
     redirectingToOIDC: 'Redirecting to identity provider...',
     orContinueWith: 'Or continue with',
     oidcLoginFailed: 'OIDC login failed',
+    dingtalkLogin: 'Sign in with DingTalk QR code',
+    dingtalkLoginWithProvider: 'Sign in with {provider}',
+    redirectingToDingTalk: 'Redirecting to DingTalk...',
+    dingtalkLoginFailed: 'DingTalk sign-in failed',
+    dingtalkInAppFailed: 'DingTalk automatic sign-in failed. Please retry or use your account',
+    dingtalkErrors: {
+      not_enterprise_member: 'This DingTalk account does not belong to this organization and cannot sign in',
+      no_ad_match: 'No account matches your DingTalk job number. Please contact an administrator',
+      identity_link_required: 'A local account already exists under this name; an administrator must link it',
+      empty_job_number: 'Your DingTalk profile is missing a job number. Ask an administrator to add it',
+      duplicate_job_number: 'The job number matches multiple accounts. Please contact an administrator',
+      binding_conflict: 'Account binding conflict. Please contact an administrator',
+      user_inactive: 'This account has been disabled. Please contact an administrator',
+      invalid_state: 'The sign-in session has expired. Please scan again',
+      dingtalk_unavailable: 'DingTalk is temporarily unavailable. Please retry later or sign in with AD',
+      wrong_corp: 'Organization verification failed. Cannot sign in',
+      fallback: 'DingTalk sign-in failed. Please retry or use your account'
+    },
     username: 'Username',
     email: 'Email',
     password: 'Password',
@@ -3641,7 +3710,9 @@ export default {
         descriptionLanguageAuto: 'Follow document language',
         customInstructionsLabel: 'Image Processing Instructions',
         customInstructionsDescription: 'Add visual priorities while OCR and Markdown output contracts remain fixed',
-        customInstructionsPlaceholder: 'For example: prioritize nameplates, model numbers, alarm codes, and table units…'
+        customInstructionsPlaceholder: 'For example: prioritize nameplates, model numbers, alarm codes, and table units…',
+        imageClassificationLabel: 'Image type classification',
+        imageClassificationDescription: 'Before OCR, the vision model classifies each image (drawing sheet / product image / plain page); confirmed drawings and product images switch to dedicated extraction prompts (drawing name / number, or product name / model first). Adds one model call per image'
       }
     }
   },
@@ -6650,6 +6721,7 @@ export default {
     refreshLogs: 'Refresh logs',
     noLogs: 'No sync records yet',
     logStatus: {
+      syncProgress: 'Synced {done} / {total} ({pct}%)',
       running: 'Syncing',
       success: 'Success',
       partial: 'Partial',
@@ -6804,6 +6876,8 @@ export default {
     schedule6h: 'Every 6 hours',
     schedule12h: 'Every 12 hours',
     schedule24h: 'Daily',
+      scheduleDailyCustom: 'Daily at fixed time (custom)',
+      scheduleDailyTime: 'Time',
     scheduleHuman: {
       '30min': 'Every 30 min',
       '1h': 'Hourly',

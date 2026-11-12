@@ -10,7 +10,6 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/agent/skills"
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
-	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -188,7 +187,7 @@ func (h *AgentStreamHandler) subscribeWithLineage(kind event.EventType, handler 
 		complete := h.prefixLineage.RequireComplete() == nil
 		h.mu.Unlock()
 		if !complete {
-			return access.ErrNextcloudPublicationDenied
+			return types.ErrSourceLineageUnknown
 		}
 		return handler(ctx, evt)
 	})
@@ -693,7 +692,7 @@ func (h *AgentStreamHandler) handleError(ctx context.Context, evt event.Event) e
 		return nil
 	}
 	if evt.SessionID != "" && evt.SessionID != h.sessionID || evt.RequestID != "" && evt.RequestID != h.requestID {
-		return access.ErrNextcloudPublicationDenied
+		return types.ErrSourceLineageUnknown
 	}
 
 	// Provider errors and stage metadata can contain source text or secrets.

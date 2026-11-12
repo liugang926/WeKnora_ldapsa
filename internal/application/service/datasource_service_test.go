@@ -608,6 +608,14 @@ func (r *processSyncSyncLogRepo) FindLatest(context.Context, string) (*types.Syn
 	return nil, nil
 }
 
+func (r *processSyncSyncLogRepo) ConsecutiveFailures(_ context.Context, _ string) (int, time.Time, error) {
+	return 0, time.Time{}, nil
+}
+
+func (r *processSyncSyncLogRepo) UpdateProgress(_ context.Context, _ string, _ map[string]any) error {
+	return nil
+}
+
 func (r *processSyncSyncLogRepo) HasRunningSync(context.Context, string) (bool, error) {
 	return false, nil
 }

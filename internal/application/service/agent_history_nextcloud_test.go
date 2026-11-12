@@ -13,15 +13,14 @@ import (
 
 type instanceHistorySources struct {
 	interfaces.DataSourceRepository
-	ever           bool
-	err            error
-	calls          int
-	becomeSourceAt int
+	ever  bool
+	err   error
+	calls int
 }
 
 func (s *instanceHistorySources) HasEverNextcloudSourceGlobally(context.Context) (bool, error) {
 	s.calls++
-	return s.ever || (s.becomeSourceAt > 0 && s.calls >= s.becomeSourceAt), s.err
+	return s.ever, s.err
 }
 
 func TestAgentHistoryAdmissionBeforeCheckpointAndTokenPage(t *testing.T) {
@@ -57,21 +56,25 @@ func TestAgentHistoryAdmissionAllowsOrdinaryCheckpointAndRechecks(t *testing.T) 
 		checkpoint.SourceLineage = rows[1].SourceLineage
 		checkpoint.ContextCheckpoint.SourceLineage = rows[1].SourceLineage
 		repo := &historyRepo{rows: rows, checkpoint: checkpoint}
-		sources := &instanceHistorySources{}
-		if changed {
-			sources.becomeSourceAt = 2
-		}
+		checks := 0
+		admission := literalHistoryAdmission{checkReplay: func(context.Context) error {
+			checks++
+			if changed && checks == 2 {
+				return ErrResourceAccessDenied
+			}
+			return nil
+		}}
 		got, _, err := LoadAgentHistory(
 			context.Background(),
 			repo,
 			"s1",
 			unlimitedBudget,
 			false,
-			literalHistoryAdmission{guard: access.NewNextcloudHistoryGuard(nil, sources, nil)},
+			admission,
 		)
-		require.Equal(t, 2, sources.calls)
+		require.Equal(t, 2, checks)
 		if changed {
-			require.ErrorIs(t, err, access.ErrNextcloudPublicationDenied)
+			require.ErrorIs(t, err, ErrResourceAccessDenied)
 			require.Empty(t, got)
 		} else {
 			require.NoError(t, err)

@@ -89,7 +89,7 @@ func TestAgentStreamHandlerInternalErrorRejectsForeignRunScope(t *testing.T) {
 					Data:      event.ErrorData{Error: "foreign private error"},
 				},
 			),
-			access.ErrNextcloudPublicationDenied,
+			types.ErrSourceLineageUnknown,
 		)
 	}
 	require.Empty(t, streams.events)
@@ -146,7 +146,7 @@ func TestLiveSSEProducerErrorWithRefusedOriginalMaterialHolder(t *testing.T) {
 								Data:          event.AgentThoughtData{Content: "private refused body"},
 							},
 						),
-						access.ErrNextcloudPublicationDenied,
+						types.ErrSourceLineageUnknown,
 					)
 				}
 				if condition == "source_revoked" {

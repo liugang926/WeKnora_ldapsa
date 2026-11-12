@@ -168,15 +168,39 @@ func nextcloudDispatchPublicationProof(
 	}
 	prefix := "nextcloud:" + connection.NextcloudInstanceID + ":"
 	byExternalID := make(map[string]nextcloudSourceVersion, len(versions))
+	orphanedStaging := make(map[string]bool)
 	for _, version := range versions {
 		if !strings.HasPrefix(version.ExternalID, prefix) {
 			return nextcloudApplyRetry, nil
 		}
 		fileID := strings.TrimPrefix(version.ExternalID, prefix)
 		if _, present := files[fileID]; !present {
-			if len(tombstones[fileID]) == 0 || version.State != "tombstone" ||
-				version.DesiredETag != "" || version.CandidateKnowledgeID != "" {
+			coveredByTombstone := len(tombstones[fileID]) != 0 &&
+				version.State == "tombstone" && version.DesiredETag == "" &&
+				version.CandidateKnowledgeID == ""
+			provenOrphanedFailure := false
+			if !coveredByTombstone {
+				provenOrphanedFailure, err = nextcloudProvenOrphanedFailedCandidate(
+					tx,
+					connection.TenantID,
+					connection.KnowledgeBaseID,
+					connection.DatasourceID,
+					connection.NextcloudInstanceID,
+					[]string{connection.BindingID},
+					version.ExternalID,
+					version.DesiredETag,
+					version.CandidateKnowledgeID,
+					version.State,
+				)
+				if err != nil {
+					return nextcloudApplyRetry, err
+				}
+			}
+			if !coveredByTombstone && !provenOrphanedFailure {
 				return nextcloudApplyRetry, nil
+			}
+			if provenOrphanedFailure {
+				orphanedStaging[version.ExternalID] = true
 			}
 		} else if version.State != "published" && version.State != "staging" {
 			return nextcloudApplyRetry, nil
@@ -227,7 +251,8 @@ func nextcloudDispatchPublicationProof(
 			return nextcloudApplyRetry, nil
 		}
 		terminalFailure := version.State == "staging" && row.DeletedAt == nil &&
-			row.ParseStatus == types.ParseStatusFailed
+			row.ParseStatus == types.ParseStatusFailed &&
+			(row.EnableStatus == "disabled" || row.EnableStatus == "enabled")
 		if nextcloudApplyMetadataString(metadata, "nextcloud_etag") != "" &&
 			(row.DeletedAt != nil || version.CandidateKnowledgeID != row.ID ||
 				(!terminalFailure && version.State != "published") ||
@@ -261,7 +286,7 @@ func nextcloudDispatchPublicationProof(
 		}
 	}
 	barriersMatch, err := nextcloudLatestHintBarriers(tx, connection, appliedEventID,
-		targetEventID, files, tombstones, byExternalID)
+		targetEventID, files, tombstones, byExternalID, orphanedStaging)
 	if err != nil || !barriersMatch {
 		return nextcloudApplyRetry, err
 	}
@@ -271,8 +296,8 @@ func nextcloudDispatchPublicationProof(
 	// changes visibility bookkeeping only; no failed row is published.
 	for _, candidateID := range failedEnabledCandidates {
 		result := tx.Model(&types.Knowledge{}).
-			Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND channel = ? "+
-				"AND parse_status = ? AND enable_status = ? AND deleted_at IS NULL",
+			Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND channel = ? AND "+
+				"parse_status = ? AND enable_status = ? AND deleted_at IS NULL",
 				candidateID, connection.TenantID, connection.KnowledgeBaseID,
 				types.ConnectorTypeNextcloud, types.ParseStatusFailed, "enabled").
 			Update("enable_status", "disabled")
@@ -294,6 +319,7 @@ func nextcloudLatestHintBarriers(tx *gorm.DB, connection nextcloudEventConnectio
 	appliedEventID, targetEventID int64, files map[string]nextcloudApplyFile,
 	tombstones map[string]json.RawMessage,
 	versions map[string]nextcloudSourceVersion,
+	orphanedStaging map[string]bool,
 ) (bool, error) {
 	var unscoped int64
 	if err := tx.Table("nextcloud_event_inbox").Where(
@@ -358,7 +384,8 @@ func nextcloudLatestHintBarriers(tx *gorm.DB, connection nextcloudEventConnectio
 				return false, nil
 			}
 		case "delete":
-			if present || (indexed && (version.State != "tombstone" || len(tombstones[fileID]) == 0)) {
+			if present || (indexed && !orphanedStaging[prefix+fileID] &&
+				(version.State != "tombstone" || len(tombstones[fileID]) == 0)) {
 				return false, nil
 			}
 		case "subtree_scan", "subtree_moved", "subtree_deleted", "reconcile":

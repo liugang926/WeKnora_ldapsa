@@ -94,97 +94,46 @@ func NewNextcloudSourceLineageGuard(
 	return g
 }
 
+// Check is a compatibility no-op after the Nextcloud read guard retirement.
 func (g *NextcloudSourceLineageGuard) Check(
 	ctx context.Context,
 	lineage *types.SourceLineage,
 	scope LineageReadScope,
 ) error {
+	return nil // Retired with the Nextcloud decoupling on 2026-11-09.
+}
+
+// CheckSourceLifecycle verifies that saved Nextcloud source identities still
+// refer to the current, published knowledge object. Unlike Check, it does not
+// refresh the request actor or reapply directory ACLs: ordinary WeKnora reads
+// are authorized by the workspace/session ACL, while Nextcloud remains the
+// authority for file publication, withdrawal and recycling.
+func (g *NextcloudSourceLineageGuard) CheckSourceLifecycle(
+	ctx context.Context,
+	lineage *types.SourceLineage,
+) error {
 	if ctx == nil || g == nil {
 		return ErrNextcloudPublicationUnavailable
 	}
-	if lineage == nil {
-		lineage = types.UnknownSourceLineage()
-	}
-	if !UseWeKnoraReadAuthority() && lineage.RequireComplete() != nil {
-		return ErrNextcloudPublicationDenied
-	}
-	var refreshErr error
-	ctx, refreshErr = g.refreshCurrentReadActor(ctx)
-	if refreshErr != nil {
-		return refreshErr
-	}
-	caller, captured := ctx.Value(types.CallerContextKey).(types.Caller)
-	principal, principalCaptured := ctx.Value(types.PrincipalContextKey).(types.Principal)
-	if !captured || caller.TenantID == 0 || !principalCaptured || !principal.Valid() {
-		return ErrNextcloudPublicationDenied
-	}
-	if principal != principal.Normalize() {
-		return ErrNextcloudPublicationDenied
-	}
-	switch principal.Type {
-	case types.PrincipalWebUser, types.PrincipalAPITenant, types.PrincipalAPIPlatform, types.PrincipalAPIExternalUser,
-		types.PrincipalIMUser,
-		types.PrincipalEmbedChannel,
-		types.PrincipalEmbedSession,
-		types.PrincipalEmbedVisitor,
-		types.PrincipalMCPEndpoint:
-	default:
-		return ErrNextcloudPublicationDenied
-	}
-	if principal.Type == types.PrincipalWebUser &&
-		(strings.TrimSpace(
-			caller.UserID,
-		) == "" || principal.ID != caller.UserID || types.IsSyntheticUserID(caller.UserID)) {
-		return ErrNextcloudPublicationDenied
-	}
-	if len(lineage.Sources) != 0 {
-		if principal.Type != types.PrincipalWebUser || principal.ID != caller.UserID ||
-			strings.TrimSpace(caller.UserID) == "" ||
-			types.IsSyntheticUserID(caller.UserID) {
-			return ErrNextcloudPublicationDenied
-		}
-		if _, machine := types.TenantAPIKeyScopeFromContext(ctx); machine {
-			return ErrNextcloudPublicationDenied
-		}
-		if g.snapshots == nil || g.publication == nil || g.groups == nil {
-			return ErrNextcloudPublicationUnavailable
-		}
-	}
-	targets := append(types.SearchTargets{}, scope.Targets...)
-	controlled := map[string]uint64{}
-	for _, saved := range lineage.Sources {
-		if owner, exists := controlled[saved.KnowledgeBaseID]; exists && owner != saved.TenantID {
-			return ErrNextcloudPublicationDenied
-		}
-		controlled[saved.KnowledgeBaseID] = saved.TenantID
-		targets = append(
-			targets,
-			&types.SearchTarget{
-				Type:            types.SearchTargetTypeKnowledgeBase,
-				TenantID:        saved.TenantID,
-				KnowledgeBaseID: saved.KnowledgeBaseID,
-			},
-		)
-	}
-	if err := g.checkCurrentKBReads(ctx, caller, targets, controlled, scope); err != nil {
-		return err
+	if lineage == nil || len(lineage.Sources) == 0 {
+		return nil
 	}
 	if UseWeKnoraReadAuthority() {
-		// WeKnora owns workspace read authorization in explicit opt-in
-		// deployments. Nextcloud source lineage remains lifecycle metadata for
-		// publication, withdrawal and GC rather than a second read ACL.
-		return g.recheckCurrentReadActor(ctx)
+		// Same opt-in as Check: WeKnora owns read authorization, so the
+		// publication lifecycle stays metadata for sync/withdrawal/GC and is
+		// never a second read ACL for conversations.
+		return nil
 	}
-
-	var checkedDirectory *types.DirectoryIdentity
-	if len(lineage.Sources) > 0 {
-		var err error
-		checkedDirectory, err = g.publication.currentDirectoryIdentity(ctx)
-		if err != nil {
-			return err
-		}
+	if lineage.RequireComplete() != nil {
+		return ErrNextcloudPublicationDenied
+	}
+	if g.snapshots == nil || g.publication == nil {
+		return ErrNextcloudPublicationUnavailable
 	}
 	for _, saved := range lineage.Sources {
+		if saved.Provider != types.ConnectorTypeNextcloud {
+			continue
+		}
 		knowledge, current, err := g.snapshots.ResolveNextcloudSourceLineage(
 			ctx,
 			saved.TenantID,
@@ -193,11 +142,14 @@ func (g *NextcloudSourceLineageGuard) Check(
 		)
 		if err != nil {
 			return apperrors.NewProtocolError(fmt.Errorf(
-				"%w: trusted lineage lookup",
+				"%w: trusted lifecycle lookup",
 				ErrNextcloudPublicationUnavailable,
-			), fmt.Sprintf("%s: trusted lineage lookup", apperrors.PublicMessage(ErrNextcloudPublicationUnavailable)))
+			), fmt.Sprintf("%s: trusted lifecycle lookup", apperrors.PublicMessage(
+				ErrNextcloudPublicationUnavailable,
+			)))
 		}
-		if current != saved || current.Validate() != nil || knowledge == nil || knowledge.ID != saved.KnowledgeID ||
+		if current != saved || current.Validate() != nil || knowledge == nil ||
+			knowledge.ID != saved.KnowledgeID ||
 			knowledge.TenantID != saved.TenantID ||
 			knowledge.KnowledgeBaseID != saved.KnowledgeBaseID ||
 			knowledge.Channel != types.ConnectorTypeNextcloud ||
@@ -209,7 +161,6 @@ func (g *NextcloudSourceLineageGuard) Check(
 		if err := g.publication.CheckKnowledge(ctx, knowledge); err != nil {
 			return err
 		}
-		// Catch a local version/fence change while directory/Nextcloud calls ran.
 		_, after, err := g.snapshots.ResolveNextcloudSourceLineage(
 			ctx,
 			saved.TenantID,
@@ -218,9 +169,9 @@ func (g *NextcloudSourceLineageGuard) Check(
 		)
 		if err != nil {
 			return apperrors.NewProtocolError(fmt.Errorf(
-				"%w: trusted lineage recheck",
+				"%w: trusted lifecycle recheck",
 				ErrNextcloudPublicationUnavailable,
-			), fmt.Sprintf("%s: trusted lineage recheck", apperrors.PublicMessage(
+			), fmt.Sprintf("%s: trusted lifecycle recheck", apperrors.PublicMessage(
 				ErrNextcloudPublicationUnavailable,
 			)))
 		}
@@ -228,36 +179,7 @@ func (g *NextcloudSourceLineageGuard) Check(
 			return ErrNextcloudPublicationDenied
 		}
 	}
-	// Repeat grants after remote checks; no operation-wide/context grant cache
-	// may extend a revoked org share, shared Agent or directory permission.
-	if err := g.checkCurrentKBReads(ctx, caller, targets, controlled, scope); err != nil {
-		return err
-	}
-	if len(lineage.Sources) == 0 {
-		return g.recheckCurrentReadActor(ctx)
-	}
-	currentDirectory, err := g.publication.currentDirectoryIdentity(ctx)
-	if err != nil {
-		return err
-	}
-	if currentDirectory.ID != checkedDirectory.ID || currentDirectory.DirectoryID != checkedDirectory.DirectoryID ||
-		currentDirectory.ObjectGUID != checkedDirectory.ObjectGUID ||
-		*currentDirectory.UserID != *checkedDirectory.UserID {
-		return ErrNextcloudPublicationDenied
-	}
-	matches, err := g.snapshots.RecheckNextcloudSourceLineage(ctx, lineage)
-	if err != nil {
-		return apperrors.NewProtocolError(fmt.Errorf(
-			"%w: final coherent lineage snapshot",
-			ErrNextcloudPublicationUnavailable,
-		), fmt.Sprintf("%s: final coherent lineage snapshot", apperrors.PublicMessage(
-			ErrNextcloudPublicationUnavailable,
-		)))
-	}
-	if !matches {
-		return ErrNextcloudPublicationDenied
-	}
-	return g.recheckCurrentReadActor(ctx)
+	return nil
 }
 
 // Resolve performs both trusted identity resolution and current authorization.
@@ -405,7 +327,10 @@ func (g *NextcloudSourceLineageGuard) checkCurrentKBReads(
 			return ErrNextcloudPublicationDenied
 		}
 		_, sourceControlled := controlled[kb.ID]
-		if (sourceControlled || kb.EverHadNextcloudSource) && g.groups == nil {
+		// 2026-11-09 decoupling: only a live saved-source control entry makes
+		// group revalidation mandatory; the historical provenance marker
+		// alone no longer blocks conversation lineage.
+		if sourceControlled && g.groups == nil {
 			return ErrNextcloudPublicationUnavailable
 		}
 		if g.groups != nil {

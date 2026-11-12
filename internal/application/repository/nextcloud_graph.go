@@ -521,6 +521,13 @@ func readNextcloudGraphState(
 				out.State = "succeeded_empty"
 			}
 			out.Persisted = true
+		case out.Succeeded > 0 && graphFailureWithinTolerance(out.Expected, out.Failed, out.Cancelled):
+			// Operator policy: subtasks retry at most three times (asynq
+			// MaxRetry) and are then terminally accounted; a document whose
+			// failed+cancelled graph subtasks stay within 3% counts as a
+			// successful optimization instead of blocking on perfection.
+			out.State = "succeeded"
+			out.Persisted = true
 		case out.Succeeded > 0 && out.Failed > 0:
 			out.State = "partial_failed"
 		case out.Failed > 0:
@@ -1140,4 +1147,15 @@ func (s *NextcloudProcessingStateStore) UnpreparedGraphChunks(
 		return nil
 	})
 	return result, err
+}
+
+// graphFailureWithinTolerance reports whether the not-succeeded graph
+// subtasks stay within the operator-configured 3% failure tolerance
+// (failed + cancelled out of the planned total), with at least one success.
+// It only ever upgrades a partial result to success, never the reverse.
+func graphFailureWithinTolerance(expected, failed, cancelled int) bool {
+	if expected <= 0 || failed+cancelled <= 0 {
+		return false
+	}
+	return (failed+cancelled)*100 <= expected*3
 }

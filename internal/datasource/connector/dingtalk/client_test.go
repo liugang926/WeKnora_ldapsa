@@ -21,12 +21,14 @@ func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) 
 
 func testClient(server *httptest.Server) *client {
 	return &client{
-		baseURL:   server.URL,
-		operator:  "union/user",
-		appKey:    "app",
-		appSecret: "secret",
-		http:      server.Client(),
-		sleep:     func(context.Context, time.Duration) error { return nil },
+		baseURL:     server.URL,
+		minInterval: 0,
+		operator:    "union/user",
+		appKey:      "app",
+		appSecret:   "secret",
+		creds:       &dingTalkCredentials{appKey: "app", appSecret: "secret"},
+		http:        server.Client(),
+		sleep:       func(context.Context, time.Duration) error { return nil },
 	}
 }
 
@@ -206,8 +208,8 @@ func TestClientRejectsRepeatedPaginationTokens(t *testing.T) {
 	defer server.Close()
 
 	client := testClient(server)
-	client.token = "cached"
-	client.tokenExpiry = time.Now().Add(time.Hour)
+	client.creds.token = "cached"
+	client.creds.tokenExpiry = time.Now().Add(time.Hour)
 
 	if _, err := client.listWorkspaces(context.Background()); err == nil ||
 		!strings.Contains(err.Error(), "repeated nextToken") {
@@ -234,15 +236,15 @@ func TestClientRedactsCredentialsFromStructuredAPIErrors(t *testing.T) {
 	client.appKey = "app-key"
 	client.appSecret = "app-secret"
 	client.operator = "operator-union"
-	client.token = "cached-token"
-	client.tokenExpiry = time.Now().Add(time.Hour)
+	client.creds.token = "cached-token"
+	client.creds.tokenExpiry = time.Now().Add(time.Hour)
 
 	err := client.doJSON(context.Background(), http.MethodGet, "/forbidden", nil, true, nil)
 	if err == nil {
 		t.Fatal("doJSON() error = nil")
 	}
 	for _, sensitive := range []string{
-		client.appKey, client.appSecret, client.operator, client.token,
+		client.appKey, client.appSecret, client.operator, client.creds.token,
 	} {
 		if strings.Contains(err.Error(), sensitive) {
 			t.Fatalf("doJSON() leaked %q: %v", sensitive, err)
@@ -266,8 +268,8 @@ func TestDocumentBlocksRejectsIncompleteResponse(t *testing.T) {
 			}))
 			defer server.Close()
 			c := testClient(server)
-			c.token = "cached"
-			c.tokenExpiry = time.Now().Add(time.Hour)
+			c.creds.token = "cached"
+			c.creds.tokenExpiry = time.Now().Add(time.Hour)
 			blocks, err := c.documentBlocks(context.Background(), "doc")
 			if err == nil || len(blocks) != 0 {
 				t.Fatalf("invalid response accepted: %#v, %v", blocks, err)
@@ -295,8 +297,8 @@ func TestDocumentBlocksReadsMultiplePagesAndAcceptsEmptyDocument(t *testing.T) {
 	}))
 	defer server.Close()
 	c := testClient(server)
-	c.token = "cached"
-	c.tokenExpiry = time.Now().Add(time.Hour)
+	c.creds.token = "cached"
+	c.creds.tokenExpiry = time.Now().Add(time.Hour)
 	blocks, err := c.documentBlocks(context.Background(), "long")
 	if err != nil || len(blocks) != 101 || calls != 2 {
 		t.Fatalf("long document: %d blocks, %d calls, %v", len(blocks), calls, err)

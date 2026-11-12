@@ -8,6 +8,7 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import i18n from '@/i18n'
 import { normalizeSettingsSection } from '@/config/settingsRoute'
 import { safeNextcloudAskPath } from '@/utils/nextcloudAskLink'
+import { hasPendingDingTalkCallback } from '@/utils/dingtalk'
 
 /** Lite /桌面 WebView 硬刷新时可能只打开 `/`，用 session 记住上次页面以便恢复 */
 const LITE_LAST_PATH_KEY = 'weknora_lite_last_path'
@@ -41,7 +42,10 @@ function isSafeLiteRestoreTarget(path: string) {
 function hasPendingOIDCCallback() {
   if (typeof window === 'undefined') return false
   const hash = window.location.hash || ''
+  // 钉钉回跳（#dingtalk_result= / #dingtalk_error=）同样由 App.vue 挂载后
+  // 消费，守卫必须先放行，否则未登录时会被抢跳到 /login 丢失回跳结果。
   return hash.includes('oidc_result=') || hash.includes('oidc_error=')
+    || hasPendingDingTalkCallback(hash)
 }
 
 const router = createRouter({
@@ -98,7 +102,7 @@ const router = createRouter({
       path: "/knowledgeBase",
       name: "home",
       component: () => import("../views/knowledge/KnowledgeBase.vue"),
-      meta: { requiresInit: true, requiresAuth: true }
+      meta: { requiresInit: true, requiresAuth: true, requiresTenantAdmin: true }
     },
     {
       path: "/platform",
@@ -115,19 +119,19 @@ const router = createRouter({
           path: "settings",
           name: "settings",
           component: () => import("../views/settings/Settings.vue"),
-          meta: { requiresInit: true, requiresAuth: true }
+          meta: { requiresInit: true, requiresAuth: true, requiresTenantAdmin: true }
         },
         {
           path: "knowledge-bases",
           name: "knowledgeBaseList",
           component: () => import("../views/knowledge/KnowledgeBaseList.vue"),
-          meta: { requiresInit: true, requiresAuth: true }
+          meta: { requiresInit: true, requiresAuth: true, requiresTenantAdmin: true }
         },
         {
           path: "knowledge-bases/:kbId",
           name: "knowledgeBaseDetail",
           component: () => import("../views/knowledge/KnowledgeBase.vue"),
-          meta: { requiresInit: true, requiresAuth: true }
+          meta: { requiresInit: true, requiresAuth: true, requiresTenantAdmin: true }
         },
         {
           path: "knowledge-search",
@@ -144,13 +148,13 @@ const router = createRouter({
           path: "artifacts",
           name: "artifactLibrary",
           component: () => import("../views/artifacts/ArtifactLibrary.vue"),
-          meta: { requiresInit: true, requiresAuth: true, requiredCapability: 'settings.sandbox' }
+          meta: { requiresInit: true, requiresAuth: true, requiredCapability: 'settings.sandbox', requiresTenantAdmin: true }
         },
         {
           path: "agents",
           name: "agentList",
           component: () => import("../views/agent/AgentList.vue"),
-          meta: { requiresInit: true, requiresAuth: true, requiredCapability: 'agents' }
+          meta: { requiresInit: true, requiresAuth: true, requiredCapability: 'agents', requiresTenantAdmin: true }
         },
         {
           path: "integrations",
@@ -197,7 +201,7 @@ const router = createRouter({
           path: "organizations",
           name: "organizationList",
           component: () => import("../views/organization/OrganizationList.vue"),
-          meta: { requiresInit: true, requiresAuth: true, requiredCapability: 'organizations' }
+          meta: { requiresInit: true, requiresAuth: true, requiredCapability: 'organizations', requiresTenantAdmin: true }
         },
         // Compatibility redirects for /platform/system/* URLs. System
         // administration surfaces live as dedicated sections inside the
@@ -450,6 +454,18 @@ router.beforeEach(async (to, from, next) => {
   if (to.meta.requiresSystemAdmin === true) {
     if (!authStore.isSystemAdmin) {
       next('/platform/knowledge-bases')
+      return
+    }
+  }
+
+  // 员工导航收敛（W-UI-01）：知识库 / 工件 / Agent / 组织 / 设置等管理
+  // 页面仅对当前空间 admin 及以上（或系统管理员）开放；普通员工
+  // （!hasRole('admin') && !isSystemAdmin，即 viewer/contributor）访问时
+  // 重定向到默认对话页。与 menu.ts 的 visibleMenuArr 过滤同一判定口径；
+  // 这里只是 UI 层兜底，真正的服务端拦截由后端 RBAC 负责（BE2）。
+  if (to.meta.requiresTenantAdmin === true) {
+    if (!authStore.hasRole('admin') && !authStore.isSystemAdmin) {
+      next('/platform/creatChat')
       return
     }
   }

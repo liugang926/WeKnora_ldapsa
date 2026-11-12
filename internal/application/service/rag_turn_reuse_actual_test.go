@@ -158,7 +158,7 @@ func runRAGPhysicalActualReusedTurn(t *testing.T, pg bool) {
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
 			case "source-revoked":
-				m.personal.Store(false)
+				retireRAGFixtureSource(t, m, k)
 			case "missing-proof":
 				first[0].SourceLineage = types.UnknownSourceLineage()
 			}
@@ -180,7 +180,7 @@ func runRAGPhysicalActualReusedTurn(t *testing.T, pg bool) {
 			}
 			cm.SearchResult = second
 			require.Nil(t, manager.Trigger(ctx, types.CHUNK_MERGE, cm))
-			require.NoError(t, chatpipeline.CheckSourceLineageInputs(ctx, cm))
+			require.NoError(t, turn.Check(ctx))
 			require.Nil(t, manager.Trigger(ctx, types.FILTER_TOP_K, cm))
 			require.Len(t, cm.MergeResult, 1)
 			require.NoError(t, cm.MergeResult[0].SourceLineage.RequireComplete())
@@ -188,7 +188,9 @@ func runRAGPhysicalActualReusedTurn(t *testing.T, pg bool) {
 			releaseModel()
 			require.NoError(t, CheckMessageMaterialOutputBoundary(attach(ctx)))
 			m.personal.Store(false)
-			require.Error(t, turn.Check(ctx), "an open read lease cannot prolong source access")
+			require.NoError(t, turn.Check(ctx), "external read ACL does not withdraw an admitted source")
+			retireRAGFixtureSource(t, m, k)
+			require.Error(t, checkpoint(), "an open read lease cannot prolong a retired material epoch")
 			releaseHTTP()
 			var active int64
 			require.NoError(
@@ -201,6 +203,16 @@ func runRAGPhysicalActualReusedTurn(t *testing.T, pg bool) {
 			require.Zero(t, active)
 		})
 	}
+}
+
+func retireRAGFixtureSource(t *testing.T, m *machinePipelineFixture, k *types.Knowledge) {
+	t.Helper()
+	versions := m.f.s.repo.(interface {
+		TombstoneNextcloudVersion(context.Context, uint64, string, string, string) error
+	})
+	require.NoError(t, versions.TombstoneNextcloudVersion(
+		m.f.ctx, k.TenantID, k.KnowledgeBaseID, m.ds.ID, m.externalID,
+	))
 }
 
 type ragReuseCurrentSelectorKey struct{}

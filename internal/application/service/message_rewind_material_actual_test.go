@@ -432,11 +432,11 @@ func actualRewindSignedSourceFixture(
 	return messages, f.db, ctx, session, assistant, allow.Store, f.k.ID, func() int { return f.model.calls }
 }
 
-func TestMessageRewindActualSignedSourceDeletesAndFinalWriterRevoke(t *testing.T) {
+func TestMessageRewindActualSignedSourceDeletesWithoutSecondReadACL(t *testing.T) {
 	for _, revoke := range []bool{false, true} {
 		name := "allowed"
 		if revoke {
-			name = "revoked_before_actual_delete"
+			name = "source_acl_changed_before_actual_delete"
 		}
 		t.Run(name, func(t *testing.T) {
 			messages, db, ctx, session, firstAnswer, setAllow, sourceID, modelCalls := actualRewindSignedSourceFixture(
@@ -471,14 +471,11 @@ func TestMessageRewindActualSignedSourceDeletesAndFinalWriterRevoke(t *testing.T
 					Count(&deleted).
 					Error,
 			)
-			if revoke {
-				require.Error(t, err)
-				require.Zero(t, deleted)
-			} else {
-				require.NoError(t, err)
-				require.Equal(t, 2, result.DeletedMessages)
-				require.EqualValues(t, 2, deleted)
-			}
+			// The exact original remains leased throughout the owner's rewind;
+			// the remote source read ACL is not an additional authorization.
+			require.NoError(t, err)
+			require.Equal(t, 2, result.DeletedMessages)
+			require.EqualValues(t, 2, deleted)
 			require.Empty(t, port.runner.calls)
 			require.False(t, port.rewindHeld)
 			assertForkMaterialReadLeases(t, db, false)

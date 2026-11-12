@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A stale vector hit must never hydrate a withdrawn Nextcloud document into a
-// RAG result, even while its knowledge and chunk rows are awaiting cleanup.
+// Strict reads omit an index hit with an incomplete source identity. Workspace
+// reads must still check the KB grant for each hit.
 func TestSearchResultAssemblyOmitsUnverifiableNextcloudPublication(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -20,6 +20,7 @@ func TestSearchResultAssemblyOmitsUnverifiableNextcloudPublication(t *testing.T)
 		{name: "guard provider missing"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("WEKNORA_NEXTCLOUD_READ_AUTHORITY", "")
 			knowledgeService, db := newKnowledgeSharedAccessService(t, nil)
 			require.NoError(t, db.AutoMigrate(&types.Chunk{}))
 			seedKnowledge(t, db, &types.Knowledge{
@@ -42,14 +43,25 @@ func TestSearchResultAssemblyOmitsUnverifiableNextcloudPublication(t *testing.T)
 				kgRepo: knowledgeService.repo, chunkRepo: repository.NewChunkRepository(db),
 				publicationGuard: tc.guard,
 			}
-			results, err := svc.processSearchResults(newSharedAccessContext(), []*types.IndexWithScore{
+			hits := []*types.IndexWithScore{
 				{ChunkID: "withdrawn-chunk", KnowledgeID: "withdrawn", Score: 0.99},
 				{ChunkID: "ordinary-chunk", KnowledgeID: "ordinary", Score: 0.98},
-			}, true)
+			}
+			results, err := svc.processSearchResults(newSharedAccessContext(), hits, true)
 			require.NoError(t, err)
 			require.Len(t, results, 1)
 			require.Equal(t, "ordinary", results[0].KnowledgeID)
 			require.Equal(t, "ordinary secret", results[0].Content)
+
+			t.Setenv("WEKNORA_NEXTCLOUD_READ_AUTHORITY", "weknora")
+			results, err = svc.processSearchResults(newSharedAccessContext(), hits, true)
+			require.NoError(t, err)
+			require.Len(t, results, 2)
+			require.Equal(t, "withdrawn secret", results[0].Content)
+			otherTenant := types.WithCaller(newSharedAccessContext(), types.Caller{TenantID: 2, UserID: "other"})
+			results, err = svc.processSearchResults(otherTenant, hits, true)
+			require.NoError(t, err)
+			require.Empty(t, results)
 		})
 	}
 }

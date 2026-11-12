@@ -3,7 +3,10 @@ package im
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
+
+	"github.com/Tencent/WeKnora/internal/types"
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -47,7 +50,15 @@ func (c *SearchCommand) Execute(ctx context.Context, cmdCtx *CommandContext, arg
 	// Resolve which KBs to search, mirroring the logic in the QA pipeline's
 	// resolveKnowledgeBasesFromAgent so that /search covers the same scope.
 	var kbIDs []string
-	if cmdCtx.CustomAgent != nil {
+	if scope, ok := types.IMChannelScopeFromContext(ctx); ok {
+		for id := range scope.KnowledgeBases {
+			kbIDs = append(kbIDs, id)
+		}
+		sort.Strings(kbIDs)
+		if err := types.AuthorizeIMKnowledgeBases(ctx, kbIDs...); err != nil {
+			return nil, err
+		}
+	} else if cmdCtx.CustomAgent != nil {
 		switch cmdCtx.CustomAgent.Config.KBSelectionMode {
 		case "all":
 			allKBs, err := c.kbService.ListKnowledgeBases(ctx)

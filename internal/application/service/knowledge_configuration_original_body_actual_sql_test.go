@@ -292,26 +292,24 @@ func configurationGCActualString(v any) string {
 func (f *configurationGCActualFixture) retireSource(t *testing.T) string {
 	t.Helper()
 	h := f.history
-	h.m.allow.Store(false)
-	require.Error(
-		t,
-		h.m.f.guard.Check(
-			f.admin,
-			f.lineage,
-			access.LineageReadScope{
-				Targets: types.SearchTargets{
-					&types.SearchTarget{
-						Type:            types.SearchTargetTypeKnowledgeBase,
-						TenantID:        7,
-						KnowledgeBaseID: f.host.ID,
-					},
-				},
-			},
-		),
-		"actual controlled NC READ is revoked",
-	)
-	// An authorization failure is not a deletion fact. This real repository
-	// source-deletion lifecycle creates the tombstone and retires actual fences.
+	source := f.lineage.Sources[0]
+	scope := repository.NextcloudContentScope{
+		TenantID:        source.TenantID,
+		KnowledgeBaseID: source.KnowledgeBaseID,
+		KnowledgeID:     source.KnowledgeID,
+		DataSourceID:    source.DataSourceID,
+		ExternalID:      source.ExternalID,
+	}
+	leases := h.m.f.store.ContentLeaseStore()
+	acquire := func() (repository.NextcloudContentLease, error) {
+		return leases.AcquireKnowledge(
+			f.admin, scope, repository.NextcloudContentReadLease, "configuration-gc-reader", time.Minute,
+		)
+	}
+	lease, err := acquire()
+	require.NoError(t, err)
+	require.EqualValues(t, source.Revision, lease.Epoch)
+	require.NoError(t, leases.ReleaseLease(f.admin, lease.ID))
 	versions, ok := h.m.f.s.repo.(interface {
 		TombstoneNextcloudVersion(context.Context, uint64, string, string, string) error
 	})
@@ -320,6 +318,8 @@ func (f *configurationGCActualFixture) retireSource(t *testing.T) string {
 		t,
 		versions.TombstoneNextcloudVersion(f.admin, 7, h.source.KnowledgeBaseID, h.m.ds.ID, h.m.externalID),
 	)
+	_, err = acquire()
+	require.ErrorIs(t, err, repository.ErrNextcloudContentLeaseDenied, "the tombstoned source must deny new readers")
 	gc := repository.NewNextcloudGCStore(h.m.f.db)
 	n, err := gc.InventoryRetired(f.admin, time.Now().UTC(), 100)
 	require.NoError(t, err)
@@ -568,8 +568,7 @@ func TestKnowledgeConfigurationActualSQLReadPlanAndLeaseCheckpointsAreMetadataOn
 	require.Empty(
 		t,
 		selects,
-		("metadata plans/checkpoints must never consume KB config or captured parent" +
-			" bodies before the caller's fresh source READ"),
+		"metadata plans and lease checkpoints must never read KB configuration or captured parent bodies",
 	)
 }
 
