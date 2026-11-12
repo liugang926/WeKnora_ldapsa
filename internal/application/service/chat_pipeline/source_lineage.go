@@ -53,9 +53,6 @@ func (e *EventManager) BeginSourceLineage(
 	) > 0 || cm.GraphResult != nil {
 		_ = turn.Add(types.UnknownSourceLineage())
 	}
-	if err := CheckSourceLineageInputs(ctx, cm); err != nil {
-		return ctx, err
-	}
 	return ctx, nil
 }
 
@@ -111,10 +108,26 @@ func AccountResults(ctx context.Context, results []*types.SearchResult) error {
 	return turn.Check(ctx)
 }
 
-// CheckSourceLineageInputs checks every adapter used by the ordinary final
-// prompt and every earlier influencing call. Unknown state is sticky.
+// CheckSourceLineageInputs accounts for inputs consumed by strict material turns.
+// Ordinary retrieval uses the caller and current workspace permissions.
 func CheckSourceLineageInputs(ctx context.Context, cm *types.ChatManage) error {
-	return nil // retired with the NextCloud decoupling 2026-11-09
+	turn := types.RAGSourceLineageFromContext(ctx)
+	if turn == nil || !turn.RequiresCompleteProducerLineage() {
+		return nil
+	}
+	if err := types.CheckHistoryMaterialLifetime(ctx); err != nil {
+		return err
+	}
+	if cm == nil || len(cm.Images) > 0 || len(cm.Attachments) > 0 || cm.QuotedContext != "" ||
+		cm.ImageDescription != "" || cm.MemoryPrompt != "" || len(cm.UsedMemories) > 0 ||
+		cm.GraphResult != nil || len(cm.Entity) > 0 {
+		_ = turn.Add(types.UnknownSourceLineage())
+		return turn.Snapshot().RequireComplete()
+	}
+	if len(cm.History) > 0 {
+		return AccountHistory(ctx, cm.History)
+	}
+	return turn.Snapshot().RequireComplete()
 }
 
 func sourceLineagePluginError(err error) *PluginError {

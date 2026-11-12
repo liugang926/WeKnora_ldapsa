@@ -174,8 +174,8 @@ func requireResourcePublication(
 	c *gin.Context, catalog interfaces.ResourceCatalog,
 	guard *access.NextcloudPublicationGuard, tenantID uint64, referenceOrPath string,
 ) bool {
-	return requireResourcePublicationWithCheckContext(
-		c.Request.Context(), c, catalog, guard, tenantID, referenceOrPath,
+	return checkResourcePublication(
+		c, catalog, guard, tenantID, referenceOrPath, false,
 	)
 }
 
@@ -183,17 +183,17 @@ func requireAnonymousResourcePublication(
 	c *gin.Context, catalog interfaces.ResourceCatalog,
 	guard *access.NextcloudPublicationGuard, tenantID uint64, referenceOrPath string,
 ) bool {
-	return requireResourcePublicationWithCheckContext(
-		context.Background(), c, catalog, guard, tenantID, referenceOrPath,
+	return checkResourcePublication(
+		c, catalog, guard, tenantID, referenceOrPath, true,
 	)
 }
 
-func requireResourcePublicationWithCheckContext(
-	checkContext context.Context,
+func checkResourcePublication(
 	c *gin.Context, catalog interfaces.ResourceCatalog,
 	guard *access.NextcloudPublicationGuard, tenantID uint64, referenceOrPath string,
+	anonymous bool,
 ) bool {
-	if guard == nil {
+	if guard == nil && (!anonymous || catalog == nil) {
 		return true
 	}
 	lookup, ok := catalog.(interfaces.ResourceKnowledgeLookup)
@@ -224,6 +224,10 @@ func requireResourcePublicationWithCheckContext(
 		return false
 	}
 	if provenance == types.ResourceProvenanceNextcloud {
+		if anonymous {
+			c.Status(http.StatusForbidden)
+			return false
+		}
 		hasSourceOwner := false
 		for _, owner := range owners {
 			if owner != nil && owner.Channel == types.ConnectorTypeNextcloud {
@@ -241,7 +245,10 @@ func requireResourcePublicationWithCheckContext(
 			c.Status(http.StatusForbidden)
 			return false
 		}
-		if err := guard.CheckKnowledge(checkContext, owner); err != nil {
+		if !anonymous {
+			continue
+		}
+		if err := guard.CheckAnonymousPublication(c.Request.Context(), owner); err != nil {
 			if errors.Is(err, access.ErrNextcloudPublicationUnavailable) {
 				c.Status(http.StatusServiceUnavailable)
 			} else {

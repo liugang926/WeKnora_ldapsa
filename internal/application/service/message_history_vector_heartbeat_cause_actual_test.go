@@ -127,9 +127,11 @@ func TestHistoryVectorActualSQLHeartbeatSourceDenialRetainsTypedHTTPRefusal(t *t
 		require.NoError(t, CheckMessageMaterialOutputBoundary(ctx))
 		guards, bridges := heldHistoryHeartbeatInputs(ctx, t)
 		lookups, ranks, streams := f.models.lookups.Load(), f.models.rankCalls.Load(), f.models.chatter.streams.Load()
-		f.m.allow.Store(false)
+		retireRAGFixtureSource(t, f.m, f.source)
 		for _, guard := range guards {
-			require.ErrorIs(t, guard.heartbeatRecheck(), access.ErrNextcloudPublicationDenied)
+			err := guard.heartbeatRecheck()
+			require.ErrorIs(t, err, repository.ErrNextcloudContentLeaseDenied)
+			require.ErrorIs(t, err, access.ErrNextcloudPublicationDenied)
 			require.ErrorIs(t, context.Cause(guard.Context()), access.ErrNextcloudPublicationDenied)
 		}
 		awaitHistoryHeartbeatCancel(t, bridges)
@@ -180,9 +182,11 @@ func TestHistoryVectorActualSQLHeartbeatNonemptySourceDenialRetainsTypedModelRef
 		bridge, results, documents := actualHeartbeatHydratedInputs(ctx, t, f)
 		guards, bridges := heldHistoryHeartbeatInputs(ctx, t)
 		lookups, ranks, streams := f.models.lookups.Load(), f.models.rankCalls.Load(), f.models.chatter.streams.Load()
-		f.m.allow.Store(false)
+		retireRAGFixtureSource(t, f.m, f.source)
 		for _, guard := range guards {
-			require.ErrorIs(t, guard.heartbeatRecheck(), access.ErrNextcloudPublicationDenied)
+			err := guard.heartbeatRecheck()
+			require.ErrorIs(t, err, repository.ErrNextcloudContentLeaseDenied)
+			require.ErrorIs(t, err, access.ErrNextcloudPublicationDenied)
 			require.ErrorIs(t, context.Cause(guard.Context()), access.ErrNextcloudPublicationDenied)
 		}
 		awaitHistoryHeartbeatCancel(t, bridges)

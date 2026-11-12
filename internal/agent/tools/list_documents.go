@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Tencent/WeKnora/internal/application/readlease"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -143,6 +144,12 @@ func (t *ListDocumentsTool) Execute(ctx context.Context, args json.RawMessage) (
 			continue
 		}
 		if err := guard.PinKnowledge(knowledge); err != nil {
+			// An incomplete per-document identity hides this row. A failed
+			// generation lease invalidates the read for the whole page.
+			if _, _, identityErr := readlease.NextcloudKnowledgeLeaseScope(knowledge); identityErr != nil {
+				redacted = true
+				continue
+			}
 			return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
 		}
 		visible = append(visible, knowledge)

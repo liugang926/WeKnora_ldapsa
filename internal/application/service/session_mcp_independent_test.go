@@ -37,6 +37,7 @@ func TestAgentMCPIndependentTransportActualSessionAndMaterial(t *testing.T) {
 			})
 			require.NoError(t, err)
 			ctx = WithMessageMaterialOutputBoundary(ctx)
+			ctx = context.WithValue(ctx, agentHistoryCurrentRequestKey{}, user.RequestID)
 			defer CloseMessageMaterialOutputBoundary(ctx)
 			_, err = messages.GetMessage(ctx, session.ID, user.ID)
 			require.NoError(t, err)
@@ -51,7 +52,8 @@ func TestAgentMCPIndependentTransportActualSessionAndMaterial(t *testing.T) {
 					Content: "independently authored earlier conversation", IsCompleted: true,
 				})
 				require.NoError(t, err)
-				_, err = messages.GetMessage(ctx, otherSessionID, otherUser.ID)
+				otherCtx := context.WithValue(ctx, agentHistoryCurrentRequestKey{}, otherUser.RequestID)
+				_, err = messages.GetMessage(otherCtx, otherSessionID, otherUser.ID)
 				require.NoError(t, err)
 			}
 			s := &sessionService{

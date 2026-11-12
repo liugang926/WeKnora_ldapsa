@@ -1454,34 +1454,30 @@ func (s *sessionService) renderFallbackPrompt(ctx context.Context, chatManage *t
 // associated with the current pipeline. This gives the LLM visibility into KB contents
 // when vector/keyword search returns empty (e.g., broad browse queries).
 func (s *sessionService) buildKBDocumentListing(ctx context.Context, chatManage *types.ChatManage) string {
-	// Collect unique KB IDs from search targets
-	kbIDs := make(map[string]struct{})
-	for _, t := range chatManage.SearchTargets {
-		kbIDs[t.KnowledgeBaseID] = struct{}{}
-	}
-	for _, id := range chatManage.KnowledgeBaseIDs {
-		kbIDs[id] = struct{}{}
-	}
-	if len(kbIDs) == 0 {
-		return ""
-	}
-
+	// The resolved targets already incorporate document mentions, tag filters
+	// and the KB group policy. Raw request IDs can include rejected targets.
 	const maxDocuments = 50
 	var b strings.Builder
 	total := 0
-
-	for kbID := range kbIDs {
+	seen := make(map[string]bool)
+	permissions := kbReadPermissions(ctx, s.kbShareService)
+	for _, target := range chatManage.SearchTargets {
 		if total >= maxDocuments {
 			break
 		}
-		kb, err := s.knowledgeBaseService.GetKnowledgeBaseByID(ctx, kbID)
-		if err != nil || kb == nil {
+		if target == nil || target.KnowledgeBaseID == "" || target.TenantID == 0 {
 			continue
 		}
-		// 2026-11-09 decoupling: the historical EverHadNextcloudSource marker
-		// no longer excludes a KB from document listings — unbound KBs list
-		// like native ones so retrieval prompts keep full coverage.
-		knowledges, err := s.knowledgeService.ListKnowledgeByKnowledgeBaseID(ctx, kbID)
+		kbID := target.KnowledgeBaseID
+		kb, err := s.knowledgeBaseService.GetKnowledgeBaseByID(ctx, kbID)
+		if err != nil || kb == nil || kb.ID != kbID || kb.TenantID != target.TenantID {
+			continue
+		}
+		granted, err := permissions.Check(kbID, kb.TenantID, types.OrgRoleViewer)
+		if err != nil || !granted || s.revalidateSearchTargets(ctx, types.SearchTargets{target}) != nil {
+			continue
+		}
+		knowledges, err := s.fallbackTargetDocuments(types.WithExecutionTenant(ctx, kb.TenantID), target)
 		if err != nil {
 			logger.Warnf(ctx, "buildKBDocumentListing: failed to list knowledge for KB %s: %v", kbID, err)
 			continue
@@ -1490,7 +1486,8 @@ func (s *sessionService) buildKBDocumentListing(ctx context.Context, chatManage 
 			if total >= maxDocuments {
 				break
 			}
-			if k.EnableStatus != "enabled" {
+			if k == nil || k.ID == "" || k.TenantID != kb.TenantID || k.KnowledgeBaseID != kbID ||
+				k.EnableStatus != "enabled" || seen[k.ID] {
 				continue
 			}
 			title := k.Title
@@ -1500,6 +1497,7 @@ func (s *sessionService) buildKBDocumentListing(ctx context.Context, chatManage 
 			if title == "" {
 				continue
 			}
+			seen[k.ID] = true
 			fmt.Fprintf(&b, "- %s", title)
 			if k.FileType != "" {
 				fmt.Fprintf(&b, " (%s)", k.FileType)
@@ -1525,6 +1523,31 @@ func (s *sessionService) buildKBDocumentListing(ctx context.Context, chatManage 
 	}
 
 	return b.String()
+}
+
+// fallbackTargetDocuments reads only the documents selected for this turn.
+func (s *sessionService) fallbackTargetDocuments(
+	ctx context.Context, target *types.SearchTarget,
+) ([]*types.Knowledge, error) {
+	ids := target.KnowledgeIDs
+	tags := uniqueNonEmptyStrings(append(append([]string{}, target.TagIDs...), target.ScopeTagIDs...))
+	if len(tags) > 0 {
+		tagged, err := s.knowledgeService.ListKnowledgeIDsByTagIDs(ctx, target.TenantID, target.KnowledgeBaseID, tags)
+		if err != nil {
+			return nil, err
+		}
+		if len(ids) > 0 {
+			ids = intersectStrings(ids, tagged)
+		} else {
+			ids = tagged
+		}
+	} else if target.Type == types.SearchTargetTypeKnowledgeBase && len(ids) == 0 {
+		return s.knowledgeService.ListKnowledgeByKnowledgeBaseID(ctx, target.KnowledgeBaseID)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	return s.knowledgeService.GetKnowledgeBatch(ctx, target.TenantID, ids)
 }
 
 // consumeFallbackStream consumes the streaming response and emits events

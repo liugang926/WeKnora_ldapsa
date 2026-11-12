@@ -130,6 +130,46 @@ func TestNextcloudContentLeaseSQLiteSearchUpgradeRetirementAndGC(t *testing.T) {
 	require.ErrorIs(t, err, ErrNextcloudContentLeaseDenied)
 }
 
+func TestNextcloudRenewLeasePreservesLookupErrors(t *testing.T) {
+	db := leaseTestSQLite(t)
+	store := NewNextcloudContentLeaseStore(db)
+	ctx := context.Background()
+	scope := leaseTestScope("renew-lookup")
+	lease, err := store.AcquireKnowledge(ctx, scope, NextcloudContentReadLease, "reader", time.Minute)
+	require.NoError(t, err)
+
+	// SQLite permits text in integer columns. Force database/sql to fail
+	// while scanning first the lease row and then the exact fence row.
+	for _, fault := range []struct {
+		column string
+		update string
+		key    string
+	}{
+		{"released_at_ms", "UPDATE nextcloud_content_leases SET released_at_ms=? WHERE lease_id=?", lease.ID},
+		{
+			"claim_until_ms",
+			"UPDATE nextcloud_content_fences SET claim_until_ms=? WHERE knowledge_id=?",
+			scope.KnowledgeID,
+		},
+	} {
+		require.NoError(t, db.Exec(fault.update, "bad integer", fault.key).Error)
+		_, err = store.RenewLease(ctx, lease.ID, time.Minute)
+		require.ErrorContains(t, err, "Scan error")
+		require.ErrorContains(t, err, fault.column)
+		require.NotErrorIs(t, err, ErrNextcloudContentLeaseDenied)
+		require.NotErrorIs(t, err, ErrNextcloudContentLeaseExpired)
+		require.NoError(t, db.Exec(fault.update, nil, fault.key).Error)
+	}
+
+	_, err = store.RenewLease(ctx, lease.ID, time.Minute)
+	require.NoError(t, err)
+	require.NoError(t, store.RetireKnowledge(ctx, scope))
+	_, err = store.RenewLease(ctx, lease.ID, time.Minute)
+	require.ErrorIs(t, err, ErrNextcloudContentLeaseDenied)
+	_, err = store.RenewLease(ctx, "missing-lease", time.Minute)
+	require.ErrorIs(t, err, ErrNextcloudContentLeaseExpired)
+}
+
 func TestNextcloudContentLeaseSQLiteBuildFenceAndExpiry(t *testing.T) {
 	db := leaseTestSQLite(t)
 	store := NewNextcloudContentLeaseStore(db)

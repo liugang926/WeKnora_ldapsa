@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/require"
@@ -66,26 +65,27 @@ func TestRAGSourceLineageActualMessageReadDeniesLegacyAndOpaqueGeneratedFields(t
 			case "artifact":
 				row.Artifacts = types.MessageArtifacts{{FileName: "copied title"}}
 			}
-			svc := &messageService{
-				messageRepo: ragReadRepo{row: row},
-				sessionRepo: ragReadSessions{},
-				sourceLineageGuard: access.NewNextcloudSourceLineageGuard(
-					nil,
-					nil,
-					nil,
-					nil,
-					nil,
-					nil,
-					ragReadActorFixture{},
-				),
+			svc, _, _, db, ctx, session := messageMaterialActualFixture(t)
+			row.SessionID = session.ID
+			if kind == "complete plain" {
+				_, row = produceActualMessagePair(ctx, t, svc, session)
+			} else {
+				// A legacy row has no original material receipt, even when it
+				// contains a complete-looking envelope or generated metadata.
+				require.NoError(t, db.Create(row).Error)
 			}
-			got, err := svc.GetMessage(ragReadContext(), "session", "message")
+			display, err := svc.GetMessage(ctx, session.ID, row.ID)
+			require.NoError(t, err)
+			require.Equal(t, row.Content, display.Content)
+			replay, check, closeRead, err := svc.BeginCompletedMessageMaterialReplay(ctx, session.ID, row.ID)
 			if kind == "complete plain" {
 				require.NoError(t, err)
-				require.Equal(t, row.Content, got.Content)
+				defer closeRead()
+				require.Equal(t, row.Content, replay.Content)
+				require.NoError(t, check())
 			} else {
-				require.ErrorIs(t, err, access.ErrNextcloudPublicationDenied)
-				require.Nil(t, got)
+				require.Error(t, err)
+				require.Nil(t, replay)
 			}
 		})
 	}

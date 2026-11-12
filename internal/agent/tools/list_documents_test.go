@@ -71,6 +71,7 @@ func TestListDocumentsRendersRowsForModelAndUI(t *testing.T) {
 }
 
 func TestListDocumentsOmitsUnverifiableNextcloudMetadata(t *testing.T) {
+	t.Setenv("WEKNORA_NEXTCLOUD_READ_AUTHORITY", "")
 	tool := newListDocumentsFixture()
 	service := tool.knowledgeService.(*readDocKnowledgeService)
 	service.docs["doc-b"].Channel = types.ConnectorTypeNextcloud
@@ -82,6 +83,12 @@ func TestListDocumentsOmitsUnverifiableNextcloudMetadata(t *testing.T) {
 	rows, _ := res.Data["documents"].([]map[string]interface{})
 	if len(rows) != 2 || strings.Contains(res.Output, "Beta Notes") || res.Data["total_docs"] != int64(-1) {
 		t.Fatalf("unverifiable source document exposed: rows=%+v data=%+v output=%s", rows, res.Data, res.Output)
+	}
+
+	t.Setenv("WEKNORA_NEXTCLOUD_READ_AUTHORITY", "weknora")
+	res, err = tool.Execute(context.Background(), json.RawMessage(`{"knowledge_base_id":"kb-1"}`))
+	if err != nil || !res.Success || res.Data["total_docs"] != int64(3) || !strings.Contains(res.Output, "Beta Notes") {
+		t.Fatalf("in-scope document missing under workspace read authority: res=%+v err=%v", res, err)
 	}
 }
 

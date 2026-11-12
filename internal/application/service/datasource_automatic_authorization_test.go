@@ -54,18 +54,14 @@ func (p *automaticSourceProbe) FetchStream(
 // restricted KB with no invented WeKnora web user for its Nextcloud manager.
 func automaticSourceFixture(t *testing.T, tableCSV ...bool) (*machinePipelineFixture, *atomic.Bool) {
 	t.Helper()
-	upstream := newScopedConfigurationWorkerSource(t, &atomic.Int32{})
+	revoked := &atomic.Bool{}
+	upstream := newScopedConfigurationWorkerSource(t, &atomic.Int32{}, revoked)
 	address, err := url.Parse(upstream.URL)
 	require.NoError(t, err)
 	proxy := httputil.NewSingleHostReverseProxy(address)
-	revoked := &atomic.Bool{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if len(tableCSV) > 0 && tableCSV[0] &&
 			serveAutomaticSourceCSV(t, w, r) {
-			return
-		}
-		if strings.HasSuffix(r.URL.Path, "/authorize-manager") && revoked.Load() {
-			w.WriteHeader(http.StatusForbidden)
 			return
 		}
 		proxy.ServeHTTP(w, r)

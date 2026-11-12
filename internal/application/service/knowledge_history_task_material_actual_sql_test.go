@@ -124,7 +124,7 @@ func TestHistoryKnowledgeTaskActualSQLChangedOriginalRefusesBeforeModel(t *testi
 			}
 			switch mode {
 			case "source-revoked":
-				f.m.allow.Store(false)
+				retireRAGFixtureSource(t, f.m, f.source)
 			case "original-body-changed":
 				// This mutation does not create an admission. The existing real
 				// receipt/body/version must fail, even with source grants intact.

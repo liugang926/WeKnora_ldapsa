@@ -154,6 +154,11 @@ func (g *MessageMaterialGuard) heartbeatRecheck() error {
 		return access.ErrNextcloudPublicationUnavailable
 	}
 	err := g.Recheck()
+	if errors.Is(err, repository.ErrNextcloudContentLeaseDenied) {
+		// The retained source fence closed. Preserve both the physical cause
+		// and the denial consumed by the model and HTTP cancellation paths.
+		err = errors.Join(access.ErrNextcloudPublicationDenied, err)
+	}
 	if err != nil {
 		if g.cancelCause != nil {
 			g.cancelCause(err)

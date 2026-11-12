@@ -491,7 +491,10 @@ func (s *NextcloudContentLeaseStore) RenewLease(ctx context.Context, id string,
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var row nextcloudContentLeaseRow
 		if err := tx.Where("lease_id = ?", id).Take(&row).Error; err != nil {
-			return ErrNextcloudContentLeaseExpired
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNextcloudContentLeaseExpired
+			}
+			return err
 		}
 		nowMS, err := nextcloudLeaseNowMS(tx)
 		if err != nil {
@@ -508,7 +511,10 @@ func (s *NextcloudContentLeaseStore) RenewLease(ctx context.Context, id string,
 			var exact nextcloudContentFence
 			if err := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND knowledge_id = ?",
 				row.TenantID, row.KnowledgeBaseID, row.KnowledgeID).Take(&exact).Error; err != nil {
-				return ErrNextcloudContentLeaseDenied
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return ErrNextcloudContentLeaseDenied
+				}
+				return err
 			}
 			if exact.State != "open" || exact.Epoch != row.Epoch {
 				return ErrNextcloudContentLeaseDenied
