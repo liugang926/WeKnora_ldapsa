@@ -11,12 +11,15 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-type dingTalkRecoveryGateKey struct{}
-type dingTalkRecoveryGate struct {
-	snapshot   string
-	queueCheck func(context.Context) error
-}
+type (
+	dingTalkRecoveryGateKey struct{}
+	dingTalkRecoveryGate    struct {
+		snapshot   string
+		queueCheck func(context.Context) error
+	}
+)
 
+// WithDingTalkRecoveryGate attaches the live recovery authorization check.
 func WithDingTalkRecoveryGate(ctx context.Context, snapshot string, check func(context.Context) error) context.Context {
 	return context.WithValue(ctx, dingTalkRecoveryGateKey{}, dingTalkRecoveryGate{snapshot, check})
 }
@@ -28,10 +31,18 @@ func dingTalkRecoveryEligibility(tx *gorm.DB, k *types.Knowledge) (*types.Knowle
 		return nil, err
 	}
 	var admission knowledgeInputAdmission
-	if err := tx.Where("admission_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", material.AdmissionID, k.TenantID, k.KnowledgeBaseID, k.ID).Take(&admission).Error; err != nil {
+	if err := tx.Where("admission_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+		material.AdmissionID,
+		k.TenantID,
+		k.KnowledgeBaseID,
+		k.ID).Take(&admission).Error; err != nil {
 		return nil, err
 	}
-	if err := tx.Model(&types.KnowledgeProcessingSpan{}).Where("knowledge_id=? AND kind=?", k.ID, types.SpanKindRoot).Select("COALESCE(MAX(attempt),0)").Scan(&result.Attempt).Error; err != nil {
+	if err := tx.Model(&types.KnowledgeProcessingSpan{}).Where(
+		"knowledge_id=? AND kind=?",
+		k.ID,
+		types.SpanKindRoot).Select("COALESCE(MAX(attempt),0)").Scan(
+		&result.Attempt).Error; err != nil {
 		return nil, err
 	}
 	result.Generation = admission.BuildGeneration
@@ -46,7 +57,12 @@ func dingTalkRecoveryEligibility(tx *gorm.DB, k *types.Knowledge) (*types.Knowle
 		return result, nil
 	}
 	var outstanding int64
-	if err := tx.Model(&DingTalkWorkIntent{}).Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND state<>?", k.TenantID, k.KnowledgeBaseID, k.ID, "done").Count(&outstanding).Error; err != nil {
+	if err := tx.Model(&DingTalkWorkIntent{}).Where(
+		"tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND state<>?",
+		k.TenantID,
+		k.KnowledgeBaseID,
+		k.ID,
+		"done").Count(&outstanding).Error; err != nil {
 		return nil, err
 	}
 	if outstanding > 0 {
@@ -54,7 +70,14 @@ func dingTalkRecoveryEligibility(tx *gorm.DB, k *types.Knowledge) (*types.Knowle
 		return result, nil
 	}
 	var rows []types.TaskPendingOp
-	if err := tx.Where("tenant_id=? AND ((task_type=? AND scope='knowledge' AND scope_id=?) OR (task_type='wiki:ingest' AND scope='knowledge_base' AND scope_id=? AND dedup_key=?))", k.TenantID, DingTalkGraphTaskType, k.ID, k.KnowledgeBaseID, k.ID).Find(&rows).Error; err != nil {
+	if err := tx.Where("tenant_id=? AND ((task_type=? AND scope='knowledge' AND scope_id=?) OR "+
+		"(task_type='wiki:ingest' AND scope='knowledge_base' AND scope_id=? AND "+
+		"dedup_key=?))",
+		k.TenantID,
+		DingTalkGraphTaskType,
+		k.ID,
+		k.KnowledgeBaseID,
+		k.ID).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	for _, row := range rows {
@@ -63,7 +86,9 @@ func dingTalkRecoveryEligibility(tx *gorm.DB, k *types.Knowledge) (*types.Knowle
 			if json.Unmarshal(row.Payload, &rec) != nil || rec.Payload.OriginalInput == nil {
 				return nil, ErrKnowledgeInputChanged
 			}
-			if rec.Payload.OriginalInput.AdmissionID == admission.AdmissionID && rec.Payload.Attempt == result.Attempt && row.Op != "settled" {
+			if rec.Payload.OriginalInput.AdmissionID == admission.AdmissionID &&
+				rec.Payload.Attempt == result.Attempt &&
+				row.Op != "settled" {
 				result.Reason = "图谱任务正在处理或等待自动补结算，请稍后重试"
 				return result, nil
 			}
@@ -90,9 +115,16 @@ func dingTalkRecoveryEligibility(tx *gorm.DB, k *types.Knowledge) (*types.Knowle
 	result.Reason = "可以使用本地原文重新解析"
 	return result, nil
 }
-func (s *KnowledgeInputProvenanceStore) DingTalkRecoveryEligibility(ctx context.Context, k *types.Knowledge) (*types.KnowledgeRecoveryEligibility, error) {
+
+// DingTalkRecoveryEligibility reads the current document recovery eligibility.
+func (s *KnowledgeInputProvenanceStore) DingTalkRecoveryEligibility(
+	ctx context.Context,
+	k *types.Knowledge) (*types.KnowledgeRecoveryEligibility,
+	error,
+) {
 	return dingTalkRecoveryEligibility(s.db.WithContext(ctx), k)
 }
+
 func checkDingTalkRecoveryGate(ctx context.Context, tx *gorm.DB, k *types.Knowledge) (bool, error) {
 	gate, ok := ctx.Value(dingTalkRecoveryGateKey{}).(dingTalkRecoveryGate)
 	if !ok {
@@ -111,15 +143,21 @@ func checkDingTalkRecoveryGate(ctx context.Context, tx *gorm.DB, k *types.Knowle
 	return true, nil
 }
 
-// Only a failed handoff for this exact new pending generation is made retryable.
+// FailDingTalkRecoveryHandoff makes only this exact failed pending generation retryable.
 // It cannot overwrite a worker that already started or a later publication.
-func (s *KnowledgeInputProvenanceStore) FailDingTalkRecoveryHandoff(ctx context.Context, p *types.KnowledgeBuildInputProof) error {
+func (s *KnowledgeInputProvenanceStore) FailDingTalkRecoveryHandoff(
+	ctx context.Context,
+	p *types.KnowledgeBuildInputProof,
+) error {
 	if p == nil {
 		return nil
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var k types.Knowledge
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND tenant_id=?", p.KnowledgeID, p.TenantID).Take(&k).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
+			"id=? AND tenant_id=?",
+			p.KnowledgeID,
+			p.TenantID).Take(&k).Error; err != nil {
 			return err
 		}
 		var mr knowledgeInputMaterialReceipt
@@ -129,6 +167,10 @@ func (s *KnowledgeInputProvenanceStore) FailDingTalkRecoveryHandoff(ctx context.
 		if mr.AdmissionID != p.AdmissionID || k.ParseStatus != types.ParseStatusPending {
 			return nil
 		}
-		return tx.Model(&k).Updates(map[string]any{"parse_status": types.ParseStatusFailed, "error_message": "恢复任务提交失败，请重新发起解析", "updated_at": time.Now()}).Error
+		return tx.Model(&k).Updates(map[string]any{
+			"parse_status":  types.ParseStatusFailed,
+			"error_message": "恢复任务提交失败，请重新发起解析",
+			"updated_at":    time.Now(),
+		}).Error
 	})
 }

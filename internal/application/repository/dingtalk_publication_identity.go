@@ -12,11 +12,19 @@ import (
 // replacement content must come from the separately verified fresh artifact.
 func loadDingTalkPublishedOriginal(tx *gorm.DB, p dingTalkPublication) (*knowledgeInputAdmission, error) {
 	var r dingTalkOriginalReceipt
-	if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND data_source_id=?", p.TenantID, p.KnowledgeBaseID, p.KnowledgeID, p.DataSourceID).Take(&r).Error; err != nil {
+	if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=? AND data_source_id=?",
+		p.TenantID,
+		p.KnowledgeBaseID,
+		p.KnowledgeID,
+		p.DataSourceID).Take(&r).Error; err != nil {
 		return nil, err
 	}
 	var a knowledgeInputAdmission
-	if err := tx.Where("admission_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", r.AdmissionID, p.TenantID, p.KnowledgeBaseID, p.KnowledgeID).Take(&a).Error; err != nil {
+	if err := tx.Where("admission_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+		r.AdmissionID,
+		p.TenantID,
+		p.KnowledgeBaseID,
+		p.KnowledgeID).Take(&a).Error; err != nil {
 		return nil, err
 	}
 	var facts dingtalk.OriginalFetchedArtifactInput
@@ -27,7 +35,16 @@ func loadDingTalkPublishedOriginal(tx *gorm.DB, p dingTalkPublication) (*knowled
 	if err != nil {
 		return nil, err
 	}
-	if a.OriginKind != dingTalkOriginalKind || r.SourceRevision == 0 || r.SyncLogID == "" || r.RootDigest != a.RootDigest || r.InputDigest != a.InputDigest || digest != r.FactsDigest || facts.DocumentID != p.ExternalID || facts.ItemDigest != p.ItemDigest || facts.SourceConfigDigest == "" || facts.ArtifactSHA256 == "" {
+	if a.OriginKind != dingTalkOriginalKind ||
+		r.SourceRevision == 0 ||
+		r.SyncLogID == "" ||
+		r.RootDigest != a.RootDigest ||
+		r.InputDigest != a.InputDigest ||
+		digest != r.FactsDigest ||
+		facts.DocumentID != p.ExternalID ||
+		facts.ItemDigest != p.ItemDigest ||
+		facts.SourceConfigDigest == "" ||
+		facts.ArtifactSHA256 == "" {
 		return nil, ErrKnowledgeInputChanged
 	}
 	return &a, nil

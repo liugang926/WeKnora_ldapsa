@@ -6,28 +6,47 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"time"
+
 	"github.com/Tencent/WeKnora/internal/datasource/connector/dingtalk"
 	"github.com/Tencent/WeKnora/internal/types"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"time"
 )
 
 // A local processing generation uses the existing derived admission kind and
 // an exact private receipt, never a new remote-issued receipt or a schema change.
 const dingTalkLocalReparseReceiptTask = "dingtalk:local-reparse"
 
-type dingTalkLocalReparseKey struct{}
-type dingTalkLocalReparseReceipt struct {
-	Generation          uint64 `json:"generation"`
-	OriginalAdmissionID string `json:"original_admission_id"`
-}
+type (
+	dingTalkLocalReparseKey     struct{}
+	dingTalkLocalReparseReceipt struct {
+		Generation          uint64 `json:"generation"`
+		OriginalAdmissionID string `json:"original_admission_id"`
+	}
+)
 
 // AdmitDingTalkLocalReparse binds retained local bytes to current controls.
 // Synchronization owns remote availability; current KB authority and immutable
 // original file integrity still govern this explicit local-file operation.
-func (s *KnowledgeInputProvenanceStore) AdmitDingTalkLocalReparse(ctx context.Context, before, proposed *types.Knowledge, expectedKB *types.KnowledgeBase, input []byte) (*types.KnowledgeBuildInputProof, error) {
-	if before == nil || proposed == nil || expectedKB == nil || expectedKB.ID != before.KnowledgeBaseID || expectedKB.TenantID != before.TenantID || before.Channel != types.ConnectorTypeDingTalk || before.FilePath == "" || before.ID != proposed.ID || before.TenantID != proposed.TenantID || before.KnowledgeBaseID != proposed.KnowledgeBaseID {
+func (s *KnowledgeInputProvenanceStore) AdmitDingTalkLocalReparse(
+	ctx context.Context,
+	before,
+	proposed *types.Knowledge,
+	expectedKB *types.KnowledgeBase,
+	input []byte) (*types.KnowledgeBuildInputProof,
+	error,
+) {
+	if before == nil ||
+		proposed == nil ||
+		expectedKB == nil ||
+		expectedKB.ID != before.KnowledgeBaseID ||
+		expectedKB.TenantID != before.TenantID ||
+		before.Channel != types.ConnectorTypeDingTalk ||
+		before.FilePath == "" ||
+		before.ID != proposed.ID ||
+		before.TenantID != proposed.TenantID ||
+		before.KnowledgeBaseID != proposed.KnowledgeBaseID {
 		return nil, ErrKnowledgeInputChanged
 	}
 	// Resolve current actor/group authority before opening the data transaction:
@@ -39,7 +58,11 @@ func (s *KnowledgeInputProvenanceStore) AdmitDingTalkLocalReparse(ctx context.Co
 	var proof *types.KnowledgeBuildInputProof
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var actual types.Knowledge
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND tenant_id=? AND knowledge_base_id=?", before.ID, before.TenantID, before.KnowledgeBaseID).Take(&actual).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
+			"id=? AND tenant_id=? AND knowledge_base_id=?",
+			before.ID,
+			before.TenantID,
+			before.KnowledgeBaseID).Take(&actual).Error; err != nil {
 			return err
 		}
 		if actual.ParseStatus == types.ParseStatusDeleting {
@@ -60,7 +83,11 @@ func (s *KnowledgeInputProvenanceStore) AdmitDingTalkLocalReparse(ctx context.Co
 		if err != nil {
 			return err
 		}
-		kb, err := loadKnowledgeBuildConfigurationInTx(tx.Clauses(clause.Locking{Strength: "SHARE"}), actual.TenantID, actual.KnowledgeBaseID)
+		kb,
+			err := loadKnowledgeBuildConfigurationInTx(tx.Clauses(
+			clause.Locking{Strength: "SHARE"}),
+			actual.TenantID,
+			actual.KnowledgeBaseID)
 		if err != nil {
 			return err
 		}
@@ -81,11 +108,18 @@ func (s *KnowledgeInputProvenanceStore) AdmitDingTalkLocalReparse(ctx context.Co
 		// independently retained original receipt and bytes, without a live source
 		// lookup or requiring old generated metadata/config to match this request.
 		var r dingTalkOriginalReceipt
-		if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", actual.TenantID, actual.KnowledgeBaseID, actual.ID).Take(&r).Error; err != nil {
+		if err := tx.Where("tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+			actual.TenantID,
+			actual.KnowledgeBaseID,
+			actual.ID).Take(&r).Error; err != nil {
 			return err
 		}
 		var original knowledgeInputAdmission
-		if err := tx.Where("admission_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?", r.AdmissionID, actual.TenantID, actual.KnowledgeBaseID, actual.ID).Take(&original).Error; err != nil {
+		if err := tx.Where("admission_id=? AND tenant_id=? AND knowledge_base_id=? AND knowledge_id=?",
+			r.AdmissionID,
+			actual.TenantID,
+			actual.KnowledgeBaseID,
+			actual.ID).Take(&original).Error; err != nil {
 			return err
 		}
 		var facts dingtalk.OriginalFetchedArtifactInput
@@ -101,7 +135,15 @@ func (s *KnowledgeInputProvenanceStore) AdmitDingTalkLocalReparse(ctx context.Co
 			return err
 		}
 		sha := sha256.Sum256(input)
-		if original.OriginKind != dingTalkOriginalKind || r.SourceRevision == 0 || r.SyncLogID == "" || r.DataSourceID == "" || r.RootDigest != original.RootDigest || r.InputDigest != original.InputDigest || fd != r.FactsDigest || digest != original.InputDigest || facts.ArtifactSHA256 != hex.EncodeToString(sha[:]) {
+		if original.OriginKind != dingTalkOriginalKind ||
+			r.SourceRevision == 0 ||
+			r.SyncLogID == "" ||
+			r.DataSourceID == "" ||
+			r.RootDigest != original.RootDigest ||
+			r.InputDigest != original.InputDigest ||
+			fd != r.FactsDigest ||
+			digest != original.InputDigest ||
+			facts.ArtifactSHA256 != hex.EncodeToString(sha[:]) {
 			return ErrKnowledgeInputChanged
 		}
 		var lineage types.SourceLineage
@@ -120,13 +162,28 @@ func (s *KnowledgeInputProvenanceStore) AdmitDingTalkLocalReparse(ctx context.Co
 			actual.ParseStatus = types.ParseStatusPending
 		}
 		actual.Metadata = append(types.JSON(nil), proposed.Metadata...)
-		if err := tx.Model(&types.Knowledge{}).Where("id=? AND tenant_id=?", actual.ID, actual.TenantID).Update("metadata", actual.Metadata).Error; err != nil {
+		if err := tx.Model(&types.Knowledge{}).Where(
+			"id=? AND tenant_id=?",
+			actual.ID,
+			actual.TenantID).Update("metadata",
+			actual.Metadata).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("id=? AND tenant_id=?", actual.ID, actual.TenantID).Take(&actual).Error; err != nil {
 			return err
 		}
-		proof, err = bound.admitInTx(context.WithValue(authorized, dingTalkLocalReparseKey{}, true), tx, &actual, kb, input, knowledgeInputOrigin{&lineage, "derived"})
+		proof,
+			err = bound.admitInTx(context.WithValue(authorized,
+			dingTalkLocalReparseKey{},
+			true),
+			tx,
+			&actual,
+			kb,
+			input,
+			knowledgeInputOrigin{
+				&lineage,
+				"derived",
+			})
 		if err != nil {
 			return err
 		}
@@ -134,7 +191,16 @@ func (s *KnowledgeInputProvenanceStore) AdmitDingTalkLocalReparse(ctx context.Co
 		if err != nil {
 			return err
 		}
-		receipt := types.TaskPendingOp{TenantID: actual.TenantID, TaskType: dingTalkLocalReparseReceiptTask, Scope: "knowledge", ScopeID: actual.ID, DedupKey: proof.AdmissionID, Op: "admitted", Payload: payload, EnqueuedAt: time.Now().UTC()}
+		receipt := types.TaskPendingOp{
+			TenantID:   actual.TenantID,
+			TaskType:   dingTalkLocalReparseReceiptTask,
+			Scope:      "knowledge",
+			ScopeID:    actual.ID,
+			DedupKey:   proof.AdmissionID,
+			Op:         "admitted",
+			Payload:    payload,
+			EnqueuedAt: time.Now().UTC(),
+		}
 		if err := tx.Create(&receipt).Error; err != nil {
 			return err
 		}
@@ -152,7 +218,13 @@ func isDingTalkLocalReparseAdmission(tx *gorm.DB, a *knowledgeInputAdmission) (b
 		return false, nil
 	}
 	var row types.TaskPendingOp
-	err := tx.Where("task_type=? AND scope=? AND scope_id=? AND tenant_id=? AND dedup_key=? AND op=?", dingTalkLocalReparseReceiptTask, "knowledge", a.KnowledgeID, a.TenantID, a.AdmissionID, "admitted").Take(&row).Error
+	err := tx.Where("task_type=? AND scope=? AND scope_id=? AND tenant_id=? AND dedup_key=? AND op=?",
+		dingTalkLocalReparseReceiptTask,
+		"knowledge",
+		a.KnowledgeID,
+		a.TenantID,
+		a.AdmissionID,
+		"admitted").Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, nil
 	}
@@ -160,11 +232,20 @@ func isDingTalkLocalReparseAdmission(tx *gorm.DB, a *knowledgeInputAdmission) (b
 		return false, err
 	}
 	var receipt dingTalkLocalReparseReceipt
-	if json.Unmarshal(row.Payload, &receipt) != nil || receipt.Generation != a.BuildGeneration || receipt.OriginalAdmissionID == "" {
+	if json.Unmarshal(row.Payload,
+		&receipt) != nil ||
+		receipt.Generation != a.BuildGeneration ||
+		receipt.OriginalAdmissionID == "" {
 		return false, ErrKnowledgeInputChanged
 	}
 	var original knowledgeInputAdmission
-	if err := tx.Where("admission_id=? AND knowledge_id=? AND knowledge_base_id=? AND tenant_id=? AND origin_kind=?", receipt.OriginalAdmissionID, a.KnowledgeID, a.KnowledgeBaseID, a.TenantID, dingTalkOriginalKind).Take(&original).Error; err != nil {
+	if err := tx.Where("admission_id=? AND knowledge_id=? AND knowledge_base_id=? AND tenant_id=? "+
+		"AND origin_kind=?",
+		receipt.OriginalAdmissionID,
+		a.KnowledgeID,
+		a.KnowledgeBaseID,
+		a.TenantID,
+		dingTalkOriginalKind).Take(&original).Error; err != nil {
 		return false, err
 	}
 	if original.InputDigest != a.InputDigest {

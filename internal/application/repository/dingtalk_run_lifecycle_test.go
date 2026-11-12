@@ -19,7 +19,17 @@ func TestFinalizeDingTalkRunCurrentError(t *testing.T) {
 		cursor       types.JSON
 		cleared      bool
 	}{
-		{"success", types.SyncLogStatusSuccess, types.SyncResult{Total: 18, Created: 18}, types.JSON(`{"version":1}`), true},
+		{
+			"success",
+			types.SyncLogStatusSuccess,
+			types.SyncResult{
+				Total:   18,
+				Created: 18,
+			},
+			types.JSON(`{"version":1}`),
+			true,
+		},
+
 		{"zero-success-without-cursor", types.SyncLogStatusSuccess, types.SyncResult{}, nil, true},
 		{"failed", types.SyncLogStatusFailed, types.SyncResult{Failed: 1}, nil, false},
 		{"partial", types.SyncLogStatusPartial, types.SyncResult{Failed: 1}, nil, false},
@@ -32,16 +42,39 @@ func TestFinalizeDingTalkRunCurrentError(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, pool.Close()) })
 			require.NoError(t, db.AutoMigrate(&types.DataSource{}, &types.SyncLog{}, &dingTalkRunClaim{}))
-			require.NoError(t, db.Exec("CREATE TABLE dingtalk_source_input_revisions (datasource_id TEXT PRIMARY KEY, revision INTEGER NOT NULL)").Error)
-			ds := &types.DataSource{ID: "source", TenantID: 7, KnowledgeBaseID: "kb", Type: types.ConnectorTypeDingTalk, Status: types.DataSourceStatusActive, ErrorMessage: "previous import failed"}
+			require.NoError(t,
+				db.Exec("CREATE TABLE dingtalk_source_input_revisions (datasource_id TEXT PRIMARY "+
+					"KEY, revision INTEGER NOT NULL)").Error)
+			ds := &types.DataSource{
+				ID:              "source",
+				TenantID:        7,
+				KnowledgeBaseID: "kb",
+				Type:            types.ConnectorTypeDingTalk,
+				Status:          types.DataSourceStatusActive,
+				ErrorMessage:    "previous import failed",
+			}
 			require.NoError(t, db.Create(ds).Error)
 			require.NoError(t, db.Exec("INSERT INTO dingtalk_source_input_revisions VALUES (?, ?)", ds.ID, 1).Error)
 			finished := time.Now().Add(-time.Hour).UTC()
-			history := &types.SyncLog{ID: "historical-failure", DataSourceID: ds.ID, TenantID: ds.TenantID, Status: types.SyncLogStatusFailed, ErrorMessage: "historical failure", ItemsFailed: 1, FinishedAt: &finished}
+			history := &types.SyncLog{
+				ID:           "historical-failure",
+				DataSourceID: ds.ID,
+				TenantID:     ds.TenantID,
+				Status:       types.SyncLogStatusFailed,
+				ErrorMessage: "historical failure",
+				ItemsFailed:  1,
+				FinishedAt:   &finished,
+			}
 			require.NoError(t, db.Create(history).Error)
 			var historicalBefore types.SyncLog
 			require.NoError(t, db.Where("id = ?", history.ID).Take(&historicalBefore).Error)
-			require.NoError(t, db.Create(&types.SyncLog{ID: "current-run", DataSourceID: ds.ID, TenantID: ds.TenantID, Status: types.SyncLogStatusRunning}).Error)
+			require.NoError(t,
+				db.Create(&types.SyncLog{
+					ID:           "current-run",
+					DataSourceID: ds.ID,
+					TenantID:     ds.TenantID,
+					Status:       types.SyncLogStatusRunning,
+				}).Error)
 			store := NewKnowledgeInputProvenanceStore(db)
 			ctx, err := store.ClaimDingTalkRun(context.Background(), ds, "current-run", "current-task", 0, time.Minute)
 			require.NoError(t, err)

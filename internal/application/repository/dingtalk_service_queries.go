@@ -10,7 +10,11 @@ import (
 
 // DingTalkRefetchState is a read-only planning hint. It never proves that a
 // document remains selected: recovery must still consume a new connector fetch.
-func (s *KnowledgeInputProvenanceStore) DingTalkRefetchState(ctx context.Context) (bootstrap bool, tombstones []string, err error) {
+func (s *KnowledgeInputProvenanceStore) DingTalkRefetchState(
+	ctx context.Context) (bootstrap bool,
+	tombstones []string,
+	err error,
+) {
 	f, ok := ctx.Value(dingTalkFetchKey{}).(dingTalkFetch)
 	if !ok {
 		return false, nil, types.ErrSourceLineageUnknown
@@ -21,7 +25,10 @@ func (s *KnowledgeInputProvenanceStore) DingTalkRefetchState(ctx context.Context
 			return e
 		}
 		var rows []dingTalkPublication
-		if e := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND data_source_id = ?", f.Tenant, f.KB, f.Source).Find(&rows).Error; e != nil {
+		if e := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND data_source_id = ?",
+			f.Tenant,
+			f.KB,
+			f.Source).Find(&rows).Error; e != nil {
 			return e
 		}
 		bootstrap = len(rows) == 0
@@ -52,7 +59,11 @@ func (s *KnowledgeInputProvenanceStore) DingTalkRefetchState(ctx context.Context
 // DingTalkConfigurationChanged plans a fresh fetch for changed controls or stale
 // local output. It grants no repair authority: fresh publication independently
 // verifies source ownership and the newly fetched artifact.
-func (s *KnowledgeInputProvenanceStore) DingTalkConfigurationChanged(ctx context.Context, external string) (changed bool, err error) {
+func (s *KnowledgeInputProvenanceStore) DingTalkConfigurationChanged(
+	ctx context.Context,
+	external string) (changed bool,
+	err error,
+) {
 	f, ok := ctx.Value(dingTalkFetchKey{}).(dingTalkFetch)
 	if !ok {
 		return false, types.ErrSourceLineageUnknown
@@ -62,7 +73,11 @@ func (s *KnowledgeInputProvenanceStore) DingTalkConfigurationChanged(ctx context
 			return e
 		}
 		var p dingTalkPublication
-		e := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND data_source_id = ? AND external_id = ?", f.Tenant, f.KB, f.Source, external).Take(&p).Error
+		e := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND data_source_id = ? AND external_id = ?",
+			f.Tenant,
+			f.KB,
+			f.Source,
+			external).Take(&p).Error
 		if errors.Is(e, gorm.ErrRecordNotFound) {
 			return nil
 		}
@@ -82,7 +97,10 @@ func (s *KnowledgeInputProvenanceStore) DingTalkConfigurationChanged(ctx context
 			return e
 		}
 		var k types.Knowledge
-		if e := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", p.KnowledgeID, f.Tenant, f.KB).Take(&k).Error; e != nil {
+		if e := tx.Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+			p.KnowledgeID,
+			f.Tenant,
+			f.KB).Take(&k).Error; e != nil {
 			return e
 		}
 		var material knowledgeInputMaterialReceipt
@@ -96,7 +114,11 @@ func (s *KnowledgeInputProvenanceStore) DingTalkConfigurationChanged(ctx context
 			return e
 		}
 		var a knowledgeInputAdmission
-		if e := tx.Where("admission_id = ? AND knowledge_id = ? AND tenant_id = ? AND knowledge_base_id = ?", material.AdmissionID, k.ID, f.Tenant, f.KB).Take(&a).Error; e != nil {
+		if e := tx.Where("admission_id = ? AND knowledge_id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+			material.AdmissionID,
+			k.ID,
+			f.Tenant,
+			f.KB).Take(&a).Error; e != nil {
 			// Missing current local derivation is a refetch hint, not source
 			// failure. The per-item publisher still validates fresh authority.
 			if errors.Is(e, gorm.ErrRecordNotFound) {
@@ -147,7 +169,11 @@ func (s *KnowledgeInputProvenanceStore) DingTalkConfigurationChanged(ctx context
 
 // DingTalkRetirementRequired distinguishes an old failed cursor entry which
 // never published anything from legacy live knowledge which cannot be adopted.
-func (s *KnowledgeInputProvenanceStore) DingTalkRetirementRequired(ctx context.Context, external string) (required bool, err error) {
+func (s *KnowledgeInputProvenanceStore) DingTalkRetirementRequired(
+	ctx context.Context,
+	external string) (required bool,
+	err error,
+) {
 	f, ok := ctx.Value(dingTalkFetchKey{}).(dingTalkFetch)
 	if !ok {
 		return false, types.ErrSourceLineageUnknown
@@ -157,7 +183,11 @@ func (s *KnowledgeInputProvenanceStore) DingTalkRetirementRequired(ctx context.C
 			return err
 		}
 		var p dingTalkPublication
-		err := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND data_source_id = ? AND external_id = ?", f.Tenant, f.KB, f.Source, external).Take(&p).Error
+		err := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND data_source_id = ? AND external_id = ?",
+			f.Tenant,
+			f.KB,
+			f.Source,
+			external).Take(&p).Error
 		if err == nil {
 			required = !p.Tombstone
 			return nil
@@ -166,7 +196,13 @@ func (s *KnowledgeInputProvenanceStore) DingTalkRetirementRequired(ctx context.C
 			return err
 		}
 		var count int64
-		if err := tx.Model(&types.Knowledge{}).Where("tenant_id = ? AND knowledge_base_id = ? AND metadata->>'datasource_id' = ? AND metadata->>'external_id' = ?", f.Tenant, f.KB, f.Source, external).Count(&count).Error; err != nil {
+		if err := tx.Model(&types.Knowledge{}).Where(
+			"tenant_id = ? AND knowledge_base_id = ? AND metadata->>'datasource_id' = ? "+
+				"AND metadata->>'external_id' = ?",
+			f.Tenant,
+			f.KB,
+			f.Source,
+			external).Count(&count).Error; err != nil {
 			return err
 		}
 		if count != 0 {
@@ -181,7 +217,12 @@ func (s *KnowledgeInputProvenanceStore) DingTalkRetirementRequired(ctx context.C
 // access to it. Historical claims preserve its type after physical removal.
 // Query errors are returned: absence of evidence must not authorize a blind
 // generic sync-log update.
-func (s *KnowledgeInputProvenanceStore) IsDingTalkSourceTask(ctx context.Context, tenant uint64, source string) (bool, error) {
+func (s *KnowledgeInputProvenanceStore) IsDingTalkSourceTask(
+	ctx context.Context,
+	tenant uint64,
+	source string) (bool,
+	error,
+) {
 	var ds types.DataSource
 	err := s.db.WithContext(ctx).Unscoped().Where("id = ? AND tenant_id = ?", source, tenant).Take(&ds).Error
 	if err == nil {
@@ -191,6 +232,9 @@ func (s *KnowledgeInputProvenanceStore) IsDingTalkSourceTask(ctx context.Context
 		return false, err
 	}
 	var count int64
-	err = s.db.WithContext(ctx).Model(&dingTalkRunClaim{}).Where("data_source_id = ? AND tenant_id = ?", source, tenant).Count(&count).Error
+	err = s.db.WithContext(ctx).Model(&dingTalkRunClaim{}).Where(
+		"data_source_id = ? AND tenant_id = ?",
+		source,
+		tenant).Count(&count).Error
 	return count != 0, err
 }
