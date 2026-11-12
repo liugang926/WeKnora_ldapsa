@@ -35,8 +35,12 @@ type normalReferencesActualModel struct {
 	stopped               atomic.Bool
 	mode                  string
 	started               chan struct{}
+	emptyPolls            *atomic.Int64
 	consecutiveEmptyPolls *atomic.Int64
 	idleMeasured          atomic.Bool
+	idleHeldBodies        atomic.Int64
+	idleRenewals          atomic.Int64
+	idleEmptyPolls        atomic.Int64
 	lateIdleFaultApplied  atomic.Bool
 }
 
@@ -110,6 +114,32 @@ func (m *normalReferencesActualModel) ChatStream(
 				case <-ticker.C:
 				}
 			}
+			if m.mode == "idle-current" || m.mode == "idle-source-revoke" {
+				var heldBodies int64
+				if err := m.f.DB.Table("original_body_leases").
+					Where("kind='read' AND released_at_ms IS NULL").Count(&heldBodies).Error; err != nil {
+					m.t.Error(err)
+					return
+				}
+				if heldBodies == 0 || m.f.BodyLeaseRenewals() == 0 {
+					m.t.Error("idle sampling requires actual held and renewed original bodies")
+					return
+				}
+				beforeRenewals, beforeEmpty := m.f.BodyLeaseRenewals(), m.emptyPolls.Load()
+				m.idleHeldBodies.Store(heldBodies)
+				for m.emptyPolls.Load()-beforeEmpty < 10 {
+					select {
+					case <-ctx.Done():
+						m.stopped.Store(true)
+						return
+					case <-deadline.C:
+						return
+					case <-ticker.C:
+					}
+				}
+				m.idleRenewals.Store(m.f.BodyLeaseRenewals() - beforeRenewals)
+				m.idleEmptyPolls.Store(m.emptyPolls.Load() - beforeEmpty)
+			}
 			m.idleMeasured.Store(true)
 			if m.mode == "idle-source-revoke" {
 				m.f.Revoke()
@@ -181,6 +211,7 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 		RedisStreamManager: redis,
 		watcher:            make(chan context.Context, 1),
 	}
+	model.emptyPolls = &observedStream.emptyPolls
 	model.consecutiveEmptyPolls = &observedStream.consecutiveEmptyPolls
 	var sender interfaces.StreamManager = observedStream
 	if mode == "empty-fixed-refuse" {
@@ -325,12 +356,28 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 		require.True(t, model.inputFound.Load())
 		var assistant types.Message
 		require.NoError(t, f.DB.Where("session_id=? AND role='assistant'", f.Session.ID).Take(&assistant).Error)
-		require.True(t, assistant.IsCompleted)
 		require.Equal(t, f.Lineage, assistant.SourceLineage)
 		require.Len(t, assistant.KnowledgeReferences, 2)
 	}
+	if !denied {
+		var completed int64
+		require.NoError(t, f.DB.Model(&types.Message{}).
+			Where("session_id=? AND role='assistant' AND is_completed=true", f.Session.ID).
+			Count(&completed).Error)
+		require.EqualValues(t, 1, completed, "actual permitted background production durably completed")
+	}
 	if strings.Contains(mode, "idle") {
 		require.True(t, model.idleMeasured.Load(), "actual empty Redis reads preceded provider output")
+	}
+	if mode == "idle-current" || mode == "idle-source-revoke" {
+		require.Positive(t, model.idleHeldBodies.Load())
+		require.GreaterOrEqual(t, model.idleEmptyPolls.Load(), int64(10), "ten genuine empty Redis polls were sampled")
+		require.GreaterOrEqual(t, model.idleRenewals.Load(), int64(0))
+		require.LessOrEqual(t, model.idleRenewals.Load(), 6*model.idleHeldBodies.Load(),
+			"real idle polls must not renew every physical body on each tick")
+		t.Logf("actual idle SQL budget: empty_polls=%d held_bodies=%d renewals=%d budget=%d",
+			model.idleEmptyPolls.Load(), model.idleHeldBodies.Load(), model.idleRenewals.Load(),
+			6*model.idleHeldBodies.Load())
 	}
 	if mode == "producer-stop" {
 		require.True(t, model.stopped.Load())
