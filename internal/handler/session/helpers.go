@@ -355,6 +355,12 @@ func (h *Handler) setupStopEventHandler(
 	eventBus.On(event.EventStop, func(ctx context.Context, evt event.Event) error {
 		logger.Infof(ctx, "Received stop event, cancelling async operations for session: %s", sessionID)
 		cancel()
+		if data, ok := evt.Data.(event.StopData); ok &&
+			(data.Reason == "original_material_unavailable" || data.Reason == "source_access_changed") {
+			// Revocation terminates the producer without granting its partial
+			// answer a completed body. Only a user stop preserves completion.
+			return nil
+		}
 		// Preserve whatever has been streamed so far; do not overwrite Content.
 		// Use session's tenant for message update (ctx may have effectiveTenantID when using shared agent).
 		// Use WithoutCancel so the GORM UPDATE survives the upcoming ctx.Done triggered by cancel()/client disconnect.

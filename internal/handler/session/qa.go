@@ -57,7 +57,7 @@ type qaRequestContext struct {
 	localBrowserEnabled   bool
 	webSearchEnabled      bool
 	mentionedItems        types.MentionedItems
-	effectiveTenantID     uint64                   // when using shared agent, tenant ID for model/KB/MCP resolution; 0 = use context tenant
+	effectiveTenantID     uint64                   // Shared agent tenant for model/KB/MCP; 0 uses context tenant
 	sharedAgentReadOnly   bool                     // access was granted by a read-only agent share
 	images                []ImageAttachment        // Uploaded images with analysis text
 	userMessageID         string                   // Created user message ID (populated after createUserMessage)
@@ -849,12 +849,17 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	var materialAttach func(context.Context) context.Context
 	var materialCheck func() error
 	var materialClose func()
-	if hasExplicitInputMaterials(reqCtx) {
+	// KnowledgeQA always retains generic user/history material, even when no
+	// explicit file is attached. Share that owner with the HTTP idle checker;
+	// a producer-only holder cannot notice refusal while its provider is idle.
+	if mode == qaModeNormal || hasExplicitInputMaterials(reqCtx) {
 		native, ok := h.messageService.(interface{ HasOriginalMessageMaterialStore() bool })
 		if ok && native.HasOriginalMessageMaterialStore() {
-			asyncCtx, materialAttach, materialCheck, materialClose = applicationservice.BeginMessageMaterialHTTPBoundary(
-				asyncCtx,
-			)
+			beginMaterial := applicationservice.BeginMessageMaterialHTTPBoundary
+			if mode == qaModeNormal {
+				beginMaterial = applicationservice.BeginKnowledgeQAHTTPBoundary
+			}
+			asyncCtx, materialAttach, materialCheck, materialClose = beginMaterial(asyncCtx)
 		}
 	}
 

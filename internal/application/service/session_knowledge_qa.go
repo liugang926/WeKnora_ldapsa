@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
@@ -17,6 +18,37 @@ import (
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
 )
+
+type knowledgeQAHTTPCheckKey struct{}
+
+type knowledgeQAHTTPCheck struct {
+	ctx  context.Context
+	turn *types.RAGSourceLineage
+}
+
+// BeginKnowledgeQAHTTPBoundary shares the actual producer's current WeKnora
+// authorization and original-material owner with its HTTP sender. The check
+// uses the generation context, so a disconnected caller cannot revoke a valid
+// background generation. It does not invoke the retired Nextcloud read ACL.
+func BeginKnowledgeQAHTTPBoundary(
+	ctx context.Context,
+) (context.Context, func(context.Context) context.Context, func() error, func()) {
+	ctx, attachMaterial, checkMaterial, closeMaterial := BeginMessageMaterialHTTPBoundary(ctx)
+	current := &atomic.Pointer[knowledgeQAHTTPCheck]{}
+	ctx = context.WithValue(ctx, knowledgeQAHTTPCheckKey{}, current)
+	attach := func(target context.Context) context.Context {
+		return context.WithValue(attachMaterial(target), knowledgeQAHTTPCheckKey{}, current)
+	}
+	check := func() error {
+		if active := current.Load(); active != nil {
+			// The actual turn callback includes CheckHistoryMaterialLifetime;
+			// do not renew every original body twice at an idle checkpoint.
+			return active.turn.Check(active.ctx)
+		}
+		return checkMaterial()
+	}
+	return ctx, attach, check, closeMaterial
+}
 
 // KnowledgeQA performs knowledge base question answering with LLM summarization
 // Events are emitted through eventBus (references, answer chunks, completion)
@@ -304,6 +336,9 @@ func (s *sessionService) KnowledgeQA(
 		"search_targets":     len(searchTargets),
 	}, nil, nil)
 	markMessageMaterialReady(ctx)
+	if current, ok := ctx.Value(knowledgeQAHTTPCheckKey{}).(*atomic.Pointer[knowledgeQAHTTPCheck]); ok {
+		current.Store(&knowledgeQAHTTPCheck{ctx: ctx, turn: types.RAGSourceLineageFromContext(ctx)})
+	}
 	err = s.KnowledgeQAByEvent(ctx, chatManage, pipeline)
 	if err == nil {
 		handoff = chatManage.SourceStreamResult != nil

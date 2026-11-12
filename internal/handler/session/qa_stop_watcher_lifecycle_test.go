@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/stream"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -84,7 +85,7 @@ func awaitGenerationStopContext(ctx context.Context, t *testing.T) {
 }
 
 func TestSetupSSEStreamWatcherUsesGenerationLifecycle(t *testing.T) {
-	for _, mode := range []string{"publication_refusal", "original_material_refusal"} {
+	for _, mode := range []string{"publication_refusal", "original_material_refusal", "user_stop"} {
 		t.Run(mode, func(t *testing.T) {
 			memory := stream.NewMemoryStreamManager()
 			streams := &generationStopPolls{
@@ -127,10 +128,15 @@ func TestSetupSSEStreamWatcherUsesGenerationLifecycle(t *testing.T) {
 					initialized.asyncCtx, c, initialized.eventBus,
 					"session", "assistant", "request", access.ErrNextcloudPublicationDenied,
 				)
-			} else {
+			} else if mode == "original_material_refusal" {
 				stopLiveStreamForOriginalMaterial(
 					initialized.asyncCtx, c, initialized.eventBus, "session", "assistant", "request",
 				)
+			} else {
+				_ = initialized.eventBus.Emit(initialized.asyncCtx, event.Event{
+					Type: event.EventStop, SessionID: "session",
+					Data: event.StopData{SessionID: "session", MessageID: "assistant", Reason: "user_requested"},
+				})
 			}
 			awaitGenerationStopContext(initialized.asyncCtx, t)
 			awaitGenerationStopContext(inFlight, t)
@@ -152,11 +158,16 @@ func TestSetupSSEStreamWatcherUsesGenerationLifecycle(t *testing.T) {
 			case <-time.After(650 * time.Millisecond):
 			}
 			require.LessOrEqual(t, streams.calls.Load(), int32(3))
-			require.Equal(t, 1, messages.updates)
-			require.NoError(t, messages.updateCtx.Err(), "stop persistence retains its uncanceled cleanup context")
-			tenant, ok := types.TenantIDFromContext(messages.updateCtx)
-			require.True(t, ok)
-			require.EqualValues(t, 7, tenant)
+			if mode == "user_stop" {
+				require.Equal(t, 1, messages.updates)
+				require.NoError(t, messages.updateCtx.Err(), "user stop persistence retains its cleanup context")
+				tenant, ok := types.TenantIDFromContext(messages.updateCtx)
+				require.True(t, ok)
+				require.EqualValues(t, 7, tenant)
+			} else {
+				require.Zero(t, messages.updates, "revocation must not complete a partial assistant")
+				require.False(t, reqCtx.assistantMessage.IsCompleted)
+			}
 			frames, _, err := memory.GetEvents(t.Context(), "session", "assistant", 0)
 			require.NoError(t, err)
 			for _, frame := range frames {
