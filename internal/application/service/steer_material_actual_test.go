@@ -290,6 +290,7 @@ func TestSteerMaterialActualFollowUpKeepsOriginalAndBindsExactNewInitial(t *test
 			)
 			nextCtx := WithMessageMaterialOutputBoundary(MessageMaterialOwnerContext(ctx))
 			defer CloseMessageMaterialOutputBoundary(nextCtx)
+			nextCtx = context.WithValue(nextCtx, agentHistoryCurrentRequestKey{}, next.RequestID)
 			_, err = messages.GetMessage(nextCtx, session.ID, user.ID)
 			require.NoError(t, err)
 			require.NoError(t, messages.bindInitialMessageMaterial(nextCtx, next.ID, user.ID, next.RequestID))
