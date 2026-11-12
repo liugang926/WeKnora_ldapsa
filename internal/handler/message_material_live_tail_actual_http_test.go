@@ -477,8 +477,17 @@ func TestMessagePlainHTTPStreamDoesNotConsultNextcloudMaterialTransitions(t *tes
 			require.True(t, observed)
 			require.True(t, files.observed.Load())
 			require.EqualValues(t, 1, model.calls.Load())
-			require.Contains(t, w.Body.String(), "LIVE HTTP SECRET")
-			require.Positive(t, w.answerWrites)
+			if mode == "http_cancel" {
+				// The query frame precedes cancellation during URL rewriting. The answer is still pending.
+				require.Equal(t, http.StatusOK, w.Code)
+				require.Contains(t, w.Body.String(), `"response_type":"agent_query"`)
+				require.NotContains(t, w.Body.String(), "LIVE HTTP SECRET")
+				require.NotContains(t, w.Body.String(), "https://isolated.example.test/http-tail-image.png")
+				require.Zero(t, w.answerWrites)
+			} else {
+				require.Contains(t, w.Body.String(), "LIVE HTTP SECRET")
+				require.Positive(t, w.answerWrites)
+			}
 			if mode == "body_aba" {
 				require.Contains(t, w.Body.String(), `"response_type":"complete"`)
 				require.Positive(t, w.completionWrites)
