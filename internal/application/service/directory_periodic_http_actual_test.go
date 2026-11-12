@@ -224,7 +224,9 @@ func (m *directoryPeriodicHTTPModel) ChatStream(
 }
 
 func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
-	for _, mode := range []string{"unchanged_complete_sync", "disabled", "out_of_scope", "unlinked", "disabled-open-idle"} {
+	for _, mode := range []string{
+		"unchanged_complete_sync", "disabled", "out_of_scope", "unlinked", "disabled-open-idle",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			model := &directoryPeriodicHTTPModel{
 				t:                 t,
@@ -459,7 +461,8 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 			assert.EqualValues(t, 2, model.syncedEpochs.Load())
 			assert.EqualValues(t, 1, model.calls.Load())
 			assert.True(t, model.inputFound.Load())
-			assert.True(t, model.preflightPassed.Load(), "intended directory boundary follows successful provider preflight")
+			assert.True(t, model.preflightPassed.Load(),
+				"intended directory boundary follows successful provider preflight")
 			if mode == "disabled-open-idle" {
 				assert.GreaterOrEqual(t, model.idleEmptyPolls.Load(), int64(10))
 				assert.True(t, model.stopped.Load(), "idle directory refusal cancels the open provider")

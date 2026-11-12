@@ -697,7 +697,8 @@ func (h *Handler) handleAgentEventsForSSE(
 				}
 				emitStreamEvent(ctx, c, evt, requestID, resourceRewriter)
 				if writer, ok := c.Writer.(*nativeSavedReplayWriter); ok && writer.denied != nil {
-					if phase, _ := ctx.Value(liveMaterialWritePhaseKey{}).(*liveMaterialWritePhase); phase.userStopped() {
+					phase, _ := ctx.Value(liveMaterialWritePhaseKey{}).(*liveMaterialWritePhase)
+					if phase.userStopped() {
 						emitUserStopNotification(c, requestID)
 						return
 					}

@@ -917,7 +917,9 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	)
 
 	// Setup stop event handler
-	h.setupStopEventHandler(eventBus, reqCtx.sessionID, reqCtx.session.TenantID, reqCtx.assistantMessage, cancelGeneration)
+	h.setupStopEventHandler(
+		eventBus, reqCtx.sessionID, reqCtx.session.TenantID, reqCtx.assistantMessage, cancelGeneration,
+	)
 
 	// Watch for stop events on the generation context, which already survives
 	// client disconnects and the early KnowledgeQA return. Generation

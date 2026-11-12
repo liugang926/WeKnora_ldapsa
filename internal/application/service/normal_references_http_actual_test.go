@@ -87,7 +87,9 @@ func (m *normalReferencesActualModel) ChatStream(
 		return nil, fmt.Errorf("actual retrieval did not reach provider")
 	}
 	var heldBodies int64
-	if err := m.f.DB.Table("original_body_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&heldBodies).Error; err != nil || heldBodies == 0 {
+	if err := m.f.DB.Table("original_body_leases").
+		Where("kind='read' AND released_at_ms IS NULL").
+		Count(&heldBodies).Error; err != nil || heldBodies == 0 {
 		m.t.Errorf("provider material preflight requires held original bodies: held=%d err=%v", heldBodies, err)
 		return nil, fmt.Errorf("provider material preflight failed")
 	}
@@ -266,7 +268,10 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 		mode = modes[0]
 	}
 	expectation := normalReferencesHTTPExpectationFor(t, mode)
-	model := &normalReferencesActualModel{t: t, mode: mode, started: make(chan struct{}), transportReturned: make(chan struct{})}
+	model := &normalReferencesActualModel{
+		t: t, mode: mode,
+		started: make(chan struct{}), transportReturned: make(chan struct{}),
+	}
 	f := service.NewNormalReferencesHTTPFixtureForTest(t, pg, model, mode)
 	model.f = f
 	mini := miniredis.RunT(t)
@@ -392,7 +397,8 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	denied := expectation.denied
 	require.EqualValues(t, expectation.modelCalls, model.calls.Load())
 	if expectation.modelCalls == 1 {
-		require.True(t, model.preflightPassed.Load(), "intended downstream boundary follows successful provider preflight")
+		require.True(t, model.preflightPassed.Load(),
+			"intended downstream boundary follows successful provider preflight")
 		require.True(t, model.inputFound.Load())
 		select {
 		case <-model.transportReturned:
