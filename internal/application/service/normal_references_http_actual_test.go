@@ -416,6 +416,15 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	case <-time.After(normalReferencesHTTPReturnTimeout):
 		t.Fatal("actual HTTP handler did not return")
 	}
+	if mode == "producer-stop" {
+		// The stop watcher cancels the producer before it persists the stopped message.
+		select {
+		case err := <-f.CompletionError:
+			require.NoError(t, err)
+		case <-time.After(normalReferencesHTTPReturnTimeout):
+			t.Fatal("stopped message update did not return")
+		}
+	}
 	if denied {
 		require.NotContains(t, content, "CURRENT ADMITTED NORMAL ANSWER")
 		if mode != "producer-stop" {
