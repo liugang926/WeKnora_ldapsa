@@ -25,6 +25,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 const nativeRunningOriginal = "NATIVE RUNNING ORIGINAL SECRET ![image](resource://xifDo7NTSL300Lp1goVutw)"
@@ -50,6 +51,12 @@ func (m *nativeRunningModel) ChatStream(
 	if err := types.CheckHistoryMaterialLifetime(ctx); err != nil {
 		return nil, err
 	}
+	// The native producer retains the original used in its prompt until the frame is sealed.
+	parent, err := m.f.messages.GetMessage(ctx, m.f.parent.SessionID, m.f.parent.ID)
+	if err != nil {
+		return nil, err
+	}
+	require.Equal(m.t, m.f.parent.Content, parent.Content)
 	assertActualHTTPTailLeases(m.t, m.f.db, true, m.f.source)
 	found := false
 	for _, message := range input {
@@ -178,6 +185,17 @@ func TestNativeLiveReplayActualPausedProducerReceiverAndRedisForgery(t *testing.
 	for _, mode := range []string{"positive", "parent_aba", "actor_revoke", "source_revoke"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newActualHTTPTailFixture(t, mode == "source_revoke")
+			// Recreate a stored pre-retirement generation selector. Current plain requests
+			// use Redis and current requests with explicit inputs stop at admission.
+			// The receiver below must still honor a retained native generation.
+			require.NoError(t, f.db.Callback().Create().Before("gorm:create").Register(
+				"native-replay-historical-selector", func(tx *gorm.DB) {
+					msg, ok := tx.Statement.Dest.(*types.Message)
+					if ok && msg.Role == "assistant" && msg.SessionID == f.parent.SessionID {
+						msg.ExecutionContext.ExplicitInputMaterials = true
+					}
+				},
+			))
 			model := &nativeRunningModel{f: f, t: t, finish: make(chan struct{})}
 			t.Cleanup(model.release)
 			models := nativeRunningModels{paused: model}
@@ -338,7 +356,7 @@ func TestNativeLiveReplayActualPausedProducerReceiverAndRedisForgery(t *testing.
 			require.True(t, observed, "actual native replay must acquire scopes before its public URL rewrite")
 			require.Zero(t, reader.reads.Load(), "running replay cannot load Redis frame bodies")
 			require.NotContains(t, second.Body.String(), "FORGED REDIS BODY SECRET")
-			if mode == "positive" {
+			if mode == "positive" || mode == "source_revoke" {
 				require.Contains(t, second.Body.String(), "NATIVE RUNNING ORIGINAL SECRET")
 				require.Contains(t, second.Body.String(), "https://isolated.example.test/http-tail-image.png")
 				assertActualHTTPTailLeases(t, f.db, true, "")
@@ -390,7 +408,10 @@ func TestNativeLiveReplayActualMissingRegistryDeniesSameSourceCachedBody(t *test
 	require.NoError(t, err)
 	answer, err := f.messages.CreateMessage(
 		f.ctx,
-		&types.Message{SessionID: question.SessionID, RequestID: question.RequestID, Role: "assistant"},
+		&types.Message{
+			SessionID: question.SessionID, RequestID: question.RequestID, Role: "assistant",
+			ExecutionContext: types.MessageExecutionContext{ExplicitInputMaterials: true},
+		},
 	)
 	require.NoError(t, err)
 	mini := miniredis.RunT(t)

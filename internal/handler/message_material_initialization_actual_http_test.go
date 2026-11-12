@@ -165,7 +165,7 @@ func TestMessageMaterialActualHTTPInitializationWaitsForAdmission(t *testing.T) 
 			defer func() { require.NoError(t, response.Body.Close()) }()
 			body, err := io.ReadAll(response.Body)
 			require.NoError(t, err, "the actual HTTP receiver must terminate without client timeout")
-			if mode == "ready" || mode == "steer_schema_ready" {
+			if mode == "ready" || mode == "steer_schema_ready" || mode == "source_revoked" {
 				require.Equal(t, http.StatusOK, response.StatusCode, string(body))
 				require.GreaterOrEqual(t, time.Since(started), 350*time.Millisecond)
 				require.Contains(t, string(body), `"response_type":"agent_query"`)

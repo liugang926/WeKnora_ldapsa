@@ -477,8 +477,8 @@ func TestMessagePlainHTTPStreamDoesNotConsultNextcloudMaterialTransitions(t *tes
 			require.True(t, observed)
 			require.True(t, files.observed.Load())
 			require.EqualValues(t, 1, model.calls.Load())
-			if mode == "http_cancel" {
-				// The query frame precedes cancellation during URL rewriting. The answer is still pending.
+			if mode == "http_cancel" || mode == "actor_revoke" {
+				// The query was sent before the final body writer observed cancellation or caller revocation.
 				require.Equal(t, http.StatusOK, w.Code)
 				require.Contains(t, w.Body.String(), `"response_type":"agent_query"`)
 				require.NotContains(t, w.Body.String(), "LIVE HTTP SECRET")
@@ -488,7 +488,7 @@ func TestMessagePlainHTTPStreamDoesNotConsultNextcloudMaterialTransitions(t *tes
 				require.Contains(t, w.Body.String(), "LIVE HTTP SECRET")
 				require.Positive(t, w.answerWrites)
 			}
-			if mode == "body_aba" {
+			if mode == "body_aba" || mode == "source_revoke" {
 				require.Contains(t, w.Body.String(), `"response_type":"complete"`)
 				require.Positive(t, w.completionWrites)
 			} else {
@@ -500,7 +500,7 @@ func TestMessagePlainHTTPStreamDoesNotConsultNextcloudMaterialTransitions(t *tes
 	}
 }
 
-func TestMessagePlainHTTPStreamStopsAfterNextcloudSourceRevoke(t *testing.T) {
+func TestMessagePlainHTTPStreamCompletesAfterNextcloudSourceRevoke(t *testing.T) {
 	f := newActualHTTPTailFixture(t, true)
 	observed := false
 	w, model, _ := serveActualHTTPTail(t, f, nil, func() {
@@ -515,8 +515,8 @@ func TestMessagePlainHTTPStreamStopsAfterNextcloudSourceRevoke(t *testing.T) {
 		"LIVE HTTP SECRET",
 		"a later revocation cannot retract an already authorized write",
 	)
-	require.NotContains(t, w.Body.String(), `"response_type":"complete"`)
+	require.Contains(t, w.Body.String(), `"response_type":"complete"`)
 	require.Positive(t, w.answerWrites)
-	require.Zero(t, w.completionWrites)
+	require.Positive(t, w.completionWrites)
 	assertActualHTTPTailLeases(t, f.db, false, "")
 }

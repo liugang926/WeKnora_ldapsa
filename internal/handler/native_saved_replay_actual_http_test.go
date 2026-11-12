@@ -329,7 +329,7 @@ func TestNativeSavedReplayActualPlainRedisReconnectAndLegacyReject(t *testing.T)
 	}
 	require.NoError(t, db.Create(legacy).Error)
 	w, streams = serveNativeSavedReplay(ctx, t, db, messages, legacy, nil, false)
-	require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
+	require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), "SECRET")
 	require.Zero(t, streams.reads)
 }
@@ -392,7 +392,7 @@ func TestNativeSavedReplayActualFinalWriterRejectsBodyABAAndCurrentActor(t *test
 	}
 }
 
-func TestNativeSavedReplayActualSignedSourceAndFinalWriterRevoke(t *testing.T) {
+func TestNativeSavedReplayActualSignedSourceAndFinalWriterRevocation(t *testing.T) {
 	f := faqAllReadLeaseFixture(t, "personal_revoke_before_write")
 	f.calls.Store(-10000)
 	ctx := context.WithValue(f.ctx, types.UserIDContextKey, "user")
@@ -457,7 +457,10 @@ func TestNativeSavedReplayActualSignedSourceAndFinalWriterRevoke(t *testing.T) {
 				Error,
 		)
 		require.Positive(t, exact)
-		f.calls.Store(2)
+		// The current WeKnora principal must remain active until the actual writer runs.
+		result := f.db.Model(&types.User{}).Where("id = ?", "user").Update("is_active", false)
+		require.NoError(t, result.Error)
+		require.EqualValues(t, 1, result.RowsAffected)
 	}}
 	w, streams = serveNativeSavedReplay(ctx, t, f.db, messages, answer, files, true)
 	require.True(t, observed)

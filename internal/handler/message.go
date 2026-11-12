@@ -10,7 +10,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/storageurl"
@@ -74,6 +76,12 @@ func messageHistoryReadErrorOrNil(err error) error {
 }
 
 func messageHistoryReadError(err error) error {
+	if stderrors.Is(err, access.ErrNextcloudPublicationDenied) {
+		return errors.NewForbiddenError("Saved message access denied")
+	}
+	if stderrors.Is(err, access.ErrNextcloudPublicationUnavailable) {
+		return errors.NewServiceUnavailableError("Cannot verify saved message access")
+	}
 	if stderrors.Is(err, repository.ErrKnowledgeInputChanged) || stderrors.Is(err, types.ErrSourceLineageUnknown) ||
 		stderrors.Is(err, repository.ErrNextcloudContentGCUncovered) ||
 		stderrors.Is(err, gorm.ErrRecordNotFound) {
@@ -292,6 +300,8 @@ func (h *MessageHandler) SearchMessages(c *gin.Context) {
 	logger.Infof(ctx, "Searching messages with params: mode=%s, limit=%d, session_count=%d",
 		params.Mode, params.Limit, len(params.SessionIDs))
 
+	ctx = service.WithMessageMaterialOutputBoundary(ctx)
+	defer service.CloseMessageMaterialOutputBoundary(ctx)
 	result, err := h.MessageService.SearchMessages(ctx, params)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
@@ -299,6 +309,14 @@ func (h *MessageHandler) SearchMessages(c *gin.Context) {
 		return
 	}
 
+	prior := c.Writer
+	c.Writer = &knowledgeCollectionAuthorizationWriter{
+		ResponseWriter: prior,
+		check: func() error {
+			return messageHistoryReadErrorOrNil(service.CheckMessageMaterialOutputBoundary(ctx))
+		},
+	}
+	defer func() { c.Writer = prior }()
 	logger.Infof(ctx, "Message search completed, found %d results", result.Total)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
