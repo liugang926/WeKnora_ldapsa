@@ -494,6 +494,8 @@ const tempDsId = ref('')
 // Schedule presets
 const DAILY_CUSTOM = '__daily_custom__'
 const dailyCustomTime = ref('01:00')
+// Keep the explicit choice: the 24-hour preset and custom 02:00 share a cron.
+const scheduleSelection = ref('0 0 */6 * * *')
 
 function dailyCustomCron(time: string): string {
   const [h, m] = (time || '01:00').split(':').map((x) => parseInt(x, 10) || 0)
@@ -510,9 +512,11 @@ function parseDailyCustomCron(cron: string): string | null {
 }
 
 function onScheduleChange(value: unknown) {
+  if (typeof value !== 'string') return
+  scheduleSelection.value = value
   if (value === DAILY_CUSTOM) {
     form.value.sync_schedule = dailyCustomCron(dailyCustomTime.value)
-  } else if (typeof value === 'string') {
+  } else {
     form.value.sync_schedule = value
   }
 }
@@ -786,7 +790,6 @@ watch(visible, async (v) => {
           : (editConfig.settings || {}),
       },
       sync_schedule: props.dataSource.sync_schedule,
-    ...(props.dataSource.sync_schedule ? (() => { const t = parseDailyCustomCron(props.dataSource.sync_schedule); if (t) dailyCustomTime.value = t; return {}; })() : {}),
       sync_mode: props.dataSource.sync_mode,
       conflict_strategy: props.dataSource.conflict_strategy,
       sync_deletions: props.dataSource.sync_deletions,
@@ -824,8 +827,14 @@ watch(visible, async (v) => {
       conflict_strategy: 'overwrite',
       sync_deletions: true,
     }
-    dailyCustomTime.value = '01:00'
   }
+  const dailyTime = parseDailyCustomCron(form.value.sync_schedule)
+  dailyCustomTime.value = dailyTime || '01:00'
+  // Stored crons cannot preserve the choice between equivalent daily modes.
+  // Prefer a known preset on reopen; other fixed daily times use the picker.
+  scheduleSelection.value = schedulePresets.value.some(p => p.value === form.value.sync_schedule)
+    ? form.value.sync_schedule
+    : dailyTime ? DAILY_CUSTOM : form.value.sync_schedule
 })
 
 watch(
@@ -1864,13 +1873,13 @@ const drawerConfirmText = computed(() => {
       <section class="setting-drawer__section">
         <h4 class="setting-drawer__section-title">{{ t('datasource.syncScheduleLabel') }}</h4>
         <t-select
-          :value="parseDailyCustomCron(form.sync_schedule) ? DAILY_CUSTOM : form.sync_schedule"
+          :value="scheduleSelection"
           @change="onScheduleChange"
         >
           <t-option v-for="p in schedulePresets" :key="p.value" :value="p.value" :label="p.label" />
         </t-select>
         <t-time-picker
-          v-if="form.sync_schedule === dailyCustomCron(dailyCustomTime) || parseDailyCustomCron(form.sync_schedule)"
+          v-if="scheduleSelection === DAILY_CUSTOM"
           :value="dailyCustomTime"
           :label="t('datasource.scheduleDailyTime')"
           format="HH:mm"
