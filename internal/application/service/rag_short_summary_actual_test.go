@@ -138,7 +138,7 @@ func runRAGPhysicalActualShortSummary(t *testing.T, pg bool) {
 			require.NotNil(t, summaryResult)
 			switch mode {
 			case "source-revoked":
-				m.personal.Store(false)
+				retireRAGFixtureSource(t, m, k)
 			case "missing-summary-proof":
 				summaryResult.SourceLineage = types.UnknownSourceLineage()
 			case "changed-stored-parent":
@@ -158,7 +158,9 @@ func runRAGPhysicalActualShortSummary(t *testing.T, pg bool) {
 			}
 			cm.SearchResult = rows
 			require.Nil(t, manager.Trigger(ctx, types.CHUNK_MERGE, cm))
-			err = chatpipeline.CheckSourceLineageInputs(ctx, cm)
+			// The model stream checks the actual accumulated receipt after merge.
+			turn := types.RAGSourceLineageFromContext(ctx)
+			err = turn.Check(ctx)
 			if mode != "short-summary" && mode != "text-neighbors" {
 				require.Error(
 					t,
@@ -196,7 +198,9 @@ func runRAGPhysicalActualShortSummary(t *testing.T, pg bool) {
 			releaseModel()
 			require.NoError(t, CheckMessageMaterialOutputBoundary(attach(ctx)))
 			m.personal.Store(false)
-			require.Error(t, types.RAGSourceLineageFromContext(ctx).Check(ctx))
+			require.NoError(t, turn.Check(ctx), "external read ACL does not withdraw an admitted source")
+			retireRAGFixtureSource(t, m, k)
+			require.Error(t, checkpoint(), "the final sender must reject a retired material epoch")
 		})
 	}
 }
