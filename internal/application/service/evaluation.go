@@ -457,7 +457,12 @@ func validateEvaluationModelSelection(datasetID, chatModelID, rerankModelID, emb
 // The reference-KB branch selects an embedding model identifier; it does not copy
 // the reference KB's name, prompts, templates, passages or processing settings.
 // Keep this boundary local so unrelated callers still need their own proof.
-func (e *EvaluationService) createEvaluationKnowledgeBase(ctx context.Context, embeddingModelID, chatModelID string) (*types.KnowledgeBase, error) {
+func (e *EvaluationService) createEvaluationKnowledgeBase(
+	ctx context.Context,
+	embeddingModelID,
+	chatModelID string) (*types.KnowledgeBase,
+	error,
+) {
 	kb := evaluationKnowledgeBase(embeddingModelID, chatModelID)
 	lineage, err := types.NewCompleteSourceLineage()
 	if err != nil {
@@ -488,7 +493,12 @@ func evaluationKnowledgeBase(embeddingModelID, chatModelID string) *types.Knowle
 // bounded dataset path and validates all Parquet relationships. A replacement
 // provider may read protected business data and must not inherit this receipt.
 // Keep this context scoped to the exact corpus import; it is not a QA bypass.
-func (e *EvaluationService) loadEvaluationDatasetInput(ctx context.Context, id string) (*types.EvaluationDataset, context.Context, error) {
+func (e *EvaluationService) loadEvaluationDatasetInput(
+	ctx context.Context,
+	id string) (*types.EvaluationDataset,
+	context.Context,
+	error,
+) {
 	loader, ok := e.dataset.(*DatasetService)
 	if !ok || loader == nil {
 		return nil, ctx, types.ErrSourceLineageUnknown
@@ -579,11 +589,17 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 			[]string{knowledge.ID}); err != nil {
 			logger.Errorf(ctx, "Failed to delete knowledge: %v, knowledge ID: %s", err, knowledge.ID)
 		}
-
 	}()
 
 	// Synchronous import waits for indexing, not asynchronous enrichment/finalization.
-	if err := waitForEvaluationKnowledge(ctx, e.knowledgeService.GetRepository(), detail.Task.TenantID, knowledgeBaseID, knowledge.ID, 5*time.Minute, time.Second); err != nil {
+	if err := waitForEvaluationKnowledge(
+		ctx,
+		e.knowledgeService.GetRepository(),
+		detail.Task.TenantID,
+		knowledgeBaseID,
+		knowledge.ID,
+		5*time.Minute,
+		time.Second); err != nil {
 		return err
 	}
 

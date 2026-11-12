@@ -77,7 +77,9 @@ func TestDingTalkMigrationUpDownUpIsRepeatable(t *testing.T) {
 	require.Equal(t, "changed=enabled", detail)
 	var idxCount int64
 	require.NoError(t, db.Raw(
-		"SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND tbl_name='dingtalk_auth_events' AND name LIKE 'idx_%'").
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='index' "+
+			"AND tbl_name='dingtalk_auth_events' AND name LIKE "+
+			"'idx_%'").
 		Scan(&idxCount).Error)
 	require.EqualValues(t, 2, idxCount, "both audit indexes must survive the rebuild")
 
@@ -504,7 +506,7 @@ func TestDingTalkFileModeLoginBehaviourUnchanged(t *testing.T) {
 	env.cfg.Enable = false
 	defer func() { env.cfg.Enable = true }()
 	_, err = env.svc.LoginWithDingTalkCode(ctx, "auth-code-1")
-	requireRejection(t, err, types.DingTalkRejectDisabled)
+	_ = requireRejection(t, err, types.DingTalkRejectDisabled)
 }
 
 // TestDingTalkAdoptEnvConfigIntoSettings covers the one-click migration from

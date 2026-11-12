@@ -374,7 +374,11 @@ func (s *groupAccessService) EffectivePermission(
 					return types.EffectiveResourcePermission{}, err
 				}
 				if managed {
-					return types.EffectiveResourcePermission{Action: action, Reason: "nextcloud_directory_disabled"}, nil
+					return types.EffectiveResourcePermission{
+							Action: action,
+							Reason: "nextcloud_directory_disabled",
+						},
+						nil
 				}
 			}
 		}
@@ -382,7 +386,13 @@ func (s *groupAccessService) EffectivePermission(
 			return types.EffectiveResourcePermission{Action: action, Reason: "im_channel_scope_denied"}, err
 		}
 		// Source publication/lineage checks remain in their existing services.
-		return types.EffectiveResourcePermission{Allowed: true, Action: action, Mode: types.ResourceAccessRestricted, Reason: "im_channel_authorization"}, nil
+		return types.EffectiveResourcePermission{
+				Allowed: true,
+				Action:  action,
+				Mode:    types.ResourceAccessRestricted,
+				Reason:  "im_channel_authorization",
+			},
+			nil
 	}
 	if s.directoryModuleDisabled(ctx) {
 		if checker, ok := s.nextcloudScopes.(interface {

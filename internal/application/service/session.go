@@ -227,7 +227,11 @@ func (s *sessionService) CreateSession(ctx context.Context, session *types.Sessi
 		if session.TenantID != scope.TenantID {
 			return nil, ErrResourceAccessDenied
 		}
-		if err := scope.Check(ctx, scope.TenantID, types.GroupResourceTypeAgent, scope.AgentID, types.ResourceActionUse); err != nil {
+		if err := scope.Check(ctx,
+			scope.TenantID,
+			types.GroupResourceTypeAgent,
+			scope.AgentID,
+			types.ResourceActionUse); err != nil {
 			return nil, err
 		}
 		session.UserID = types.SessionOwnerIDFromContext(ctx)

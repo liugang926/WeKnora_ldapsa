@@ -63,7 +63,23 @@ func TestWikiPageRetryU4(t *testing.T) {
 				pages.cancel = cancel
 			}
 			s := &wikiIngestService{wikiService: pages}
-			changed, _, _, err := s.reduceSlugUpdates(ctx, nil, "kb", "summary/page", []SlugUpdate{{Type: "summary", DocTitle: "doc", SummaryBody: "body"}}, 1, nil, nil)
+			changed,
+				_,
+				_,
+				err := s.reduceSlugUpdates(ctx,
+				nil,
+				"kb",
+				"summary/page",
+				[]SlugUpdate{
+					{
+						Type:        "summary",
+						DocTitle:    "doc",
+						SummaryBody: "body",
+					},
+				},
+				1,
+				nil,
+				nil)
 			require.Equal(t, tc.want, pages.writes)
 			require.Equal(t, tc.want, pages.reads)
 			require.Equal(t, tc.success, changed)
@@ -83,7 +99,21 @@ func TestWikiPageRetryU4(t *testing.T) {
 		cancel()
 		pages := &pageRetryU4Service{}
 		s := &wikiIngestService{wikiService: pages}
-		_, _, _, err := s.reduceSlugUpdates(ctx, nil, "kb", "summary/page", []SlugUpdate{{Type: "summary"}}, 1, nil, nil)
+		_,
+			_,
+			_,
+			err := s.reduceSlugUpdates(ctx,
+			nil,
+			"kb",
+			"summary/page",
+			[]SlugUpdate{
+				{
+					Type: "summary",
+				},
+			},
+			1,
+			nil,
+			nil)
 		require.ErrorIs(t, err, context.Canceled)
 		require.Zero(t, pages.reads)
 	})

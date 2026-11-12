@@ -253,7 +253,7 @@ func (s *userService) invalidateDingTalkConfigCache() {
 
 // dingTalkEnabledConfig gates every DingTalk entry point on the module
 // switch. A disabled module is a 403-class rejection, not a 503.
-func (s *userService) dingTalkEnabledConfig(ctx context.Context) (*config.DingTalkAuthConfig, error) {
+func (s *userService) dingTalkEnabledConfig(_ context.Context) (*config.DingTalkAuthConfig, error) {
 	cfg, err := s.dingTalkEffectiveConfig(context.Background())
 	if err != nil {
 		return nil, err
@@ -740,13 +740,21 @@ func (s *userService) LoginWithDingTalkCode(
 	userAccessToken, err := client.ExchangeUserAccessToken(ctx, code)
 	if err != nil {
 		return nil, s.rejectDingTalkLogin(ctx, types.DingTalkRejectUnavailable, types.DingTalkAuthEvent{
-			CorpID: cfg.CorpID, Reason: types.DingTalkRejectUnavailable, Detail: truncateDingTalkDetail(fmt.Sprintf("exchange user access token failed: %v", err)),
+			CorpID: cfg.CorpID,
+			Reason: types.DingTalkRejectUnavailable,
+			Detail: truncateDingTalkDetail(fmt.Sprintf(
+				"exchange user access token failed: %v",
+				err)),
 		})
 	}
 	unionID, corpID, nick, err := client.GetUserContactMe(ctx, userAccessToken)
 	if err != nil {
 		return nil, s.rejectDingTalkLogin(ctx, types.DingTalkRejectUnavailable, types.DingTalkAuthEvent{
-			CorpID: cfg.CorpID, Reason: types.DingTalkRejectUnavailable, Detail: truncateDingTalkDetail(fmt.Sprintf("load contact profile failed: %v", err)),
+			CorpID: cfg.CorpID,
+			Reason: types.DingTalkRejectUnavailable,
+			Detail: truncateDingTalkDetail(fmt.Sprintf(
+				"load contact profile failed: %v",
+				err)),
 		})
 	}
 	// AC-03 enterprise lock: a token that carries a corp id must carry OURS.
@@ -773,7 +781,11 @@ func (s *userService) LoginWithDingTalkCode(
 			reason = types.DingTalkRejectNotEnterpriseMember
 		}
 		return nil, s.rejectDingTalkLogin(ctx, reason, types.DingTalkAuthEvent{
-			CorpID: cfg.CorpID, Reason: reason, Detail: truncateDingTalkDetail(fmt.Sprintf("resolve userid by unionId failed: %v", err)),
+			CorpID: cfg.CorpID,
+			Reason: reason,
+			Detail: truncateDingTalkDetail(fmt.Sprintf(
+				"resolve userid by unionId failed: %v",
+				err)),
 		})
 	}
 
@@ -968,11 +980,14 @@ func (s *userService) resolveDingTalkLogin(
 				user = provisionedUser
 				provisionedViaDingTalk = true
 			case errors.Is(perr, ErrDirectoryIdentityLinkRequired):
-				return nil, s.rejectDingTalkLogin(ctx, types.DingTalkRejectIdentityLinkRequired, types.DingTalkAuthEvent{
-					CorpID: cfg.CorpID, DingTalkUserID: dingTalkUserID, JobNumber: jobNumber,
-					Reason: types.DingTalkRejectIdentityLinkRequired,
-					Detail: "local account name collision; administrator must link",
-				})
+				return nil,
+					s.rejectDingTalkLogin(ctx,
+						types.DingTalkRejectIdentityLinkRequired,
+						types.DingTalkAuthEvent{
+							CorpID: cfg.CorpID, DingTalkUserID: dingTalkUserID, JobNumber: jobNumber,
+							Reason: types.DingTalkRejectIdentityLinkRequired,
+							Detail: "local account name collision; administrator must link",
+						})
 			case errors.Is(perr, ErrDirectoryIdentityUnavailable):
 				return nil, s.rejectDingTalkLogin(ctx, types.DingTalkRejectADOrUserDisabled, types.DingTalkAuthEvent{
 					CorpID: cfg.CorpID, DingTalkUserID: dingTalkUserID, JobNumber: jobNumber,

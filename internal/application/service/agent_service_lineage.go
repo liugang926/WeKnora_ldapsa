@@ -20,10 +20,6 @@ import (
 type agentPromptInputGuard struct {
 	mu            sync.Mutex
 	ctx           context.Context
-	knowledge     *knowledgeService
-	store         *repository.KnowledgeInputProvenanceStore
-	checker       knowledgeOutputLineageChecker
-	targets       types.SearchTargets
 	physical      *readlease.NextcloudReadGuard
 	bases         []*repository.KnowledgeBasePromptInputSnapshot
 	documents     []*types.KnowledgeBuildInputSnapshot
@@ -99,96 +95,9 @@ func agentPromptProjectionBody(g *agentPromptInputGuard) (string, error) {
 	return string(body), err
 }
 
-// CheckHeld revalidates private producers without reentering the HTTP owner.
+// CheckHeld preserves the retired Nextcloud input-guard compatibility API.
 func (g *agentPromptInputGuard) CheckHeld() error {
 	return nil // retired with the NextCloud decoupling 2026-11-09
-	if g == nil {
-		return access.ErrNextcloudPublicationUnavailable
-	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.closed || g.ctx == nil || g.ctx.Err() != nil {
-		return access.ErrNextcloudPublicationUnavailable
-	}
-	checkBody := func() error {
-		actual, err := agentPromptProjectionBody(g)
-		if err != nil || actual != g.body {
-			return access.ErrNextcloudPublicationDenied
-		}
-		return nil
-	}
-	if err := checkBody(); err != nil {
-		return err
-	}
-	if g.builtinCheck != nil {
-		if err := g.builtinCheck(g.ctx); err != nil {
-			return err
-		}
-	}
-	if g.physical == nil {
-		return checkBody()
-	}
-	if g.store == nil || g.knowledge == nil || g.checker == nil {
-		return access.ErrNextcloudPublicationUnavailable
-	}
-	if err := g.physical.Verify(); err != nil {
-		return err
-	}
-	if err := g.knowledge.CheckNextcloudReadTargets(g.ctx, g.targets); err != nil {
-		return err
-	}
-	scope := access.LineageReadScope{Targets: g.targets}
-	var proofs []*types.KnowledgeBuildInputProof
-	// Recheck local original bodies after every current remote authorization.
-	// Never acquire a newer original admission to certify retained prompt text.
-	for round := 0; round < 2; round++ {
-		for _, base := range g.bases {
-			metadata := base.Metadata()
-			if err := g.checker.Check(g.ctx, metadata.SourceLineage, scope); err != nil {
-				return err
-			}
-			if err := g.store.RecheckKnowledgeBasePromptInputs(g.ctx, base); err != nil {
-				return err
-			}
-		}
-		proofs = nil
-		for _, document := range g.documents {
-			if document == nil || document.Proof == nil {
-				return types.ErrSourceLineageUnknown
-			}
-			if err := g.checker.Check(g.ctx, document.Proof.SourceLineage, scope); err != nil {
-				return err
-			}
-			proofs = append(proofs, document.Proof)
-		}
-		if len(proofs) > 0 {
-			if err := g.store.RecheckKnowledgeOutputInputs(g.ctx, proofs); err != nil {
-				return err
-			}
-		}
-		if err := g.physical.Verify(); err != nil {
-			return err
-		}
-	}
-	if err := g.knowledge.CheckNextcloudReadTargets(g.ctx, g.targets); err != nil {
-		return err
-	}
-	// The last current-grant call may execute a remote callback. Recheck the
-	// retained local producer versions after it, without another remote pass.
-	for _, base := range g.bases {
-		if err := g.store.RecheckKnowledgeBasePromptInputs(g.ctx, base); err != nil {
-			return err
-		}
-	}
-	if len(proofs) > 0 {
-		if err := g.store.RecheckKnowledgeOutputInputs(g.ctx, proofs); err != nil {
-			return err
-		}
-	}
-	if err := g.physical.Verify(); err != nil {
-		return err
-	}
-	return checkBody()
 }
 
 func (g *agentPromptInputGuard) Close() error {

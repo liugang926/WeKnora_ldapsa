@@ -51,34 +51,78 @@ const (
 		"6. If there is absolutely no recognizable text content in the image, reply ONLY with: No text content.\n" +
 		"</instructions>"
 	vlmOCRVectorSheetPrompt = "<system_prompt>\n" +
-		"You are an OCR assistant for engineering drawing sheets. The input image is one sheet rendered from a vector (CAD-exported) PDF: the text may be drawn as outlines anywhere on the sheet, and the title block is usually a framed table in the lower-right corner of the sheet.\n" +
+		"You are an OCR assistant for engineering drawing " +
+		"sheets. The input image is one sheet rendered from a " +
+		"vector (CAD-exported) PDF: the text may be drawn as " +
+		"outlines anywhere on the sheet, and the title block is " +
+		"usually a framed table in the lower-right corner of the " +
+		"sheet.\n" +
 		"Your task is to extract the text content of the sheet in pure Markdown format.\n" +
 		"</system_prompt>\n\n" +
 		"<instructions>\n" +
-		"1. Start with a '## 图纸信息' section containing one '- <label>: <value>' line for every title-block field you can read (for example: 图纸名称, 图号, 图幅, 比例, 版本/阶段, 材料, 重量, 设计, 审核, 日期, 单位). Copy labels and values exactly as printed on the drawing; omit any field you cannot read clearly. Never invent values.\n" +
-		"2. Follow with a '## 图面文字' section listing every other readable text on the sheet (technical requirements / 技术要求, general notes, annotations, callouts, tables) in a sensible reading order. Use Markdown table syntax for tabular content.\n" +
+		"1. Start with a '## 图纸信息' section containing " +
+		"one '- <label>: <value>' line for every title-block " +
+		"field you can read (for example: 图纸名称, 图号, " +
+		"图幅, 比例, 版本/阶段, 材料, 重量, 设计, " +
+		"审核, 日期, 单位). Copy labels and values exactly " +
+		"as printed on the drawing; omit any field you cannot " +
+		"read clearly. Never invent values.\n" +
+		"2. Follow with a '## 图面文字' section listing " +
+		"every other readable text on the sheet (technical " +
+		"requirements / 技术要求, general notes, " +
+		"annotations, callouts, tables) in a sensible reading " +
+		"order. Use Markdown table syntax for tabular content.\n" +
 		"3. Do not describe or interpret the drawing geometry; extract text only.\n" +
-		"4. Output ONLY the extracted text content in Markdown. Do NOT include any HTML tags, reasoning, or unrelated comments.\n" +
+		"4. Output ONLY the extracted text content in Markdown. " +
+		"Do NOT include any HTML tags, reasoning, or unrelated " +
+		"comments.\n" +
 		"5. If there is absolutely no recognizable text content in the image, reply ONLY with: No text content.\n" +
 		"</instructions>"
 	vlmOCRProductImagePrompt = "<system_prompt>\n" +
-		"You are an OCR assistant for product imagery: catalog pages, sample-book sheets and product photos exported from PDF.\n" +
-		"Your task is to extract the printed text and the key product identification fields in pure Markdown format.\n" +
+		"You are an OCR assistant for product imagery: catalog " +
+		"pages, sample-book sheets and product photos exported " +
+		"from PDF.\n" +
+		"Your task is to extract the printed text and the key " +
+		"product identification fields in pure Markdown format.\n" +
 		"</system_prompt>\n\n" +
 		"<instructions>\n" +
-		"1. Start with a '## 产品信息' section: one '- <label>: <value>' line per product field you can actually read (for example: 产品名称, 型号, 品牌, 系列, 规格, 颜色/材质, 关键参数). Copy labels and values exactly as printed; omit any field you cannot read clearly. Never invent values.\n" +
-		"2. Follow with a '## 页面文字' section with every other readable text on the page (product descriptions, specification tables, notes, contact information) in a sensible reading order. Use Markdown table syntax for tabular content.\n" +
-		"3. Do not describe the visual appearance of the product here; that belongs to the image caption. Extract printed, engraved or watermarked text only.\n" +
-		"4. Output ONLY the extracted text content in Markdown. Do NOT include any HTML tags, reasoning, or unrelated comments.\n" +
+		"1. Start with a '## 产品信息' section: one '- " +
+		"<label>: <value>' line per product field you can " +
+		"actually read (for example: 产品名称, 型号, " +
+		"品牌, 系列, 规格, 颜色/材质, 关键参数). " +
+		"Copy labels and values exactly as printed; omit any " +
+		"field you cannot read clearly. Never invent values.\n" +
+		"2. Follow with a '## 页面文字' section with every " +
+		"other readable text on the page (product descriptions, " +
+		"specification tables, notes, contact information) in a " +
+		"sensible reading order. Use Markdown table syntax for " +
+		"tabular content.\n" +
+		"3. Do not describe the visual appearance of the product " +
+		"here; that belongs to the image caption. Extract " +
+		"printed, engraved or watermarked text only.\n" +
+		"4. Output ONLY the extracted text content in Markdown. " +
+		"Do NOT include any HTML tags, reasoning, or unrelated " +
+		"comments.\n" +
 		"5. If there is absolutely no recognizable text content in the image, reply ONLY with: No text content.\n" +
 		"</instructions>"
 	vlmImageClassifyPrompt = "<system_prompt>\n" +
-		"You are an image classifier for a document processing pipeline. Look at the image and decide which category it belongs to.\n" +
+		"You are an image classifier for a document processing " +
+		"pipeline. Look at the image and decide which category " +
+		"it belongs to.\n" +
 		"</system_prompt>\n\n" +
 		"<categories>\n" +
-		"- drawing_sheet: An engineering drawing / CAD sheet — a technical line drawing with dimension callouts, annotations and usually a title block (图框): mechanical parts, assemblies, electrical schematics, construction plans.\n" +
-		"- product_image: A product photo or a catalog / sample-book page — a physical product (or a layout of product photos) presented with product names, models, brands, prices or specification tables.\n" +
-		"- document: Anything else — text documents, slides, screenshots, charts, diagrams, illustrations, scanned report pages.\n" +
+		"- drawing_sheet: An engineering drawing / CAD sheet — " +
+		"a technical line drawing with dimension callouts, " +
+		"annotations and usually a title block (图框): " +
+		"mechanical parts, assemblies, electrical schematics, " +
+		"construction plans.\n" +
+		"- product_image: A product photo or a catalog / " +
+		"sample-book page — a physical product (or a layout of " +
+		"product photos) presented with product names, models, " +
+		"brands, prices or specification tables.\n" +
+		"- document: Anything else — text documents, slides, " +
+		"screenshots, charts, diagrams, illustrations, scanned " +
+		"report pages.\n" +
 		"</categories>\n\n" +
 		"<instructions>\n" +
 		"1. Judge ONLY by what is visually present in the image; do not guess from quality or style alone.\n" +
@@ -416,20 +460,34 @@ func (s *ImageMultimodalService) Handle(ctx context.Context, task *asynq.Task) e
 				return err
 			}
 			if classErr != nil {
-				logger.Warnf(ctx, "[ImageMultimodal] Image classification failed for %s: %v", payload.ImageURL, classErr)
+				logger.Warnf(ctx,
+					"[ImageMultimodal] Image classification failed for %s: %v",
+					payload.ImageURL,
+					classErr)
 				imgOut["image_class"] = "unavailable"
 				imgOut["image_class_error"] = classErr.Error()
 			} else {
 				class := parseImageClass(classReply)
 				imgOut["image_class"] = class
-				if class == imageClassDrawingSheet || class == imageClassProduct {
+				switch class {
+				case imageClassDrawingSheet, imageClassProduct:
 					prompt = ocrPromptForClass(class, payload.ImageSourceType)
 					imgOut["ocr_prompt"] = class
-					logger.Infof(ctx, "[ImageMultimodal] Classified %s as %s; using dedicated OCR prompt", payload.ImageURL, class)
-				} else if class == imageClassDocument {
-					logger.Infof(ctx, "[ImageMultimodal] Classified %s as plain document; keeping %s prompt", payload.ImageURL, promptLabel)
-				} else {
-					logger.Warnf(ctx, "[ImageMultimodal] Unrecognized classification reply for %s: %q", payload.ImageURL, previewText(classReply, 80))
+					logger.Infof(ctx,
+						"[ImageMultimodal] Classified %s as %s; using dedicated OCR prompt",
+						payload.ImageURL,
+						class)
+				case imageClassDocument:
+					logger.Infof(ctx,
+						"[ImageMultimodal] Classified %s as plain document; keeping %s prompt",
+						payload.ImageURL,
+						promptLabel)
+				default:
+					logger.Warnf(ctx,
+						"[ImageMultimodal] Unrecognized classification reply for %s: %q",
+						payload.ImageURL,
+						previewText(classReply,
+							80))
 				}
 			}
 		}

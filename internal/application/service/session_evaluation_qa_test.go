@@ -11,13 +11,35 @@ import (
 )
 
 func TestEvaluationQATargetTenantActualPipeline(t *testing.T) {
-	for _, mode := range []string{"allowed", "missing-actor", "foreign-tenant", "extra-target", "image", "inactive-actor", "missing-kb"} {
+	for _, mode := range []string{
+		"allowed",
+		"missing-actor",
+		"foreign-tenant",
+		"extra-target",
+		"image",
+		"inactive-actor",
+		"missing-kb",
+	} {
 		t.Run(mode, func(t *testing.T) {
 			model := &ragEntryModel{}
 			f := NewNormalReferencesHTTPFixtureForTest(t, false, model)
 			svc := f.Sessions.(normalReferencesSessionForTest).SessionService.(*sessionService)
-			ConfigureGroupAccessUserEligibility(svc.groupAccess, &userService{userRepo: repository.NewUserRepository(f.DB)})
-			chatpipeline.NewPluginSearch(svc.eventManager, f.KBs, svc.knowledgeService, svc.chunkService, f.Config, nil, svc.tenantService, nil, nil, nil)
+			ConfigureGroupAccessUserEligibility(
+				svc.groupAccess,
+				&userService{
+					userRepo: repository.NewUserRepository(f.DB),
+				})
+			chatpipeline.NewPluginSearch(
+				svc.eventManager,
+				f.KBs,
+				svc.knowledgeService,
+				svc.chunkService,
+				f.Config,
+				nil,
+				svc.tenantService,
+				nil,
+				nil,
+				nil)
 			chatpipeline.NewPluginChatCompletion(svc.eventManager, f.Models)
 			ctx := f.Ctx
 			cm := &types.ChatManage{}
@@ -25,7 +47,13 @@ func TestEvaluationQATargetTenantActualPipeline(t *testing.T) {
 			cm.RewriteQuery = cm.Query
 			cm.ChatModelID = "normal-reference-model"
 			cm.KnowledgeBaseIDs = []string{"kb"}
-			cm.SearchTargets = types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}}
+			cm.SearchTargets = types.SearchTargets{
+				{
+					Type:            types.SearchTargetTypeKnowledgeBase,
+					TenantID:        7,
+					KnowledgeBaseID: "kb",
+				},
+			}
 			cm.EmbeddingTopK = 2
 			cm.RerankTopK = 2
 			cm.SummaryConfig.ContextTemplate = "{{query}}\n{{contexts}}"
@@ -36,11 +64,21 @@ func TestEvaluationQATargetTenantActualPipeline(t *testing.T) {
 				ctx = context.WithValue(ctx, types.TenantIDContextKey, uint64(8))
 				cm.SearchTargets[0].TenantID = 8
 			case "extra-target":
-				cm.SearchTargets = append(cm.SearchTargets, &types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "other"})
+				cm.SearchTargets = append(
+					cm.SearchTargets,
+					&types.SearchTarget{
+						Type:            types.SearchTargetTypeKnowledgeBase,
+						TenantID:        7,
+						KnowledgeBaseID: "other",
+					})
 			case "image":
 				cm.Images = []string{"resource://image"}
 			case "inactive-actor":
-				require.NoError(t, f.DB.Model(&types.User{}).Where("id=?", types.CallerFromContext(ctx).UserID).Update("is_active", false).Error)
+				require.NoError(t,
+					f.DB.Model(&types.User{}).Where("id=?",
+						types.CallerFromContext(ctx).UserID).Update(
+						"is_active",
+						false).Error)
 			case "missing-kb":
 				cm.SearchTargets[0].KnowledgeBaseID = "missing"
 			}

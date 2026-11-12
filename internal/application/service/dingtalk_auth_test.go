@@ -381,14 +381,14 @@ func TestDingTalkLoginRejections(t *testing.T) {
 		defer func() { env.client.details["dt-user-1"] = original }()
 
 		_, err := env.svc.LoginWithDingTalkCode(ctx, "auth-code-1")
-		requireRejection(t, err, types.DingTalkRejectEmptyJobNumber)
+		_ = requireRejection(t, err, types.DingTalkRejectEmptyJobNumber)
 		require.Empty(t, env.events(types.DingTalkEventBind))
 	})
 
 	t.Run("no ad match creates nothing", func(t *testing.T) {
 		usersBefore := env.userCount(t)
 		_, err := env.svc.LoginWithDingTalkCode(ctx, "auth-code-1")
-		requireRejection(t, err, types.DingTalkRejectNoADMatch)
+		_ = requireRejection(t, err, types.DingTalkRejectNoADMatch)
 		require.Equal(t, usersBefore, env.userCount(t), "no account may be auto-created")
 	})
 
@@ -404,7 +404,7 @@ func TestDingTalkLoginRejections(t *testing.T) {
 
 		env.client.details["dt-user-1"] = fakeDingTalkProfile{JobNumber: "00300", Name: "三", UnionID: "union-1"}
 		_, err := env.svc.LoginWithDingTalkCode(ctx, "auth-code-1")
-		requireRejection(t, err, types.DingTalkRejectDuplicateJobNumber)
+		_ = requireRejection(t, err, types.DingTalkRejectDuplicateJobNumber)
 	})
 
 	t.Run("ad identity disabled", func(t *testing.T) {
@@ -413,7 +413,7 @@ func TestDingTalkLoginRejections(t *testing.T) {
 		env.client.details["dt-user-1"] = fakeDingTalkProfile{JobNumber: "00400", Name: "四", UnionID: "union-1"}
 
 		_, err := env.svc.LoginWithDingTalkCode(ctx, "auth-code-1")
-		requireRejection(t, err, types.DingTalkRejectADOrUserDisabled)
+		_ = requireRejection(t, err, types.DingTalkRejectADOrUserDisabled)
 	})
 
 	t.Run("job number reused by another dingtalk account", func(t *testing.T) {
@@ -423,7 +423,7 @@ func TestDingTalkLoginRejections(t *testing.T) {
 		env.client.details["dt-user-1"] = fakeDingTalkProfile{JobNumber: "00500", Name: "五", UnionID: "union-1"}
 
 		_, err := env.svc.LoginWithDingTalkCode(ctx, "auth-code-1")
-		requireRejection(t, err, types.DingTalkRejectBindingConflict)
+		_ = requireRejection(t, err, types.DingTalkRejectBindingConflict)
 		// The original binding is untouched.
 		binding := env.activeBinding(t, "dt-holder")
 		require.Equal(t, user.ID, *binding.UserID)
@@ -434,7 +434,7 @@ func TestDingTalkLoginRejections(t *testing.T) {
 		defer func() { env.client.contactCorpID = dingTalkTestCorpID }()
 
 		_, err := env.svc.LoginWithDingTalkCode(ctx, "auth-code-1")
-		requireRejection(t, err, types.DingTalkRejectWrongCorp)
+		_ = requireRejection(t, err, types.DingTalkRejectWrongCorp)
 	})
 
 	t.Run("not enterprise member", func(t *testing.T) {
@@ -442,7 +442,7 @@ func TestDingTalkLoginRejections(t *testing.T) {
 		defer func() { env.client.userIDByUnionIDErr = nil }()
 
 		_, err := env.svc.LoginWithDingTalkCode(ctx, "auth-code-1")
-		requireRejection(t, err, types.DingTalkRejectNotEnterpriseMember)
+		_ = requireRejection(t, err, types.DingTalkRejectNotEnterpriseMember)
 	})
 
 	t.Run("existing binding linked user disabled", func(t *testing.T) {
@@ -455,7 +455,7 @@ func TestDingTalkLoginRejections(t *testing.T) {
 		env.createBinding(t, "dt-user-1", "00600", user.ID)
 
 		_, err := env.svc.LoginWithDingTalkCode(ctx, "auth-code-1")
-		requireRejection(t, err, types.DingTalkRejectUserInactive)
+		_ = requireRejection(t, err, types.DingTalkRejectUserInactive)
 	})
 
 	t.Run("existing binding directory identity suspended", func(t *testing.T) {
@@ -468,7 +468,7 @@ func TestDingTalkLoginRejections(t *testing.T) {
 		env.createBinding(t, "dt-user-1", "00700", user.ID)
 
 		_, err := env.svc.LoginWithDingTalkCode(ctx, "auth-code-1")
-		requireRejection(t, err, types.DingTalkRejectADOrUserDisabled)
+		_ = requireRejection(t, err, types.DingTalkRejectADOrUserDisabled)
 	})
 
 	t.Run("module disabled", func(t *testing.T) {
@@ -476,7 +476,7 @@ func TestDingTalkLoginRejections(t *testing.T) {
 		defer func() { env.cfg.Enable = true }()
 
 		_, err := env.svc.LoginWithDingTalkCode(ctx, "auth-code-1")
-		requireRejection(t, err, types.DingTalkRejectDisabled)
+		_ = requireRejection(t, err, types.DingTalkRejectDisabled)
 	})
 
 	rejected := env.events(types.DingTalkEventLoginRejected)
@@ -526,7 +526,7 @@ func TestDingTalkLoginConcurrentBindingRaceAllowsExactlyOneWinner(t *testing.T) 
 		case errs[i] == nil && results[i] != nil && results[i].Success:
 			successes++
 		default:
-			requireRejection(t, errs[i], types.DingTalkRejectBindingConflict)
+			_ = requireRejection(t, errs[i], types.DingTalkRejectBindingConflict)
 			conflicts++
 		}
 	}
@@ -558,7 +558,7 @@ func TestDingTalkInAppLogin(t *testing.T) {
 
 	t.Run("not enterprise member", func(t *testing.T) {
 		_, err := env.svc.LoginWithDingTalkAuthCode(ctx, "unknown-code")
-		requireRejection(t, err, types.DingTalkRejectNotEnterpriseMember)
+		_ = requireRejection(t, err, types.DingTalkRejectNotEnterpriseMember)
 	})
 }
 
@@ -633,7 +633,10 @@ func TestDingTalkAuthConfigSurface(t *testing.T) {
 func TestBuildDingTalkAuthorizeURLSignsState(t *testing.T) {
 	env := setupDingTalkService(t)
 
-	resp, err := env.svc.BuildDingTalkAuthorizeURL(context.Background(), "https://app.example.com/api/v1/auth/dingtalk/callback")
+	resp,
+		err := env.svc.BuildDingTalkAuthorizeURL(
+		context.Background(),
+		"https://app.example.com/api/v1/auth/dingtalk/callback")
 	require.NoError(t, err)
 	require.True(t, resp.Success)
 	require.Contains(t, resp.AuthorizationURL, "state="+url.QueryEscape(resp.State))
@@ -653,7 +656,7 @@ func TestDingTalkErrorsNeverLeakSecrets(t *testing.T) {
 	// Every failure path must keep the app secret / codes out of error text.
 	env.client.exchangeErr = fmt.Errorf("secret %s leaked", env.cfg.AppSecret)
 	_, err := env.svc.LoginWithDingTalkCode(ctx, "auth-code-1")
-	requireRejection(t, err, types.DingTalkRejectUnavailable)
+	_ = requireRejection(t, err, types.DingTalkRejectUnavailable)
 	require.NotContains(t, err.Error(), env.cfg.AppSecret)
 	require.NotContains(t, err.Error(), "auth-code-1")
 }

@@ -17,19 +17,34 @@ import (
 
 // PlanDingTalkDocumentRecovery is read-only. The CLI never restores an actor or
 // starts the application container; authority is checked by the actual worker.
-func PlanDingTalkDocumentRecovery(ctx context.Context, db *gorm.DB, tenant uint64, kb, source, id, action string) (*repository.DingTalkRecoveryPlan, error) {
-	return repository.NewKnowledgeInputProvenanceStore(db).PlanDingTalkRecovery(ctx, tenant, kb, source, id, action, recoveryIndexContent)
+func PlanDingTalkDocumentRecovery(ctx context.Context,
+	db *gorm.DB,
+	tenant uint64,
+	kb,
+	source,
+	id,
+	action string) (*repository.DingTalkRecoveryPlan,
+	error,
+) {
+	return repository.NewKnowledgeInputProvenanceStore(
+		db).PlanDingTalkRecovery(ctx,
+		tenant,
+		kb,
+		source,
+		id,
+		action,
+		recoveryIndexContent)
 }
+
 func recoveryIndexContent(k *types.Knowledge, c *types.Chunk) string {
 	return common.CleanInvalidUTF8(buildKnowledgeIndexContent(k, c.EmbeddingContent()))
 }
 
-// DingTalkDocumentRecoveryHandler uses the already configured service. It has
-// no caller-selectable principal and performs no new original admission.
 type recoveryTriggerError struct{ err error }
 
 func (e recoveryTriggerError) Error() string { return e.err.Error() }
 
+// DingTalkDocumentRecoveryHandler uses the configured service without admitting new originals.
 func DingTalkDocumentRecoveryHandler(knowledge interfaces.KnowledgeService) asynq.HandlerFunc {
 	return func(ctx context.Context, t *asynq.Task) error {
 		s, ok := knowledge.(*knowledgeService)
@@ -46,6 +61,7 @@ func DingTalkDocumentRecoveryHandler(knowledge interfaces.KnowledgeService) asyn
 		return nil
 	}
 }
+
 func (s *knowledgeService) processDingTalkDocumentRecovery(ctx context.Context, t *asynq.Task) error {
 	if driver := os.Getenv("RETRIEVE_DRIVER"); driver != "" && driver != "postgres" {
 		return errors.New("recovery requires PostgreSQL retrieval")
@@ -65,7 +81,11 @@ func (s *knowledgeService) processDingTalkDocumentRecovery(ctx context.Context, 
 	if err != nil {
 		return err
 	}
-	if proof.AdmissionID != p.AdmissionID || proof.BuildGeneration != p.BuildGeneration || proof.InputDigest != p.InputDigest || proof.ConfigDigest != p.ConfigDigest {
+	if proof.AdmissionID != p.AdmissionID ||
+		proof.BuildGeneration != p.BuildGeneration ||
+		proof.InputDigest != p.InputDigest ||
+		proof.ConfigDigest != p.ConfigDigest {
+
 		return repository.ErrKnowledgeInputChanged
 	}
 	ctx, err = store.RestoreKnowledgeBuildActor(ctx, proof)
@@ -107,7 +127,14 @@ func (s *knowledgeService) processDingTalkDocumentRecovery(ctx context.Context, 
 	if _, err = s.prepareDingTalkReparseInput(ctx, k, kb, nil); err != nil {
 		return err
 	}
-	fresh, err := store.PlanDingTalkRecovery(ctx, p.TenantID, p.KnowledgeBaseID, p.DataSourceID, p.KnowledgeID, p.Action, recoveryIndexContent)
+	fresh,
+		err := store.PlanDingTalkRecovery(ctx,
+		p.TenantID,
+		p.KnowledgeBaseID,
+		p.DataSourceID,
+		p.KnowledgeID,
+		p.Action,
+		recoveryIndexContent)
 	if err != nil {
 		return err
 	}
@@ -117,7 +144,7 @@ func (s *knowledgeService) processDingTalkDocumentRecovery(ctx context.Context, 
 	switch p.Action {
 	case "resume-wiki":
 		if !kb.IsWikiEnabled() {
-			return errors.New("Wiki is not enabled")
+			return errors.New("wiki is not enabled")
 		}
 		op, err := newWikiIngestPendingOp(withAttempt(ctx, p.Attempt), p.TenantID, p.KnowledgeBaseID, p.KnowledgeID)
 		if err != nil {

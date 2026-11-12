@@ -56,123 +56,23 @@ func NewMessageService(messageRepo interfaces.MessageRepository,
 	}
 }
 
-// CheckMessagePublication is intentionally available through a narrow type
-// assertion to SSE replay. It rechecks authorization as a stream advances,
-// since a file can be withdrawn after the first frame was sent.
+// CheckMessagePublication preserves the retired Nextcloud publication API.
 func (s *messageService) CheckMessagePublication(ctx context.Context, message *types.Message) error {
 	return nil // retired with the NextCloud decoupling 2026-11-09
-	_ = ctx
-
-	if message == nil {
-		return access.ErrNextcloudPublicationUnavailable
-	}
-	if message.Role == "user" {
-		return nil
-	} // Read adapters retain raw user text only.
-	return s.checkTypedSourceLineage(ctx, message)
 }
 
+// CheckLiveMessagePublication preserves the retired Nextcloud publication API.
 func (s *messageService) CheckLiveMessagePublication(ctx context.Context, message *types.Message) error {
 	return nil // retired with the NextCloud decoupling 2026-11-09
-	_ = ctx
-
-	return s.checkTypedSourceLineage(ctx, message)
 }
 
 type liveKnowledgeGrantChecker interface {
 	CheckNextcloudReadTargets(context.Context, types.SearchTargets) error
 }
 
-// A source lease never grants reader access. Check the current KB share and
-// directory group grants on each emitted live batch, including Agent tool
-// results whose references supply only a document ID. The SSE sender calls
-// this before writing the batch and cancels generation on failure.
+// checkLiveKnowledgeGrants preserves the retired Nextcloud read-guard entry point.
 func (s *messageService) checkLiveKnowledgeGrants(ctx context.Context, message *types.Message) error {
 	return nil // retired with the NextCloud decoupling 2026-11-09
-	_ = ctx
-
-	if message == nil {
-		return access.ErrNextcloudPublicationDenied
-	}
-	seen := make(map[string]bool)
-	var kbIDs []string
-	addKB := func(id string) {
-		if id != "" && !seen[id] {
-			seen[id] = true
-			kbIDs = append(kbIDs, id)
-		}
-	}
-	for _, id := range message.ExecutionContext.KnowledgeBaseIDs {
-		addKB(id)
-	}
-	for _, id := range message.ExecutionContext.AgentKnowledgeBaseIDs {
-		addKB(id)
-	}
-	for _, scope := range message.ExecutionContext.TagScopes {
-		addKB(scope.KnowledgeBaseID)
-	}
-	for _, id := range message.ExecutionContext.KnowledgeIDs {
-		if id == "" {
-			continue
-		}
-		if s.knowService == nil {
-			return access.ErrNextcloudPublicationUnavailable
-		}
-		knowledge, err := s.knowService.GetKnowledgeByIDOnly(ctx, id)
-		if err != nil || knowledge == nil || knowledge.ID != id {
-			return access.ErrNextcloudPublicationDenied
-		}
-		addKB(knowledge.KnowledgeBaseID)
-	}
-	for _, ref := range message.KnowledgeReferences {
-		if ref == nil || ref.KnowledgeID == "" {
-			continue
-		}
-		if s.knowService == nil {
-			return access.ErrNextcloudPublicationUnavailable
-		}
-		knowledge, err := s.knowService.GetKnowledgeByIDOnly(ctx, ref.KnowledgeID)
-		if err != nil || knowledge == nil || knowledge.ID != ref.KnowledgeID {
-			return access.ErrNextcloudPublicationDenied
-		}
-		addKB(knowledge.KnowledgeBaseID)
-	}
-	if len(kbIDs) == 0 {
-		return nil
-	}
-	checker, ok := s.knowService.(liveKnowledgeGrantChecker)
-	if !ok {
-		return access.ErrNextcloudPublicationUnavailable
-	}
-	if s.kbService == nil {
-		return access.ErrNextcloudPublicationUnavailable
-	}
-	targets := make(types.SearchTargets, 0, len(kbIDs))
-	for _, id := range kbIDs {
-		kb, err := s.kbService.GetKnowledgeBaseByIDOnly(ctx, id)
-		if err != nil || kb == nil || kb.ID != id || kb.TenantID == 0 {
-			return access.ErrNextcloudPublicationDenied
-		}
-		targets = append(targets, &types.SearchTarget{
-			Type: types.SearchTargetTypeKnowledgeBase, KnowledgeBaseID: id, TenantID: kb.TenantID,
-		})
-	}
-	if err := checker.CheckNextcloudReadTargets(ctx, targets); err != nil {
-		return apperrors.NewProtocolError(fmt.Errorf(
-			"%w: knowledge base read grant changed: %v",
-			access.ErrNextcloudPublicationDenied,
-			err,
-		), fmt.Sprintf("%s: knowledge base read grant changed: %v", apperrors.PublicMessage(
-			access.ErrNextcloudPublicationDenied,
-		), func() any {
-			if err ==
-				nil {
-				return nil
-			}
-			return apperrors.PublicMessage(err)
-		}()))
-	}
-	return nil
 }
 
 func (

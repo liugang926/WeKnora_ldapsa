@@ -214,15 +214,21 @@ func (h *HousekeepingService) runSweep(ctx context.Context) {
 			Where("id IN ? AND parse_status IN ?", hardIDs,
 				[]string{types.ParseStatusPending, types.ParseStatusProcessing, types.ParseStatusFinalizing}).
 			Updates(map[string]interface{}{
-				"parse_status":           types.ParseStatusFailed,
-				"error_message":          "task stuck in processing > " + (2 * threshold).String() + " despite queued retries, recovered by housekeeping",
+				"parse_status": types.ParseStatusFailed,
+				"error_message": "task stuck in processing > " +
+					(2 * threshold).String() +
+					" despite queued retries, recovered by housekeeping",
+
 				"pending_subtasks_count": 0,
 			})
 		if res.Error != nil {
 			logger.Warnf(ctx, "[Housekeeping] hard-grace sweep update failed: %v", res.Error)
 		} else if res.RowsAffected > 0 {
 			logger.Warnf(ctx,
-				"[Housekeeping] failed %d knowledge row(s) stuck beyond %s despite queued retries — inspect queue backoff and gateway health",
+				"[Housekeeping] failed %d knowledge row(s) stuck beyond "+
+					"%s despite queued retries — inspect queue backoff and "+
+					"gateway health",
+
 				res.RowsAffected, 2*threshold)
 		}
 	}
@@ -574,7 +580,10 @@ func (h *HousekeepingService) filterOutQueued(
 		var err error
 		queued, err = scanner.QueuedKnowledgeIDs(ctx)
 		if err != nil {
-			logger.Warnf(ctx, "[Housekeeping] queue snapshot failed: %v (deferring %d candidate(s))", err, len(candidates))
+			logger.Warnf(ctx,
+				"[Housekeeping] queue snapshot failed: %v (deferring %d candidate(s))",
+				err,
+				len(candidates))
 			return candidates[:0], len(candidates)
 		}
 	}

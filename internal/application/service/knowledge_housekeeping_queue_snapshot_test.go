@@ -19,10 +19,12 @@ func (f *sweepSnapshotInspector) QueuedKnowledgeIDs(ctx context.Context) (map[st
 	f.scans++
 	return f.fakeTaskInspector.QueuedKnowledgeIDs(ctx)
 }
+
 func (f *sweepSnapshotInspector) HasQueuedTasksForKnowledge(context.Context, string) (bool, error) {
 	f.probes++
 	panic("housekeeping must not rescan each document")
 }
+
 func TestHousekeeping_SnapshotOncePerSweep(t *testing.T) {
 	db := setupHousekeepingDB(t)
 	inspector := &sweepSnapshotInspector{fakeTaskInspector: fakeTaskInspector{queued: map[string]bool{}}}

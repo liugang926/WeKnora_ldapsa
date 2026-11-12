@@ -19,12 +19,14 @@ import (
 	"github.com/hibiken/asynq"
 )
 
-type dingTalkFilePublicationKey struct{}
-type dingTalkFilePublication struct {
-	store   *repository.KnowledgeInputProvenanceStore
-	rebuild bool
-	result  *repository.DingTalkPublicationResult
-}
+type (
+	dingTalkFilePublicationKey struct{}
+	dingTalkFilePublication    struct {
+		store   *repository.KnowledgeInputProvenanceStore
+		rebuild bool
+		result  *repository.DingTalkPublicationResult
+	}
+)
 
 // A durable backend must support exact task ID lookups. A Lite no-op inspector
 // cannot establish enqueue acceptance or the end of a previous attempt.
@@ -126,8 +128,10 @@ func isSerializationConflict(err error) bool {
 
 func dingTalkSyncFailure(result *types.SyncResult, title, code string, err error) {
 	result.Failed++
-	recordSyncError(result, types.SyncItemError{Title: title, Code: code,
-		Message: "DingTalk synchronization could not complete; retry and check the server log"})
+	recordSyncError(result, types.SyncItemError{
+		Title: title, Code: code,
+		Message: "DingTalk synchronization could not complete; retry and check the server log",
+	})
 	logger.Errorf(context.Background(), "DingTalk sync stage=%s: %v", code, err)
 }
 
@@ -145,7 +149,12 @@ func dingTalkCancelMessage(cause error) string {
 	return "同步已取消：" + cause.Error()
 }
 
-func (s *DataSourceService) processDingTalkSync(ctx context.Context, ds *types.DataSource, kb *types.KnowledgeBase, payload types.DataSourceSyncPayload) (runErr error) {
+func (s *DataSourceService) processDingTalkSync(
+	ctx context.Context,
+	ds *types.DataSource,
+	kb *types.KnowledgeBase,
+	payload types.DataSourceSyncPayload,
+) (runErr error) {
 	if s.sourceInputs == nil {
 		return types.ErrSourceLineageUnknown
 	}
@@ -198,7 +207,12 @@ func (s *DataSourceService) processDingTalkSync(ctx context.Context, ds *types.D
 		}
 		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(claimCtx), 10*time.Second)
 		defer finishCancel()
-		runErr = errors.Join(runErr, s.sourceInputs.FinalizeDingTalkRun(finishCtx, status, result, cursorJSON, finalMessage))
+		runErr = errors.Join(runErr,
+			s.sourceInputs.FinalizeDingTalkRun(finishCtx,
+				status,
+				result,
+				cursorJSON,
+				finalMessage))
 	}()
 
 	knowledge, ok := s.knowledgeService.(*knowledgeService)
@@ -301,7 +315,12 @@ func (s *DataSourceService) processDingTalkSync(ctx context.Context, ds *types.D
 		if failure := item.Metadata["error"]; failure != "" {
 			dingTalkSyncFailure(result, item.Title, "dingtalk_document_fetch_failed", errors.New(failure))
 			importDone++
-			progress.reportImport(result.Total, result.Created, result.Updated, result.Skipped, result.Failed, importDone)
+			progress.reportImport(result.Total,
+				result.Created,
+				result.Updated,
+				result.Skipped,
+				result.Failed,
+				importDone)
 			continue
 		}
 		k, outcome, err := s.ingestDingTalkItem(ctx, ds, item, tagIDs)
@@ -326,14 +345,24 @@ func (s *DataSourceService) processDingTalkSync(ctx context.Context, ds *types.D
 			if !recovered && err != nil {
 				dingTalkSyncFailure(result, item.Title, "dingtalk_import_failed", err)
 				importDone++
-				progress.reportImport(result.Total, result.Created, result.Updated, result.Skipped, result.Failed, importDone)
+				progress.reportImport(result.Total,
+					result.Created,
+					result.Updated,
+					result.Skipped,
+					result.Failed,
+					importDone)
 				continue
 			}
 		}
 		if err != nil {
 			dingTalkSyncFailure(result, item.Title, "dingtalk_import_failed", err)
 			importDone++
-			progress.reportImport(result.Total, result.Created, result.Updated, result.Skipped, result.Failed, importDone)
+			progress.reportImport(result.Total,
+				result.Created,
+				result.Updated,
+				result.Skipped,
+				result.Failed,
+				importDone)
 			continue
 		}
 		selected[item.ExternalID] = k
@@ -392,7 +421,14 @@ func (s *DataSourceService) processDingTalkSync(ctx context.Context, ds *types.D
 	return nil
 }
 
-func (s *DataSourceService) ingestDingTalkItem(ctx context.Context, ds *types.DataSource, item *types.FetchedItem, tags []string) (*types.Knowledge, string, error) {
+func (s *DataSourceService) ingestDingTalkItem(
+	ctx context.Context,
+	ds *types.DataSource,
+	item *types.FetchedItem,
+	tags []string) (*types.Knowledge,
+	string,
+	error,
+) {
 	bound, err := s.sourceInputs.BindDingTalkOriginalArtifact(ctx, item)
 	if err != nil {
 		return nil, "", err
@@ -416,7 +452,17 @@ func (s *DataSourceService) ingestDingTalkItem(ctx context.Context, ds *types.Da
 	if err != nil {
 		return nil, "", err
 	}
-	k, err := s.knowledgeService.CreateKnowledgeFromFile(bound, ds.KnowledgeBaseID, file, metadata, nil, item.FileName, tags, types.ConnectorTypeDingTalk, nil)
+	k,
+		err := s.knowledgeService.CreateKnowledgeFromFile(
+		bound,
+		ds.KnowledgeBaseID,
+		file,
+		metadata,
+		nil,
+		item.FileName,
+		tags,
+		types.ConnectorTypeDingTalk,
+		nil)
 	if err != nil {
 		return k, "", err
 	}
@@ -426,7 +472,12 @@ func (s *DataSourceService) ingestDingTalkItem(ctx context.Context, ds *types.Da
 	return k, publication.result.Outcome, nil
 }
 
-func (s *DataSourceService) consumeDingTalkWork(ctx context.Context, knowledge *knowledgeService, kb *types.KnowledgeBase, selected map[string]*types.Knowledge) error {
+func (s *DataSourceService) consumeDingTalkWork(
+	ctx context.Context,
+	knowledge *knowledgeService,
+	kb *types.KnowledgeBase,
+	selected map[string]*types.Knowledge,
+) error {
 	work, err := s.sourceInputs.ListDingTalkWork(ctx)
 	if err != nil {
 		return err
@@ -478,7 +529,14 @@ func (s *DataSourceService) consumeDingTalkWork(ctx context.Context, knowledge *
 	return failures
 }
 
-func (s *knowledgeService) enqueueDingTalkWork(ctx context.Context, store *repository.KnowledgeInputProvenanceStore, kb *types.KnowledgeBase, k *types.Knowledge, proof *types.KnowledgeBuildInputProof, intent repository.DingTalkWorkIntent) error {
+func (s *knowledgeService) enqueueDingTalkWork(
+	ctx context.Context,
+	store *repository.KnowledgeInputProvenanceStore,
+	kb *types.KnowledgeBase,
+	k *types.Knowledge,
+	proof *types.KnowledgeBuildInputProof,
+	intent repository.DingTalkWorkIntent,
+) error {
 	inspector, ok := s.taskInspector.(dingTalkQueueInspector)
 	if !ok {
 		return errors.New("durable DingTalk queue inspector unavailable")
@@ -504,10 +562,16 @@ func (s *knowledgeService) enqueueDingTalkWork(ctx context.Context, store *repos
 	if count <= 0 {
 		count = 3
 	}
-	payload := types.DocumentProcessPayload{OriginalInput: proof, TenantID: k.TenantID, KnowledgeID: k.ID,
+	payload := types.DocumentProcessPayload{
+		OriginalInput: proof, TenantID: k.TenantID, KnowledgeID: k.ID,
 		KnowledgeBaseID: k.KnowledgeBaseID, FilePath: k.FilePath, FileName: k.FileName, FileType: k.FileType,
 		EnableMultimodel: eff.EnableMultimodel, EnableQuestionGeneration: eff.QuestionGenerationConfig.Enabled,
-		QuestionCount: count, Language: types.LanguageFromContextOrDefault(ctx), Initiator: types.TaskInitiatorFromContext(ctx)}
+		QuestionCount: count,
+		Language: types.LanguageFromContextOrDefault(
+			ctx),
+		Initiator: types.TaskInitiatorFromContext(
+			ctx),
+	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return err

@@ -389,19 +389,45 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 		if err != nil {
 			return err
 		}
-		if state == "settled" || state == "result_committed" || state == "terminal_failed" || state == "result_skipped" {
+		if state == "settled" ||
+			state == "result_committed" ||
+			state == "terminal_failed" ||
+			state == "result_skipped" {
+
 			mainFinalizeRegistered = true
 			var outcomeErr error
 			if state == "result_skipped" {
-				if parent := s.tracker().LookupStage(ctx, p.KnowledgeID, p.Attempt, types.StagePostProcess); parent != nil {
-					span := s.tracker().BeginSubSpan(ctx, parent, fmt.Sprintf("postprocess.graph.chunk[%d]", p.ChunkIndex), types.SpanKindSubSpan, types.JSONMap{"chunk_id": p.ChunkID, "chunk_index": p.ChunkIndex, "model_id": p.ModelID})
+				if parent := s.tracker().LookupStage(
+					ctx,
+					p.KnowledgeID,
+					p.Attempt,
+					types.StagePostProcess); parent != nil {
+
+					span := s.tracker().BeginSubSpan(
+						ctx,
+						parent,
+						fmt.Sprintf("postprocess.graph.chunk[%d]",
+							p.ChunkIndex),
+						types.SpanKindSubSpan,
+						types.JSONMap{
+							"chunk_id":    p.ChunkID,
+							"chunk_index": p.ChunkIndex,
+							"model_id":    p.ModelID,
+						})
 					s.tracker().SkipSpan(ctx, span, skipReason)
 				}
 			}
 			if state == "terminal_failed" {
 				outcomeErr = errors.New("DingTalk graph task terminal failure (durable evidence retained)")
 			}
-			err := finalizeSubtaskDetached(ctx, s.knowledgeRepo, p.KnowledgeID, "dingtalk_graph_settlement", outcomeErr, false, true)
+			err := finalizeSubtaskDetached(
+				ctx,
+				s.knowledgeRepo,
+				p.KnowledgeID,
+				"dingtalk_graph_settlement",
+				outcomeErr,
+				false,
+				true)
 			if err != nil {
 				return err
 			}
@@ -627,7 +653,12 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 			return err
 		}
 		extractor := chatpipeline.NewExtractor(chatModel, template)
-		graph, err = extractor.ExtractSourceLineage(ctx, chunk.Content, snapshot.Proof.SourceLineage, templateLineage, check)
+		graph,
+			err = extractor.ExtractSourceLineage(ctx,
+			chunk.Content,
+			snapshot.Proof.SourceLineage,
+			templateLineage,
+			check)
 		if err != nil {
 			handleErr = err
 			return err

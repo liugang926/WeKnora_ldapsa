@@ -1542,7 +1542,11 @@ func cloneKnowledgeBaseConfiguration(sourceKB *types.KnowledgeBase) (*types.Know
 
 // GetKnowledgeBaseAuthorizationMetadata is a live, non-content read. Callers
 // must still enforce tenant/share permission and all content/source guards.
-func (s *knowledgeBaseService) GetKnowledgeBaseAuthorizationMetadata(ctx context.Context, id string) (*types.KnowledgeBaseAuthorizationMetadata, error) {
+func (s *knowledgeBaseService) GetKnowledgeBaseAuthorizationMetadata(
+	ctx context.Context,
+	id string) (*types.KnowledgeBaseAuthorizationMetadata,
+	error,
+) {
 	reader, ok := s.repo.(interfaces.KnowledgeBaseAuthorizationReader)
 	if !ok || reader == nil {
 		return nil, errors.New("knowledge base authorization metadata unavailable")

@@ -28,7 +28,12 @@ func (s *knowledgeService) checkRecoveryQueue(ctx context.Context, id string) er
 	}
 	return nil
 }
-func (s *knowledgeService) recoveryEligibility(ctx context.Context, k *types.Knowledge) (*types.KnowledgeRecoveryEligibility, error) {
+
+func (s *knowledgeService) recoveryEligibility(
+	ctx context.Context,
+	k *types.Knowledge) (*types.KnowledgeRecoveryEligibility,
+	error,
+) {
 	if k.Channel != types.ConnectorTypeDingTalk {
 		return &types.KnowledgeRecoveryEligibility{Allowed: true, Action: "reparse"}, nil
 	}
@@ -52,13 +57,18 @@ func (s *knowledgeService) recoveryEligibility(ctx context.Context, k *types.Kno
 }
 
 // The same current editor check is used by eligibility and all reparse callers.
-func (s *knowledgeService) KnowledgeRecoveryEligibility(ctx context.Context, id string) (*types.KnowledgeRecoveryEligibility, error) {
+func (s *knowledgeService) KnowledgeRecoveryEligibility(
+	ctx context.Context,
+	id string) (*types.KnowledgeRecoveryEligibility,
+	error,
+) {
 	k, _, err := loadKnowledgeWrite(ctx, s.repo, s.kbService, id)
 	if err != nil {
 		return nil, err
 	}
 	return s.recoveryEligibility(ctx, k)
 }
+
 func (s *knowledgeService) prepareRecoveryGate(ctx context.Context, k *types.Knowledge) (context.Context, error) {
 	if k.Channel != types.ConnectorTypeDingTalk {
 		return ctx, nil
@@ -73,5 +83,12 @@ func (s *knowledgeService) prepareRecoveryGate(ctx context.Context, k *types.Kno
 	if expected := types.KnowledgeRecoverySnapshot(ctx); expected != "" && expected != r.Snapshot {
 		return ctx, fmt.Errorf("文档状态已变化，请刷新后重试")
 	}
-	return repository.WithDingTalkRecoveryGate(ctx, r.Snapshot, func(checkCtx context.Context) error { return s.checkRecoveryQueue(checkCtx, k.ID) }), nil
+	return repository.WithDingTalkRecoveryGate(
+			ctx,
+			r.Snapshot,
+			func(checkCtx context.Context) error {
+				return s.checkRecoveryQueue(checkCtx,
+					k.ID)
+			}),
+		nil
 }

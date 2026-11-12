@@ -374,7 +374,7 @@ func (c *dingTalkHTTPClient) doJSON(
 			return fmt.Errorf("%w: %s", ErrDingTalkAPITransient, redactDingTalkURL(endpoint))
 		}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// Surface DingTalk's own error dialect (v1.0 {"code","message"} /
 		// oapi {"errcode","errmsg"}) instead of discarding it: a 403
@@ -473,7 +473,7 @@ func (c *dingTalkHTTPClient) VerifyCredentials(ctx context.Context) error {
 			return fmt.Errorf("%w: %s", ErrDingTalkAPITransient, dingTalkCorpTokenEndpoint)
 		}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var body dingTalkCredentialErrorBody
 		if err := json.NewDecoder(io.LimitReader(resp.Body, dingTalkResponseBodyCap)).Decode(&body); err != nil {

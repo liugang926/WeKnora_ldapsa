@@ -22,7 +22,11 @@ type reproUnderstandFailModel struct {
 	streamCalls int
 }
 
-func (m *reproUnderstandFailModel) Chat(context.Context, []chat.Message, *chat.ChatOptions) (*types.ChatResponse, error) {
+func (m *reproUnderstandFailModel) Chat(context.Context,
+	[]chat.Message,
+	*chat.ChatOptions) (*types.ChatResponse,
+	error,
+) {
 	return nil, errors.New("rewrite endpoint 503")
 }
 

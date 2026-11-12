@@ -1190,7 +1190,13 @@ func (s *wikiIngestService) trimPendingList(ctx context.Context, ids []int64) er
 //
 // Counter settlement, completion handoff, receipt and queue acknowledgement are
 // one transaction. A failure keeps the durable operation available for retry.
-func (s *wikiIngestService) finalizeWikiSubtask(ctx context.Context, payload WikiIngestPayload, op WikiPendingOp, terminalError string, failures int) error {
+func (s *wikiIngestService) finalizeWikiSubtask(
+	ctx context.Context,
+	payload WikiIngestPayload,
+	op WikiPendingOp,
+	terminalError string,
+	failures int,
+) error {
 	finalizer, ok := s.knowledgeRepo.(interface {
 		SettleWikiPendingOp(context.Context, int64, string, int, string, int) error
 	})
@@ -1224,7 +1230,10 @@ func (s *wikiIngestService) finalizeWikiSubtask(ctx context.Context, payload Wik
 			return err
 		}
 	}
-	if proof.KnowledgeID != op.KnowledgeID || proof.TenantID != payload.TenantID || proof.KnowledgeBaseID != payload.KnowledgeBaseID {
+	if proof.KnowledgeID != op.KnowledgeID ||
+		proof.TenantID != payload.TenantID ||
+		proof.KnowledgeBaseID != payload.KnowledgeBaseID {
+
 		return types.ErrSourceLineageUnknown
 	}
 	var err error
@@ -1295,7 +1304,13 @@ func (s *wikiIngestService) requeueFailedOps(ctx context.Context, payload WikiIn
 		// for deleted knowledge that has no counter to drain). The
 		// matching +1 was seeded by KnowledgePostProcess.SetFinalizing.
 		if op.Op == WikiOpIngest {
-			if err := s.finalizeWikiSubtask(ctx, payload, op, fmt.Sprintf("exceeded wikiMaxFailRetries=%d (in-batch retries)", wikiMaxFailRetries), count); err != nil {
+			if err := s.finalizeWikiSubtask(
+				ctx,
+				payload,
+				op,
+				fmt.Sprintf("exceeded wikiMaxFailRetries=%d (in-batch retries)",
+					wikiMaxFailRetries),
+				count); err != nil {
 				settleErrs = append(settleErrs, err)
 			}
 			continue

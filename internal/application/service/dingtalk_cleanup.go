@@ -16,8 +16,18 @@ import (
 // does not remove that row or its receipt, and never adjusts storage accounting.
 // Keep chunk metadata until every external deletion succeeds so a retry still
 // knows the complete image and wiki reference set.
-func (s *knowledgeService) cleanupDingTalkRetiredKnowledge(ctx context.Context, store *repository.KnowledgeInputProvenanceStore, intent repository.DingTalkWorkIntent, kb *types.KnowledgeBase, k *types.Knowledge) error {
-	if !k.DeletedAt.Valid || k.Channel != types.ConnectorTypeDingTalk || kb.ID != k.KnowledgeBaseID || kb.TenantID != k.TenantID {
+func (s *knowledgeService) cleanupDingTalkRetiredKnowledge(
+	ctx context.Context,
+	store *repository.KnowledgeInputProvenanceStore,
+	intent repository.DingTalkWorkIntent,
+	kb *types.KnowledgeBase,
+	k *types.Knowledge,
+) error {
+	if !k.DeletedAt.Valid ||
+		k.Channel != types.ConnectorTypeDingTalk ||
+		kb.ID != k.KnowledgeBaseID ||
+		kb.TenantID != k.TenantID {
+
 		return errors.New("DingTalk cleanup target is not an exact retired knowledge")
 	}
 	if err := s.revalidateBackgroundKBAccess(ctx, k.TenantID, k.KnowledgeBaseID, types.ResourceActionEdit); err != nil {
@@ -53,7 +63,13 @@ func (s *knowledgeService) cleanupDingTalkRetiredKnowledge(ctx context.Context, 
 		}
 	}
 	if k.EmbeddingModelID != "" {
-		engine, err := retriever.CreateRetrieveEngineForKB(ctx, s.retrieveEngine, s.ownership, k.TenantID, kb.VectorStoreID)
+		engine,
+			err := retriever.CreateRetrieveEngineForKB(
+			ctx,
+			s.retrieveEngine,
+			s.ownership,
+			k.TenantID,
+			kb.VectorStoreID)
 		if err != nil {
 			return err
 		}
@@ -69,7 +85,14 @@ func (s *knowledgeService) cleanupDingTalkRetiredKnowledge(ctx context.Context, 
 		return err
 	}
 	if s.graphEngine != nil {
-		if err := s.graphEngine.DelGraph(ctx, []types.NameSpace{{KnowledgeBase: k.KnowledgeBaseID, Knowledge: k.ID}}); err != nil {
+		if err := s.graphEngine.DelGraph(
+			ctx,
+			[]types.NameSpace{
+				{
+					KnowledgeBase: k.KnowledgeBaseID,
+					Knowledge:     k.ID,
+				},
+			}); err != nil {
 			return err
 		}
 	} else if kb.IsGraphEnabled() {
@@ -88,7 +111,14 @@ func (s *knowledgeService) cleanupDingTalkRetiredKnowledge(ctx context.Context, 
 			if ref != k.FilePath || !strings.Contains(ref, "/"+k.ID+"/") {
 				return errors.New("DingTalk cleanup requires a registered shared resource")
 			}
-			if err := s.resolveFileServiceForPath(ctx, kb, ref).DeleteFile(ctx, ref); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if err := s.resolveFileServiceForPath(
+				ctx,
+				kb,
+				ref).DeleteFile(ctx,
+				ref); err != nil &&
+				!errors.Is(err,
+					os.ErrNotExist) {
+
 				return err
 			}
 			continue
@@ -106,7 +136,14 @@ func (s *knowledgeService) cleanupDingTalkRetiredKnowledge(ctx context.Context, 
 			if err != nil {
 				return err
 			}
-			fileSvc, _, err = s.storageResolver.ResolveFileService(ctx, tenant, resource.StorageBackendID, resource.Provider, strings.TrimSpace(os.Getenv("LOCAL_STORAGE_BASE_DIR")))
+			fileSvc,
+				_,
+				err = s.storageResolver.ResolveFileService(
+				ctx,
+				tenant,
+				resource.StorageBackendID,
+				resource.Provider,
+				strings.TrimSpace(os.Getenv("LOCAL_STORAGE_BASE_DIR")))
 			if err != nil {
 				return err
 			}
