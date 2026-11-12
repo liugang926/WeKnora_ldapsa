@@ -145,6 +145,20 @@ echo "Building anydoc $anydoc_version archive for $target"
 prepare_patched_anydoc
 if [ "$prepare_only" = true ]; then exit 0; fi
 
+# Rust archives can retain LLVM bitcode (including from the prebuilt standard
+# library) even though cgo links their native machine code. Go rejects those
+# sections as untrusted linker inputs. Remove only the unused bitcode metadata
+# from the final Linux archive; keep Cargo's cached build artifact unchanged.
+case "$target" in
+  *-linux-*)
+    objcopy=${OBJCOPY:-objcopy}
+    if ! command -v "$objcopy" >/dev/null 2>&1; then
+      echo "error: objcopy not found. Install target-compatible binutils to build the Linux anydoc archive." >&2
+      exit 1
+    fi
+    ;;
+esac
+
 # --locked: build exactly the dependency versions in the committed Cargo.lock.
 # That lockfile is what pins the patched pdf-inspector/lopdf, so a silent
 # resolver drift must fail the build rather than ship an unaudited tree.
@@ -152,7 +166,15 @@ cargo build --release --locked --manifest-path "$crate_dir/Cargo.toml" --target 
 
 dest="$crate_dir/lib/$lib_dir"
 mkdir -p "$dest"
-cp "$crate_dir/target/$target/release/$lib_name" "$dest/$lib_name"
+staged_archive=$(mktemp "$dest/.$lib_name.XXXXXX")
+trap 'rm -f "$staged_archive"' EXIT
+cp "$crate_dir/target/$target/release/$lib_name" "$staged_archive"
+case "$target" in
+  *-linux-*) "$objcopy" --remove-section=.llvmbc --remove-section=.llvmcmd "$staged_archive" ;;
+esac
+chmod 0644 "$staged_archive"
+mv "$staged_archive" "$dest/$lib_name"
+trap - EXIT
 
 echo "Wrote $dest/$lib_name"
 echo "Build WeKnora with the archive: go build -tags anydoc ./cmd/server"
