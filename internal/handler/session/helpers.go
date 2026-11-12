@@ -350,13 +350,17 @@ func (h *Handler) setupStopEventHandler(
 	sessionID string,
 	sessionTenantID uint64,
 	assistantMessage *types.Message,
-	cancel context.CancelFunc,
+	cancel context.CancelCauseFunc,
 ) {
 	eventBus.On(event.EventStop, func(ctx context.Context, evt event.Event) error {
 		logger.Infof(ctx, "Received stop event, cancelling async operations for session: %s", sessionID)
-		cancel()
-		if data, ok := evt.Data.(event.StopData); ok &&
-			(data.Reason == "original_material_unavailable" || data.Reason == "source_access_changed") {
+		data, _ := evt.Data.(event.StopData)
+		if data.Reason == "user_requested" {
+			cancel(errGenerationStoppedByUser)
+		} else {
+			cancel(nil)
+		}
+		if data.Reason == "original_material_unavailable" || data.Reason == "source_access_changed" {
 			// Revocation terminates the producer without granting its partial
 			// answer a completed body. Only a user stop preserves completion.
 			return nil

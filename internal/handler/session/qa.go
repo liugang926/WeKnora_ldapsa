@@ -845,7 +845,7 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	}
 
 	eventBus := event.NewEventBus()
-	asyncCtx, cancel := context.WithCancel(logger.CloneContext(baseCtx))
+	asyncCtx, cancelGeneration := context.WithCancelCause(logger.CloneContext(baseCtx))
 	var materialAttach func(context.Context) context.Context
 	var materialCheck func() error
 	var materialClose func()
@@ -869,7 +869,7 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 		materialClose:    materialClose,
 		eventBus:         eventBus,
 		asyncCtx:         asyncCtx,
-		cancel:           cancel,
+		cancel:           func() { cancelGeneration(nil) },
 		assistantMessage: reqCtx.assistantMessage,
 	}
 
@@ -917,7 +917,7 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	)
 
 	// Setup stop event handler
-	h.setupStopEventHandler(eventBus, reqCtx.sessionID, reqCtx.session.TenantID, reqCtx.assistantMessage, cancel)
+	h.setupStopEventHandler(eventBus, reqCtx.sessionID, reqCtx.session.TenantID, reqCtx.assistantMessage, cancelGeneration)
 
 	// Watch for stop events on the generation context, which already survives
 	// client disconnects and the early KnowledgeQA return. Generation
@@ -1700,7 +1700,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 		sseCtx = streamCtx.materialAttach(sseCtx)
 	}
 	if streamCtx.materialCheck != nil {
-		phase := &liveMaterialWritePhase{MaterialCheck: streamCtx.materialCheck}
+		phase := &liveMaterialWritePhase{MaterialCheck: streamCtx.materialCheck, Generation: streamCtx.asyncCtx}
 		sseCtx = context.WithValue(sseCtx, liveMaterialWritePhaseKey{}, phase)
 		prior := reqCtx.c.Writer
 		writer := &nativeSavedReplayWriter{ResponseWriter: prior, ctx: reqCtx.c.Request.Context(), check: func() error {

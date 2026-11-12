@@ -22,6 +22,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,6 +45,7 @@ type normalReferencesActualModel struct {
 	idleRenewals          atomic.Int64
 	idleEmptyPolls        atomic.Int64
 	lateIdleFaultApplied  atomic.Bool
+	leaseFaultApplied     atomic.Bool
 }
 
 func (m *normalReferencesActualModel) GetModelID() string   { return "normal-reference-model" }
@@ -94,11 +96,16 @@ func (m *normalReferencesActualModel) ChatStream(
 		m.f.Revoke()
 	}
 	if m.mode == "lease-after-start" {
-		if err := m.f.DB.Exec(
+		result := m.f.DB.Exec(
 			"UPDATE nextcloud_content_leases SET expires_at_ms=1 WHERE kind='read' AND released_at_ms IS NULL",
-		).Error; err != nil {
-			return nil, err
+		)
+		if !assert.NoError(m.t, result.Error, "the intended lease expiry must execute, not masquerade as refusal") {
+			return nil, result.Error
 		}
+		if !assert.Positive(m.t, result.RowsAffected, "the intended lease expiry must change a held lease") {
+			return nil, fmt.Errorf("no held source lease was expired")
+		}
+		m.leaseFaultApplied.Store(true)
 	}
 	if m.mode == "caller-disconnect" {
 		m.f.Cancel()
@@ -224,7 +231,8 @@ func (m *normalReferencesActualModel) ChatStream(
 
 // Keep the durable contract independent from SSE shape and provider call count.
 // Source-only Nextcloud metadata changes are permitted by the current contract;
-// live actor, original-material, sender and explicit-stop refusals remain incomplete.
+// Live actor, original-material and sender refusals remain incomplete. A user
+// stop intentionally saves the partial assistant as completed without an answer.
 type normalReferencesHTTPExpectation struct {
 	denied     bool
 	completed  int64
@@ -239,9 +247,11 @@ func normalReferencesHTTPExpectationFor(t *testing.T, mode string) normalReferen
 		return normalReferencesHTTPExpectation{completed: 1, modelCalls: 1}
 	case "empty-fixed":
 		return normalReferencesHTTPExpectation{completed: 1}
+	case "producer-stop":
+		return normalReferencesHTTPExpectation{denied: true, completed: 1, modelCalls: 1}
 	case "actor-before-refs", "lease-before-refs", "unknown-prefix", "references-refuse", "empty-fixed-refuse":
 		return normalReferencesHTTPExpectation{denied: true}
-	case "lease-after-start", "thinking-refuse", "producer-stop", "model-error", "eof-no-done",
+	case "lease-after-start", "thinking-refuse", "model-error", "eof-no-done",
 		"late-idle-actor", "late-idle-body-lease":
 		return normalReferencesHTTPExpectation{denied: true, modelCalls: 1}
 	default:
@@ -376,7 +386,7 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	}
 	require.Equal(t, http.StatusOK, response.StatusCode)
 	content := body.String()
-	require.NotContains(t, content, `"source_lineage":`, "internal lineage is not an SSE response field")
+	require.NotContains(t, content, "source_lineage", "internal lineage must not leak anywhere in raw SSE")
 	// Terminal expectations are explicit for every current material/transport
 	// state; model invocation alone cannot establish durable completion.
 	denied := expectation.denied
@@ -438,6 +448,9 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	if strings.Contains(mode, "idle") {
 		require.True(t, model.idleMeasured.Load(), "actual empty Redis reads preceded provider output")
 	}
+	if mode == "lease-after-start" {
+		require.True(t, model.leaseFaultApplied.Load(), "the expected refusal follows a real successful lease expiry")
+	}
 	if mode == "idle-current" || mode == "idle-source-revoke" {
 		require.Positive(t, model.idleHeldBodies.Load())
 		require.GreaterOrEqual(t, model.idleEmptyPolls.Load(), int64(10), "ten genuine empty Redis polls were sampled")
@@ -450,6 +463,8 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	}
 	if mode == "producer-stop" {
 		require.True(t, model.stopped.Load())
+		assert.Contains(t, content, `"response_type":"stop"`, "a successful user stop reaches its SSE caller")
+		assert.NotContains(t, content, `"response_type":"error"`, "a valid user stop is not a generation failure")
 		select {
 		case <-watcherCtx.Done():
 		case <-time.After(5 * time.Second):
