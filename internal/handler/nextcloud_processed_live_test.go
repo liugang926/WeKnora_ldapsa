@@ -195,6 +195,8 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 			nil,
 			repository.NewDirectoryRepository(db),
 			groups,
+			nil, // DingTalk repository is unused by this JWT-only fixture.
+			nil, // DingTalk client is unused by this JWT-only fixture.
 		)
 		user, err := users.GetUserByID(context.Background(), input.UserID)
 		require.NoError(t, err)

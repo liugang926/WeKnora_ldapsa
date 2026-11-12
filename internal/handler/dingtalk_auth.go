@@ -101,7 +101,7 @@ func (h *DingTalkAuthHandler) GetDingTalkConfig(c *gin.Context) {
 	if err != nil {
 		logger.Errorf(c.Request.Context(), "Failed to load DingTalk auth config: %v", err)
 		appErr := apperrors.NewServiceUnavailableError("DingTalk auth config unavailable")
-		c.Error(appErr)
+		_ = c.Error(appErr)
 		return
 	}
 	c.JSON(http.StatusOK, resp)
@@ -119,7 +119,7 @@ func (h *DingTalkAuthHandler) GetDingTalkAuthorizationURL(c *gin.Context) {
 	ctx := c.Request.Context()
 	info, err := h.dingTalkEffectiveInfo(c)
 	if err != nil {
-		c.Error(err)
+		_ = c.Error(err)
 		return
 	}
 	if !info.Enabled {
@@ -130,7 +130,7 @@ func (h *DingTalkAuthHandler) GetDingTalkAuthorizationURL(c *gin.Context) {
 	if err != nil {
 		logger.Errorf(ctx, "Failed to generate DingTalk authorization URL: %v", err)
 		appErr := apperrors.NewForbiddenError("DingTalk authorization unavailable").WithDetails(err.Error())
-		c.Error(appErr)
+		_ = c.Error(appErr)
 		return
 	}
 	setDingTalkStateCookie(c, resp.Nonce)
@@ -238,7 +238,7 @@ func (h *DingTalkAuthHandler) DingTalkInAppLogin(c *gin.Context) {
 	ctx := c.Request.Context()
 	info, err := h.dingTalkEffectiveInfo(c)
 	if err != nil {
-		c.Error(err)
+		_ = c.Error(err)
 		return
 	}
 	if !info.Enabled {
@@ -269,18 +269,18 @@ func (h *DingTalkAuthHandler) DingTalkInAppLogin(c *gin.Context) {
 func writeDingTalkLoginError(c *gin.Context, err error) {
 	rejection, ok := asDingTalkRejection(err)
 	if !ok {
-		c.Error(apperrors.NewServiceUnavailableError(
+		_ = c.Error(apperrors.NewServiceUnavailableError(
 			"DingTalk authentication is temporarily unavailable"))
 		return
 	}
 	switch rejection.Reason {
 	case types.DingTalkRejectUserInactive, types.DingTalkRejectADOrUserDisabled,
 		types.DingTalkRejectDisabled:
-		c.Error(apperrors.NewForbiddenError(rejection.Message))
+		_ = c.Error(apperrors.NewForbiddenError(rejection.Message))
 	case types.DingTalkRejectUnavailable:
-		c.Error(apperrors.NewServiceUnavailableError(rejection.Message))
+		_ = c.Error(apperrors.NewServiceUnavailableError(rejection.Message))
 	default:
-		c.Error(apperrors.NewUnauthorizedError(rejection.Message))
+		_ = c.Error(apperrors.NewUnauthorizedError(rejection.Message))
 	}
 }
 
@@ -352,16 +352,6 @@ func (h *DingTalkAuthHandler) UpdateAdminConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-// TestAdminConnection godoc
-// @Summary      测试钉钉凭据
-// @Description  用表单候选值（未给字段回落当前生效值）调用钉钉 accessToken 接口验证凭据，不落盘
-// @Tags         系统管理
-// @Accept       json
-// @Produce      json
-// @Param        request  body  types.DingTalkAdminConfigUpdate  true  "候选配置"
-// @Success      200      {object}  types.DingTalkTestResult
-// @Failure      400      {object}  errors.AppError  "缺少 corp_id/app_key/secret"
-// @Router       /system/admin/dingtalk/test [post]
 // AdoptAdminConfig godoc
 // @Summary      将环境配置导入为页面管理
 // @Description  把当前 env/YAML 的钉钉配置（含密文密封的 app secret）写入设置行并切换为页面管理，无需重启；DINGTALK_AUTH_CONFIG_SOURCE=file 时拒绝（硬回退开关）
@@ -379,6 +369,16 @@ func (h *DingTalkAuthHandler) AdoptAdminConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// TestAdminConnection godoc
+// @Summary      测试钉钉凭据
+// @Description  用表单候选值（未给字段回落当前生效值）调用钉钉 accessToken 接口验证凭据，不落盘
+// @Tags         系统管理
+// @Accept       json
+// @Produce      json
+// @Param        request  body  types.DingTalkAdminConfigUpdate  true  "候选配置"
+// @Success      200      {object}  types.DingTalkTestResult
+// @Failure      400      {object}  errors.AppError  "缺少 corp_id/app_key/secret"
+// @Router       /system/admin/dingtalk/test [post]
 func (h *DingTalkAuthHandler) TestAdminConnection(c *gin.Context) {
 	var request types.DingTalkAdminConfigUpdate
 	if err := c.ShouldBindJSON(&request); err != nil {

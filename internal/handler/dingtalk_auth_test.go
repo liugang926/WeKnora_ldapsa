@@ -551,7 +551,9 @@ func TestDingTalkAdminConfigEndpoints(t *testing.T) {
 
 	t.Run("put passes the payload through and maps service errors", func(t *testing.T) {
 		stub := &stubDingTalkUserService{
-			update: func(_ context.Context, update *types.DingTalkAdminConfigUpdate) (*types.DingTalkAdminConfig, error) {
+			update: func(
+				_ context.Context, update *types.DingTalkAdminConfigUpdate,
+			) (*types.DingTalkAdminConfig, error) {
 				if update.CorpID != "ding-corp-1" || !update.Enabled || update.AppSecret != "new-secret" {
 					t.Fatalf("update = %+v", update)
 				}
@@ -587,7 +589,9 @@ func TestDingTalkAdminConfigEndpoints(t *testing.T) {
 
 	t.Run("test returns the verdict shape", func(t *testing.T) {
 		stub := &stubDingTalkUserService{
-			test: func(_ context.Context, candidate *types.DingTalkAdminConfigUpdate) (*types.DingTalkTestResult, error) {
+			test: func(
+				_ context.Context, candidate *types.DingTalkAdminConfigUpdate,
+			) (*types.DingTalkTestResult, error) {
 				if candidate.AppSecret != "candidate-secret" {
 					t.Errorf("candidate = %+v", candidate)
 				}
@@ -627,7 +631,9 @@ func TestDingTalkURLUsesEffectiveRedirectURL(t *testing.T) {
 			if callbackURL != "https://registered.example.com/api/v1/auth/dingtalk/callback" {
 				t.Errorf("callbackURL = %q, want the effective redirect_url", callbackURL)
 			}
-			return &types.DingTalkAuthURLResponse{Success: true, AuthorizationURL: "https://login.dingtalk.com/x", State: "s"}, nil
+			return &types.DingTalkAuthURLResponse{
+				Success: true, AuthorizationURL: "https://login.dingtalk.com/x", State: "s",
+			}, nil
 		},
 	}
 	r := newDingTalkTestRouter(newDingTalkTestHandler(true, stub))
