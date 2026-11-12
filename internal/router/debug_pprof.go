@@ -1,3 +1,4 @@
+// Package router wires HTTP routes and background task handlers.
 package router
 
 import (

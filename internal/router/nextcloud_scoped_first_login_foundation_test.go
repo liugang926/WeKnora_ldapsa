@@ -213,7 +213,9 @@ func newScopedFirstLoginFoundation(
 	tokens := repository.NewAuthTokenRepository(db)
 	tenants := service.NewTenantService(repository.NewTenantRepository(db), nil)
 	members := service.NewTenantMemberService(repository.NewTenantMemberRepository(db), nil, usersRepo, tokens)
-	users := service.NewUserService(cfg, usersRepo, tokens, tenants, members, nil, directories, groups)
+	users := service.NewUserService(
+		cfg, usersRepo, tokens, tenants, members, nil, directories, groups, nil, nil,
+	)
 	runtime := service.NewDirectoryRuntimeService(
 		cfg,
 		service.NewDirectoryService(directories),
@@ -587,7 +589,6 @@ func newScopedFirstLoginFoundation(
 		sources,
 		leases,
 	)
-	handler.ConfigureKnowledgeBaseSourceMetadataGuard(kbh, public, pairs)
 	return &scopedFirstLoginFoundation{
 		db:                db,
 		cfg:               cfg,
