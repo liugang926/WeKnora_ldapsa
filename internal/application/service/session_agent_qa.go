@@ -34,7 +34,9 @@ func (s *sessionService) AgentQA(
 ) error {
 	hasRawInputMaterials := hasAgentRawInputMaterials(req)
 	releaseProducer := func() {}
-	if hasRawInputMaterials {
+	steerOwner, _ := ctx.Value(steerCompletionOwnerKey{}).(bool)
+	hasTurnMaterials := hasRawInputMaterials || (steerOwner && req.SteerSink != nil)
+	if hasTurnMaterials {
 		var external bool
 		ctx, releaseProducer, external = retainMessageMaterialProducer(ctx)
 		if !external {
@@ -43,7 +45,7 @@ func (s *sessionService) AgentQA(
 		}
 	}
 	defer releaseProducer()
-	if native, ok := s.lineageVerifier.(*messageService); ok && native.materialStore != nil && hasRawInputMaterials {
+	if native, ok := s.lineageVerifier.(*messageService); ok && native.materialStore != nil && hasTurnMaterials {
 		requestID, err := native.materialStore.MessageRequestControl(ctx, req.Session.ID, req.AssistantMessageID)
 		if err != nil {
 			return err

@@ -852,9 +852,15 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	// KnowledgeQA always retains generic user/history material, even when no
 	// explicit file is attached. Share that owner with the HTTP idle checker;
 	// a producer-only holder cannot notice refusal while its provider is idle.
-	if mode == qaModeNormal || hasExplicitInputMaterials(reqCtx) {
+	// Steer consumption and follow-up share the exact initial message and control
+	// with both the producer and the HTTP sender until their final writes.
+	steerable := mode == qaModeAgent && reqCtx.customAgent != nil
+	if mode == qaModeNormal || steerable || hasExplicitInputMaterials(reqCtx) {
 		native, ok := h.messageService.(interface{ HasOriginalMessageMaterialStore() bool })
 		if ok && native.HasOriginalMessageMaterialStore() {
+			if steerable {
+				asyncCtx = applicationservice.WithSteerCompletionOwner(asyncCtx)
+			}
 			beginMaterial := applicationservice.BeginMessageMaterialHTTPBoundary
 			if mode == qaModeNormal {
 				beginMaterial = applicationservice.BeginKnowledgeQAHTTPBoundary
@@ -884,7 +890,7 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	// SetLiveRun happens before SSE headers: a 409/503 after text/event-stream
 	// has started cannot change the status, and the client would sit on a
 	// stream nobody will write to.
-	if mode == qaModeAgent && reqCtx.customAgent != nil {
+	if steerable {
 		streamCtx.steerSink = newSteerSink(
 			asyncCtx, reqCtx.sessionID, reqCtx.requestID, reqCtx.assistantMessage,
 			h.messageService, h.streamManager,
@@ -918,7 +924,8 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 
 	// Setup stop event handler
 	h.setupStopEventHandler(
-		eventBus, reqCtx.sessionID, reqCtx.session.TenantID, reqCtx.assistantMessage, cancelGeneration,
+		eventBus, reqCtx.sessionID, reqCtx.session.TenantID, reqCtx.assistantMessage,
+		steerable && materialCheck != nil, cancelGeneration,
 	)
 
 	// Watch for stop events on the generation context, which already survives
@@ -1599,9 +1606,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 							injected = streamCtx.steerSink.InjectedIDs()
 						}
 						h.discardSteerBacklog(updateCtx, sessionID, streamCtx.assistantMessage.ID, injected)
-						h.completeStreamAssistantMessage(
-							updateCtx, streamCtx, reqCtx.query, reqCtx.userMessageID,
-						)
+						h.completeCanceledAgentTurn(updateCtx, streamCtx, reqCtx.query, reqCtx.userMessageID)
 					} else {
 						kicked := h.kickNextRunFromSteerBacklog(updateCtx, reqCtx, streamCtx)
 						h.completeStreamAssistantMessage(
@@ -2147,6 +2152,22 @@ func (h *Handler) sessionTenantInfoContext(ctx context.Context) (context.Context
 		return ctx, false
 	}
 	return context.WithValue(ctx, types.TenantInfoContextKey, tenant), true
+}
+
+// A stopped, steerable generation owns its inputs until this final write.
+// Only an explicit user stop can commit its partial assistant.
+func (h *Handler) completeCanceledAgentTurn(ctx context.Context, streamCtx *sseStreamContext, query, userID string) {
+	if streamCtx.steerSink == nil || streamCtx.materialCheck == nil {
+		h.completeStreamAssistantMessage(ctx, streamCtx, query, userID)
+		return
+	}
+	if context.Cause(streamCtx.asyncCtx) != errGenerationStoppedByUser {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	ctx = applicationservice.WithStoppedSteerCompletion(ctx, errGenerationStoppedByUser)
+	_ = h.completeAssistantMessage(ctx, streamCtx.assistantMessage, "", "")
 }
 
 // completeStreamAssistantMessage makes output readable before notifying clients

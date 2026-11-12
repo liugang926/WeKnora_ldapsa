@@ -174,40 +174,44 @@ func (g *MessageMaterialGuard) Recheck() error {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if err := g.ctx.Err(); err != nil {
-		if errors.Is(context.Cause(g.ctx), access.ErrNextcloudPublicationDenied) {
-			return context.Cause(g.ctx)
+	return g.recheckLocked(g.ctx)
+}
+
+func (g *MessageMaterialGuard) recheckLocked(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		if errors.Is(context.Cause(ctx), access.ErrNextcloudPublicationDenied) {
+			return context.Cause(ctx)
 		}
 		return err
 	}
 	for _, lease := range g.leases {
-		if _, err := g.store.ContentLeaseStore().RenewLease(g.ctx, lease.ID, 2*time.Minute); err != nil {
+		if _, err := g.store.ContentLeaseStore().RenewLease(ctx, lease.ID, 2*time.Minute); err != nil {
 			return err
 		}
 	}
 	for _, id := range g.bodyLeases {
-		if err := g.store.RenewMessageBodyReadLease(g.ctx, id, 2*time.Minute); err != nil {
+		if err := g.store.RenewMessageBodyReadLease(ctx, id, 2*time.Minute); err != nil {
 			return err
 		}
 	}
 	// Remote/current actor checks happen outside the body SQL transaction.
 	if len(g.snapshot.Messages) > 0 {
-		if err := g.verifier.CheckMessagePublications(g.ctx, g.snapshot.Messages); err != nil {
+		if err := g.verifier.CheckMessagePublications(ctx, g.snapshot.Messages); err != nil {
 			return err
 		}
 	}
 	if len(g.snapshot.Messages) > 0 {
-		if err := g.store.CheckKnowledgeHistoryOriginalSources(g.ctx, g.snapshot.Messages); err != nil {
+		if err := g.store.CheckKnowledgeHistoryOriginalSources(ctx, g.snapshot.Messages); err != nil {
 			return err
 		}
 	}
-	if err := g.store.RecheckMessageMaterialInputs(g.ctx, g.snapshot); err != nil {
+	if err := g.store.RecheckMessageMaterialInputs(ctx, g.snapshot); err != nil {
 		return err
 	}
 	// A raw-user plan may remain valid after an actual unconsumed generated
 	// field write. Hold every new physical head without recertifying that
 	// field as consumed original material.
-	added, err := g.store.AcquireMessageBodyReadLeases(g.ctx, g.plan, uuid.NewString(), 2*time.Minute, g.bodyLeases)
+	added, err := g.store.AcquireMessageBodyReadLeases(ctx, g.plan, uuid.NewString(), 2*time.Minute, g.bodyLeases)
 	if err != nil {
 		return err
 	}
@@ -215,7 +219,7 @@ func (g *MessageMaterialGuard) Recheck() error {
 	if len(g.snapshot.Messages) == 0 {
 		return nil
 	}
-	return g.verifier.CheckMessagePublications(g.ctx, g.snapshot.Messages)
+	return g.verifier.CheckMessagePublications(ctx, g.snapshot.Messages)
 }
 
 // Close releases the retained original input reads.
