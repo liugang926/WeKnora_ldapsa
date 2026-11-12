@@ -2,7 +2,6 @@ package chatpipeline
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
@@ -93,7 +92,7 @@ func TestBeginSourceLineageUsesWeKnoraACLForOrdinaryRAG(t *testing.T) {
 
 func TestBeginSourceLineageKeepsExplicitInputMaterialsStrict(t *testing.T) {
 	manager := NewEventManager()
-	_, err := manager.BeginSourceLineage(
+	ctx, err := manager.BeginSourceLineage(
 		context.Background(),
 		&types.ChatManage{PipelineRequest: types.PipelineRequest{
 			Images: []string{"resource://image"},
@@ -104,17 +103,15 @@ func TestBeginSourceLineageKeepsExplicitInputMaterialsStrict(t *testing.T) {
 			return nil
 		},
 	)
-	require.Error(t, err)
-	require.True(t,
-		errors.Is(err, types.ErrSourceLineageInvalid) ||
-			errors.Is(err, types.ErrSourceLineageUnknown) ||
-			errors.Is(err, access.ErrNextcloudPublicationDenied),
-	)
+	require.NoError(t, err)
+	// A valid retrieval must not clear the unaccounted image before model input.
+	err = AccountResults(ctx, []*types.SearchResult{validNextcloudResult()})
+	require.ErrorIs(t, err, types.ErrSourceLineageUnknown)
 }
 
 func TestBeginSourceLineageACLFailureStaysFailClosed(t *testing.T) {
 	manager := NewEventManager()
-	_, err := manager.BeginSourceLineage(
+	ctx, err := manager.BeginSourceLineage(
 		context.Background(),
 		&types.ChatManage{},
 		access.LineageReadScope{},
@@ -122,5 +119,7 @@ func TestBeginSourceLineageACLFailureStaysFailClosed(t *testing.T) {
 			return access.ErrNextcloudPublicationDenied
 		},
 	)
+	require.NoError(t, err)
+	err = AccountResults(ctx, []*types.SearchResult{validNextcloudResult()})
 	require.ErrorIs(t, err, access.ErrNextcloudPublicationDenied)
 }
