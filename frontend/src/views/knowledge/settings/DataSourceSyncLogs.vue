@@ -673,19 +673,19 @@ const groupedLogs = computed(() => {
 .tl-progress-bar {
   flex: 1;
   height: 6px;
-  border-radius: 3px;
-  background: var(--td-gray-color-3, #e7e7e7);
+  border-radius: var(--app-radius-pill);
+  background: var(--td-gray-color-3);
   overflow: hidden;
 }
 .tl-progress-fill {
   height: 100%;
-  border-radius: 3px;
-  background: var(--td-brand-color, #0052d9);
+  border-radius: var(--app-radius-pill);
+  background: var(--td-brand-color);
   transition: width 0.4s ease;
 }
 .tl-progress-text {
-  font-size: 12px;
-  color: var(--td-text-color-secondary, #666);
+  font-size: var(--app-text-sm);
+  color: var(--td-text-color-secondary);
   white-space: nowrap;
 }
 </style>
