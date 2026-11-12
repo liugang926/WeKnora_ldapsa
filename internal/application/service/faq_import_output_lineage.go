@@ -121,7 +121,7 @@ func (s *knowledgeService) getAdmittedFAQImportProgress(
 	if !ok || tenant == 0 {
 		return nil, types.ErrSourceLineageUnknown
 	}
-	authorizer := &FAQOutputAuthorizer{s.faqInputs, s.faqLineageChecker}
+	authorizer := NewFAQOutputAuthorizer(s.faqInputs, s.faqLineageChecker)
 	guard, err := authorizer.BeginImportOutput(
 		ctx,
 		types.FAQImportOutputReadRequest{TenantID: tenant, TaskID: taskID, Kind: "progress"},

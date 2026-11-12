@@ -187,12 +187,8 @@ func TestKnowledgeOutputAuxiliaryActualHTTPExplicitMetadata(t *testing.T) {
 				if change == "tag_aba_before_output" || change == "name_aba_before_output" ||
 					change == "relation_aba_before_output" ||
 					change == "wire_alias_before_output" {
-					fired := false
-					groups.hook = func(call int) {
-						if fired || call < 5 {
-							return
-						}
-						fired = true
+					fired := onKnowledgeOutputVersion(t, db, "actual_auxiliary_version_mutation", func(tx *gorm.DB) {
+						db := tx
 						switch change {
 						case "tag_aba_before_output":
 							require.NoError(
@@ -226,7 +222,8 @@ func TestKnowledgeOutputAuxiliaryActualHTTPExplicitMetadata(t *testing.T) {
 						case "wire_alias_before_output":
 							joined.last[0].Tags[0].Name = "unaccounted wire tag"
 						}
-					}
+					})
+					defer func() { require.True(t, *fired) }()
 				}
 				w := serveAuxiliaryMetadataHTTP(h, batch)
 				positive := change == "original_tags" || change == "original_tags_and_kb_name" ||

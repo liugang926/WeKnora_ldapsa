@@ -214,7 +214,7 @@ func TestFAQActualControlledDerivativeHTTPAndTagCountWithdraw(t *testing.T) {
 	w := serveFAQHTTP(ctx, h, http.MethodGet, "/knowledge-bases/faq-derived/faq/entries", "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), "source inherited FAQ answer")
-	require.Positive(t, calls.Load())
+	require.Zero(t, calls.Load(), "original input leases do not require a Nextcloud ACL request")
 	tag := NewTagHandler(nil, repository.NewKnowledgeTagRepository(db), repository.NewChunkRepository(db))
 	ConfigureTagHandlerOutputLineage(tag, service.NewTagOutputAuthorizer(store, guard))
 	w = serveTagHTTP(ctx, tag, http.MethodGet, "/knowledge-bases/faq-derived/tags", "")

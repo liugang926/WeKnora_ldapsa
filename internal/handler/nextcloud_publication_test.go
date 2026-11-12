@@ -104,7 +104,7 @@ func publicationHandlerFixture(t *testing.T, selected bool) (*types.Knowledge, *
 		}
 }
 
-func TestGetKnowledgeFailsClosedForNextcloud(t *testing.T) {
+func TestGetKnowledgeRequiresMaterialVerifierAfterSourceACLRetirement(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		selected  bool
@@ -112,8 +112,8 @@ func TestGetKnowledgeFailsClosedForNextcloud(t *testing.T) {
 		wantHTTP  int
 	}{
 		{"source unavailable", true, stderrors.New("source database unavailable"), http.StatusServiceUnavailable},
-		{"withdrawn binding", false, nil, http.StatusForbidden},
-		{"missing linked identity", true, nil, http.StatusForbidden},
+		{"withdrawn binding", false, nil, http.StatusServiceUnavailable},
+		{"missing linked identity", true, nil, http.StatusServiceUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			knowledge, source := publicationHandlerFixture(t, tc.selected)
@@ -133,7 +133,7 @@ func TestGetKnowledgeFailsClosedForNextcloud(t *testing.T) {
 	}
 }
 
-func TestDirectChunkReadFailsClosedWithoutPublicationVerifier(t *testing.T) {
+func TestDirectChunkReadDeniesMissingKnowledgeOwnership(t *testing.T) {
 	knowledge, _ := publicationHandlerFixture(t, true)
 	h := NewChunkHandler(
 		publicationHandlerChunks{
@@ -141,14 +141,14 @@ func TestDirectChunkReadFailsClosedWithoutPublicationVerifier(t *testing.T) {
 		},
 		publicationHandlerKnowledge{row: knowledge},
 	)
-	// Install the current output boundary so this test reaches the missing
-	// publication dependency. Neither nil authority grants a read.
+	// The chunk lacks tenant and KB ownership; its metadata cannot authorize
+	// publishing its body under the loaded knowledge row.
 	ConfigureChunkHandlerOutputLineage(h, service.NewChunkOutputAuthorizer(nil, nil))
 	r := documentHandlerRouter()
 	r.GET("/chunks/by-id/:id", h.GetChunkByIDOnly)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/chunks/by-id/chunk-1", nil))
-	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	require.Equal(t, http.StatusForbidden, w.Code)
 	require.False(t, strings.Contains(w.Body.String(), "secret chunk text"))
 }
 
@@ -162,7 +162,7 @@ func TestUnrelatedKnowledgeDoesNotNeedNextcloudVerifier(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestBatchDownloadRejectsNextcloudBeforeOpeningAnyFile(t *testing.T) {
+func TestBatchDownloadRequiresReadLeaseBeforeOpeningAnyFile(t *testing.T) {
 	knowledge, source := publicationHandlerFixture(t, true)
 	knowledge.FilePath = "resource://source-file"
 	svc := &downloadKnowledgeStub{items: []*types.Knowledge{knowledge}}
@@ -192,6 +192,6 @@ func TestBatchDownloadRejectsNextcloudBeforeOpeningAnyFile(t *testing.T) {
 		bytes.NewBufferString(`{"ids":["doc-1"]}`))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
-	require.Equal(t, http.StatusForbidden, w.Code)
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
 	require.Empty(t, svc.opened)
 }

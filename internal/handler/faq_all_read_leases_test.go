@@ -296,6 +296,11 @@ func TestFAQAllParentReadLeasesActualHTTPPositiveAndGCBarrier(t *testing.T) {
 	} {
 		t.Run(route, func(t *testing.T) {
 			f := faqAllReadLeaseFixture(t, "allowed")
+			// The real reader owns its transaction. Give the independent GC
+			// contender a second connection instead of waiting for that reader.
+			sqlDB, err := f.db.DB()
+			require.NoError(t, err)
+			sqlDB.SetMaxOpenConns(2)
 			leases := f.store.ContentLeaseStore()
 			old := repository.NextcloudContentScope{
 				TenantID:        7,
@@ -325,14 +330,7 @@ func TestFAQAllParentReadLeasesActualHTTPPositiveAndGCBarrier(t *testing.T) {
 			)
 			observed := false
 			blocked := false
-			f.groups.Hook = func(ctx context.Context) {
-				if blocked {
-					return
-				}
-				_, err := leases.ClaimKnowledgeGC(ctx, old, time.UnixMilli(retired), time.Minute)
-				require.ErrorIs(t, err, repository.ErrNextcloudContentGCBusy)
-				blocked = true
-			}
+
 			require.NoError(
 				t,
 				f.db.Callback().
@@ -363,6 +361,13 @@ func TestFAQAllParentReadLeasesActualHTTPPositiveAndGCBarrier(t *testing.T) {
 						)
 						require.Equal(t, int64(1), count)
 						observed = true
+						if !blocked {
+							_, err := leases.ClaimKnowledgeGC(
+								f.ctx, old, time.UnixMilli(retired), time.Minute,
+							)
+							require.ErrorIs(t, err, repository.ErrNextcloudContentGCBusy)
+							blocked = true
+						}
 					}),
 			)
 			var w *httptest.ResponseRecorder
@@ -435,7 +440,7 @@ func TestFAQAllParentReadLeasesActualHTTPPositiveAndGCBarrier(t *testing.T) {
 					Error,
 			)
 			require.Zero(t, count)
-			_, err := leases.ClaimKnowledgeGC(f.ctx, old, time.UnixMilli(retired), time.Minute)
+			_, err = leases.ClaimKnowledgeGC(f.ctx, old, time.UnixMilli(retired), time.Minute)
 			require.NoError(t, err)
 		})
 	}
@@ -475,7 +480,7 @@ func TestFAQAllParentPlansRequireRealLeasesAndRejectABA(t *testing.T) {
 	require.ErrorIs(t, err, repository.ErrKnowledgeInputChanged)
 }
 
-func TestFAQAllParentHTTPSourcePermissionRevokeWithOpenLeases(t *testing.T) {
+func TestFAQAllParentHTTPReadLeasesIndependentOfRemotePermission(t *testing.T) {
 	for _, route := range []string{
 		"list",
 		"get",
@@ -489,19 +494,12 @@ func TestFAQAllParentHTTPSourcePermissionRevokeWithOpenLeases(t *testing.T) {
 	} {
 		t.Run(route, func(t *testing.T) {
 			f := faqAllReadLeaseFixture(t, "personal_revoke_before_write")
-			observed := false
-			f.groups.Hook = func(_ context.Context) {
-				observed = true
+			observed := onKnowledgeOutputRead(t, f.db, "observe_original_source", func(tx *gorm.DB) {
 				var count int64
-				require.NoError(
-					t,
-					f.db.Table("nextcloud_content_leases").
-						Where("kind='read' AND released_at_ms IS NULL AND knowledge_id='source'").
-						Count(&count).
-						Error,
-				)
-				require.Equal(t, int64(1), count)
-			}
+				require.NoError(t, tx.Table("nextcloud_content_leases").
+					Where("kind='read' AND released_at_ms IS NULL AND knowledge_id='source'").Count(&count).Error)
+				require.EqualValues(t, 1, count)
+			})
 			var w *httptest.ResponseRecorder
 			switch route {
 			case "list":
@@ -560,10 +558,9 @@ func TestFAQAllParentHTTPSourcePermissionRevokeWithOpenLeases(t *testing.T) {
 					"/knowledge-bases/faq-derived/knowledge?page_size=20",
 				)
 			}
-			require.NotEqual(t, http.StatusOK, w.Code, w.Body.String())
-			require.True(t, observed)
-			require.NotContains(t, w.Body.String(), "source inherited FAQ answer")
-			require.NotContains(t, w.Body.String(), f.task)
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			require.True(t, *observed)
+			require.Zero(t, f.calls.Load(), "source ACL is not consulted for an admitted workspace read")
 			var state string
 			require.NoError(
 				t,
@@ -739,25 +736,13 @@ func TestFAQAllParentActualSharedReadSingleConnectionAndShareRevoke(t *testing.T
 
 func TestFAQAllParentHTTPCurrentActorRevokeKeepsSourceFenceOpen(t *testing.T) {
 	f := faqAllReadLeaseFixture(t, "allowed")
-	observed := false
-	f.groups.Hook = func(_ context.Context) {
-		if observed {
-			return
-		}
-		observed = true
-		var active int64
-		require.NoError(
-			t,
-			f.db.Table("nextcloud_content_leases").
-				Where("kind='read' AND released_at_ms IS NULL AND knowledge_id='source'").
-				Count(&active).
-				Error,
-		)
-		require.Equal(t, int64(1), active)
-		require.NoError(t, f.db.Model(&types.User{}).Where("id='user'").Update("is_active", false).Error)
-	}
+	observed := onKnowledgeOutputRead(t, f.db, "disable_faq_reader", func(tx *gorm.DB) {
+		result := tx.Model(&types.User{}).Where("id='user'").Update("is_active", false)
+		require.NoError(t, result.Error)
+		require.EqualValues(t, 1, result.RowsAffected)
+	})
 	w := serveFAQHTTP(f.ctx, f.h, http.MethodGet, "/faq/import/progress/"+f.task, "")
-	require.True(t, observed)
+	require.True(t, *observed)
 	require.NotEqual(t, http.StatusOK, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), "all leased import answer")
 	var state string

@@ -21,7 +21,18 @@ func NewTagOutputAuthorizer(
 	store *repository.KnowledgeInputProvenanceStore,
 	guard *access.NextcloudSourceLineageGuard,
 ) *TagOutputAuthorizer {
-	return &TagOutputAuthorizer{reader: store, checker: guard}
+	return &TagOutputAuthorizer{reader: store, checker: workspaceOutputChecker{guard}}
+}
+
+// CheckWorkspaceRead verifies a direct tag list against the current caller and KB.
+func (a *TagOutputAuthorizer) CheckWorkspaceRead(ctx context.Context, kb string) error {
+	tenant, ok := types.TenantIDFromContext(ctx)
+	if a == nil || a.checker == nil || !ok || tenant == 0 {
+		return access.ErrNextcloudPublicationUnavailable
+	}
+	return a.checker.Check(ctx, nil, access.LineageReadScope{Targets: types.SearchTargets{
+		{Type: types.SearchTargetTypeKnowledgeBase, TenantID: tenant, KnowledgeBaseID: kb},
+	}})
 }
 
 // TagOutputGuard retains and rechecks the tag inputs selected for output.

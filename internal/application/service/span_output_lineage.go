@@ -21,7 +21,7 @@ func NewSpanOutputAuthorizer(
 	store *repository.KnowledgeInputProvenanceStore,
 	guard *access.NextcloudSourceLineageGuard,
 ) *SpanOutputAuthorizer {
-	return &SpanOutputAuthorizer{reader: store, checker: guard}
+	return &SpanOutputAuthorizer{reader: store, checker: workspaceOutputChecker{guard}}
 }
 
 // SpanOutputGuard retains and rechecks original span inputs.

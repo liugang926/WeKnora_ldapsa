@@ -12,8 +12,8 @@ func TestNextcloudReadAuthorityRequiresExplicitOptIn(t *testing.T) {
 	knowledge := &types.Knowledge{Channel: types.ConnectorTypeNextcloud}
 
 	t.Setenv("WEKNORA_NEXTCLOUD_READ_AUTHORITY", "")
-	require.Error(t, checkKnowledgePublication(context.Background(), nil, knowledge),
-		"the default deployment must retain the live Nextcloud publication boundary")
+	require.NoError(t, checkKnowledgePublication(context.Background(), nil, knowledge),
+		"source ACL retirement is independent of the read lease opt-in")
 	handler := &KnowledgeHandler{}
 	_, err := handler.beginNextcloudRead(context.Background(), nil, []*types.Knowledge{knowledge})
 	require.Error(t, err, "the default deployment must retain Nextcloud read leases")
