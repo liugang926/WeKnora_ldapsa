@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNextcloudSourceLineageBatchRejectsEarlierReadChangedDuringLaterRemote(t *testing.T) {
+func TestNextcloudRetiredLineageBatchDoesNotTriggerRemoteRevisionChanges(t *testing.T) {
 	guard, ctx, firstProof, single, _ := lineagePolicyFixture(t)
 	first := firstProof.Sources[0]
 	second := first
@@ -56,25 +56,21 @@ func TestNextcloudSourceLineageBatchRejectsEarlierReadChangedDuringLaterRemote(t
 		}
 		return nextcloud.AuthorizationDecision{Allow: true, SourceETag: first.ETag}, nil
 	}
-	require.ErrorIs(
-		t,
-		guard.CheckBatch(ctx, []SourceLineageRead{{Lineage: firstProof}, {Lineage: secondProof}}),
-		ErrNextcloudPublicationDenied,
-	)
-	require.True(t, changed, "later actual source authorization did not commit the earlier revision change")
+	reads := []SourceLineageRead{{Lineage: firstProof}, {Lineage: secondProof}}
+	assertRetiredReadUnchanged(t, reads, func() error { return guard.CheckBatch(ctx, reads) })
+	require.False(t, changed, "retired batch read must not call remote authorization")
+	require.Equal(t, first.Revision, snapshots.identity[first.KnowledgeID].Revision)
 }
 
-func TestNextcloudSourceLineageBatchKeepsEmptySelectedAgentAuthorization(t *testing.T) {
+func TestRetiredBatchLeavesSelectedAgentAuthorizationToResourcePolicy(t *testing.T) {
 	guard, ctx, _, _, _ := lineagePolicyFixture(t)
-	empty, _ := types.NewCompleteSourceLineage()
+	empty, err := types.NewCompleteSourceLineage()
+	require.NoError(t, err)
 	guard.agents = &lineageAgentsStub{allowed: false}
 	ctx = types.WithCaller(ctx, types.Caller{TenantID: 99, UserID: "person-1", Role: types.TenantRoleViewer})
-	require.ErrorIs(
-		t,
-		guard.CheckBatch(
-			ctx,
-			[]SourceLineageRead{{Lineage: empty, Scope: LineageReadScope{AgentID: "agent-1", AgentTenantID: 12}}},
-		),
-		ErrNextcloudPublicationDenied,
-	)
+	scope := LineageReadScope{AgentID: "agent-1", AgentTenantID: 12}
+	reads := []SourceLineageRead{{Lineage: empty, Scope: scope}}
+	assertRetiredReadUnchanged(t, reads, func() error { return guard.CheckBatch(ctx, reads) })
+	require.ErrorIs(t, guard.checkCurrentKBReads(ctx, types.CallerFromContext(ctx), nil, nil, scope),
+		ErrNextcloudPublicationDenied)
 }
