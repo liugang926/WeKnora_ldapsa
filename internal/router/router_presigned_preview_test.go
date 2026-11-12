@@ -46,7 +46,8 @@ func TestPresignedPreviewRejectsCrossTenantResource(t *testing.T) {
 
 func TestPresignedPreviewRejectsCrossTenantPath(t *testing.T) {
 	for _, filePath := range []string{"local://7/knowledge/secret.pdf", "local://docs/example.txt"} {
-		if code := servePresignedPreviewForTest(t, &stubResourceCatalog{}, filePath).Code; code != http.StatusForbidden {
+		code := servePresignedPreviewForTest(t, &stubResourceCatalog{}, filePath).Code
+		if code != http.StatusForbidden {
 			t.Fatalf("%s: status = %d, want %d", filePath, code, http.StatusForbidden)
 		}
 	}
