@@ -268,7 +268,8 @@ func (r *fakeDataSourceRepo) FindSchedulable(_ context.Context) ([]*types.DataSo
 	defer r.mu.Unlock()
 	var result []*types.DataSource
 	for _, ds := range r.dataSources {
-		if (ds.Status == types.DataSourceStatusActive || ds.Status == types.DataSourceStatusError) && ds.SyncSchedule != "" {
+		if (ds.Status == types.DataSourceStatusActive || ds.Status == types.DataSourceStatusError) &&
+			ds.SyncSchedule != "" {
 			result = append(result, ds)
 		}
 	}

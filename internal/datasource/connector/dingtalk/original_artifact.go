@@ -20,8 +20,10 @@ type originalFetchedArtifact struct {
 
 // OriginalFetchInvocation is an in-process producer association, not authorization.
 // Its nonzero private storage gives each Begin a distinct identity; JSON cannot recreate it.
-type OriginalFetchInvocation struct{ marker byte }
-type originalFetchInvocationKey struct{}
+type (
+	OriginalFetchInvocation    struct{ marker byte }
+	originalFetchInvocationKey struct{}
+)
 
 // BeginOriginalFetch associates subsequent real fetch results with one invocation.
 func BeginOriginalFetch(ctx context.Context) (context.Context, *OriginalFetchInvocation) {
@@ -30,7 +32,10 @@ func BeginOriginalFetch(ctx context.Context) (context.Context, *OriginalFetchInv
 }
 
 // VerifyOriginalFetchedArtifactForInvocation rejects results from any other Begin.
-func VerifyOriginalFetchedArtifactForInvocation(invocation *OriginalFetchInvocation, item *types.FetchedItem) (OriginalFetchedArtifactInput, error) {
+func VerifyOriginalFetchedArtifactForInvocation(
+	invocation *OriginalFetchInvocation,
+	item *types.FetchedItem,
+) (OriginalFetchedArtifactInput, error) {
 	if item == nil || invocation == nil {
 		return OriginalFetchedArtifactInput{}, errors.New("DingTalk fetch invocation is missing")
 	}
@@ -48,7 +53,10 @@ type OriginalFetchedArtifactInput struct {
 	ArtifactSHA256, ItemDigest, SourceConfigDigest string
 }
 
-func artifactHash(body []byte) string { h := sha256.Sum256(body); return hex.EncodeToString(h[:]) }
+func artifactHash(body []byte) string {
+	h := sha256.Sum256(body)
+	return hex.EncodeToString(h[:])
+}
 
 // Bind the actual selection passed to FetchAll, which may differ from the
 // configuration's ResourceIDs. Verification requires that same selection.
@@ -89,7 +97,13 @@ func VerifyOriginalArtifactConfiguration(source *types.DataSourceConfig, input O
 	return nil
 }
 
-func sealFetchedArtifact(ctx context.Context, item *types.FetchedItem, scope syncScope, document node, configDigest string) {
+func sealFetchedArtifact(
+	ctx context.Context,
+	item *types.FetchedItem,
+	scope syncScope,
+	document node,
+	configDigest string,
+) {
 	if item == nil || len(item.Content) == 0 || item.IsDeleted || configDigest == "" {
 		return
 	}

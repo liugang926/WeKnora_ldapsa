@@ -460,10 +460,22 @@ func TestBinaryWikiNodesSync(t *testing.T) {
 		workspaces: []workspace{{ID: "ws-1", Name: "财务", RootNodeID: "root-1"}},
 		nodes: map[string][]node{
 			"root-1": {
-				{ID: "ppt-1", Type: "FILE", Category: "DOCUMENT", Extension: "pptx", Name: "报销流程.pptx", WorkspaceID: "ws-1"},
-				{ID: "pdf-1", Type: "FILE", Category: "DOCUMENT", Extension: "pdf", Name: "制度.pdf", WorkspaceID: "ws-1"},
-				{ID: "adoc-1", Type: "FILE", Category: "ALIDOC", Extension: "adoc", Name: "说明.adoc", WorkspaceID: "ws-1"},
-				{ID: "unknown-1", Type: "FILE", Category: "DOCUMENT", Extension: "zip", Name: "归档.zip", WorkspaceID: "ws-1"},
+				{
+					ID: "ppt-1", Type: "FILE", Category: "DOCUMENT", Extension: "pptx",
+					Name: "报销流程.pptx", WorkspaceID: "ws-1",
+				},
+				{
+					ID: "pdf-1", Type: "FILE", Category: "DOCUMENT", Extension: "pdf",
+					Name: "制度.pdf", WorkspaceID: "ws-1",
+				},
+				{
+					ID: "adoc-1", Type: "FILE", Category: "ALIDOC", Extension: "adoc",
+					Name: "说明.adoc", WorkspaceID: "ws-1",
+				},
+				{
+					ID: "unknown-1", Type: "FILE", Category: "DOCUMENT", Extension: "zip",
+					Name: "归档.zip", WorkspaceID: "ws-1",
+				},
 			},
 		},
 		blocks: map[string][]json.RawMessage{"adoc-1": {}},

@@ -645,7 +645,7 @@ func (c *client) downloadWikiNode(ctx context.Context, workspaceID, nodeID strin
 	if err != nil {
 		return nil, fmt.Errorf("execute DingTalk file request: %w", redactRequestError(err))
 	}
-	defer fileResp.Body.Close()
+	defer func() { _ = fileResp.Body.Close() }()
 	if fileResp.StatusCode < 200 || fileResp.StatusCode >= 300 {
 		return nil, fmt.Errorf("DingTalk file download status=%d", fileResp.StatusCode)
 	}
