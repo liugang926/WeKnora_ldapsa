@@ -135,7 +135,13 @@ func TestIMChannelActualSessionAndRAGPipeline(t *testing.T) {
 	ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalIMUser, ID: "7:channel:dingtalk:sender"})
 	_, err := svc.CreateSession(ctx, &types.Session{TenantID: 7})
 	require.ErrorContains(t, err, "load executing user")
-	ctx = types.WithIMChannelScope(ctx, types.IMChannelScope{TenantID: 7, AgentID: "agent", OwnerID: "im_session:fixture", KnowledgeBases: map[string]uint64{"kb": 7}, Verify: func(context.Context, uint64, types.ResourceType, string, types.ResourceAction) error { return nil }})
+	channelAllowed := true
+	ctx = types.WithIMChannelScope(ctx, types.IMChannelScope{TenantID: 7, AgentID: "agent", OwnerID: "im_session:fixture", KnowledgeBases: map[string]uint64{"kb": 7}, Verify: func(context.Context, uint64, types.ResourceType, string, types.ResourceAction) error {
+		if !channelAllowed {
+			return errors.New("IM channel binding revoked")
+		}
+		return nil
+	}})
 	session, err := svc.CreateSession(ctx, &types.Session{TenantID: 7})
 	require.NoError(t, err)
 	require.NotEmpty(t, session.ID)
@@ -155,14 +161,51 @@ func TestIMChannelActualSessionAndRAGPipeline(t *testing.T) {
 	ctx, err = svc.eventManager.BeginSourceLineage(ctx, cm, access.LineageReadScope{Targets: cm.SearchTargets}, svc.knowledgeQAAuthorizer(session))
 	require.NoError(t, err)
 	require.NoError(t, svc.KnowledgeQAByEvent(ctx, cm, types.Pipline["rag"]))
-	require.Empty(t, cm.SearchResult)
-	require.Zero(t, model.calls())
-	// Existing legacy source refusal is preserved; an ordinary admitted receipt
-	// exercises the same real QA authorization, prompt and model path below.
-	cm.MergeResult = []*types.SearchResult{{ID: "ordinary", KnowledgeBaseID: "kb", KnowledgeID: "ordinary-doc", Content: "Synthetic ordinary document", SourceLineage: &types.SourceLineage{Version: types.SourceLineageVersion, State: types.SourceLineageComplete}}}
-	require.NoError(t, svc.KnowledgeQAByEvent(ctx, cm, []types.EventType{types.INTO_CHAT_MESSAGE, types.CHAT_COMPLETION}))
+	// The Nextcloud publication guard was retired; authorized IM retrieval now
+	// uses the actual ingested fixture rather than a synthetic replacement.
+	require.Len(t, cm.SearchResult, 2)
+	var retrievedContent string
+	for _, result := range cm.SearchResult {
+		require.Equal(t, "kb", result.KnowledgeBaseID)
+		require.NotEmpty(t, result.KnowledgeID)
+		require.NotEmpty(t, result.Content)
+		retrievedContent += result.Content + "\n"
+	}
+	require.Contains(t, retrievedContent, "Current employee policy")
+	require.Contains(t, retrievedContent, "Actual grounded document summary")
+	require.NotEmpty(t, cm.MergeResult)
 	require.NotEmpty(t, cm.ChatResponse.Content)
 	require.Positive(t, model.calls())
+
+	// Retiring a source-specific guard must not bypass the live WeKnora IM
+	// scope: reject other tenants, KBs, senders and revoked channel bindings
+	// before either prompt construction or a further model call.
+	for _, tc := range []struct {
+		name   string
+		ctx    context.Context
+		tenant uint64
+		kb     string
+		revoke bool
+	}{
+		{name: "other tenant", ctx: ctx, tenant: 8, kb: "kb"},
+		{name: "other knowledge base", ctx: ctx, tenant: 7, kb: "other"},
+		{name: "other IM sender", ctx: types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalIMUser, ID: "7:channel:dingtalk:other"}), tenant: 7, kb: "kb"},
+		{name: "revoked channel", ctx: ctx, tenant: 7, kb: "kb", revoke: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			channelAllowed = !tc.revoke
+			defer func() { channelAllowed = true }()
+			before := model.calls()
+			denied := &types.ChatManage{}
+			denied.Query = cm.Query
+			denied.ChatModelID = cm.ChatModelID
+			denied.SearchTargets = types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: tc.tenant, KnowledgeBaseID: tc.kb}}
+			err := svc.KnowledgeQAByEvent(tc.ctx, denied, []types.EventType{types.INTO_CHAT_MESSAGE, types.CHAT_COMPLETION})
+			require.ErrorContains(t, err, "revalidate knowledge base")
+			require.Nil(t, denied.ChatResponse)
+			require.Equal(t, before, model.calls())
+		})
+	}
 }
 
 type imScopeShares struct {
