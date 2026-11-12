@@ -693,7 +693,7 @@ func TestHistoryVectorActualSQLFreshMultiSessionOriginalsAndHTTPLease(t *testing
 
 func TestHistoryVectorActualSQLSourceRevokedDuringModelLookupRefusesHTTP(t *testing.T) {
 	f := newHistoryVectorActualFixture(t)
-	f.models.lookupHook = func(context.Context) { f.m.allow.Store(false) }
+	f.models.lookupHook = func(context.Context) { retireRAGFixtureSource(t, f.m, f.source) }
 	response := f.httpSearch(t, nil)
 	require.Equal(t, http.StatusForbidden, response.Code)
 	require.EqualValues(t, 1, f.models.lookups.Load())
