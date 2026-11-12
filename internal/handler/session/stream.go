@@ -23,6 +23,7 @@ import (
 type (
 	liveMaterialWritePhaseKey struct{}
 	liveMaterialWritePhase    struct {
+		Generation             context.Context
 		RawControl             bool
 		MaterialCheck          func() error
 		InitializationDeadline time.Time
@@ -35,6 +36,8 @@ const (
 	liveMaterialInitializationTimeout = 10 * time.Second
 	liveIdleMaterialRecheckInterval   = time.Second
 )
+
+var errGenerationStoppedByUser = stderrors.New("generation stopped by user")
 
 // ContinueStream godoc
 // @Summary      继续流式响应
@@ -589,6 +592,10 @@ func (h *Handler) handleAgentEventsForSSE(
 					continue
 				}
 				if err := phase.MaterialCheck(); err != nil {
+					if phase.userStopped() {
+						emitUserStopNotification(c, requestID)
+						return
+					}
 					phase.IdleMaterialReady = false
 					if stderrors.Is(err, applicationservice.ErrMessageMaterialHTTPInitializing) {
 						if phase.InitializationDeadline.IsZero() {
@@ -661,13 +668,7 @@ func (h *Handler) handleAgentEventsForSSE(
 					flushHeldStreamContent(ctx, c, requestID, resourceRewriter)
 
 					// Send stop notification to frontend
-					c.SSEvent("message", &types.StreamResponse{
-						ID:           requestID,
-						ResponseType: "stop",
-						Content:      "Generation stopped by user",
-						Done:         true,
-					})
-					c.Writer.Flush()
+					emitUserStopNotification(c, requestID)
 					return
 				}
 
@@ -696,6 +697,10 @@ func (h *Handler) handleAgentEventsForSSE(
 				}
 				emitStreamEvent(ctx, c, evt, requestID, resourceRewriter)
 				if writer, ok := c.Writer.(*nativeSavedReplayWriter); ok && writer.denied != nil {
+					if phase, _ := ctx.Value(liveMaterialWritePhaseKey{}).(*liveMaterialWritePhase); phase.userStopped() {
+						emitUserStopNotification(c, requestID)
+						return
+					}
 					emitSafeTerminalGenerationError(c, requestID)
 					return
 				}
@@ -1104,7 +1109,27 @@ func emitSafeTerminalGenerationError(c *gin.Context, requestID string) {
 	)
 }
 
+func (p *liveMaterialWritePhase) userStopped() bool {
+	return p != nil && p.Generation != nil && context.Cause(p.Generation) == errGenerationStoppedByUser
+}
+
+// Only fixed terminal controls use this writer. Buffered content and metadata
+// still pass through the ordinary material and publication checks.
+func emitUserStopNotification(c *gin.Context, requestID string) {
+	writeTerminalControl(c, &types.StreamResponse{
+		ID: requestID, ResponseType: "stop", Content: "Generation stopped by user", Done: true,
+	})
+}
+
 func emitStaticTerminalStreamError(c *gin.Context, requestID, content, code string) {
+	writeTerminalControl(c, &types.StreamResponse{
+		ID: requestID, ResponseType: types.ResponseTypeError,
+		Content: content, Done: true,
+		Data: map[string]interface{}{"error_code": code},
+	})
+}
+
+func writeTerminalControl(c *gin.Context, control *types.StreamResponse) {
 	if c.Request.Context().Err() != nil {
 		return
 	}
@@ -1113,10 +1138,6 @@ func emitStaticTerminalStreamError(c *gin.Context, requestID, content, code stri
 		c.Writer = guarded.ResponseWriter
 		defer func() { c.Writer = prior }()
 	}
-	c.SSEvent("message", &types.StreamResponse{
-		ID: requestID, ResponseType: types.ResponseTypeError,
-		Content: content, Done: true,
-		Data: map[string]interface{}{"error_code": code},
-	})
+	c.SSEvent("message", control)
 	c.Writer.Flush()
 }

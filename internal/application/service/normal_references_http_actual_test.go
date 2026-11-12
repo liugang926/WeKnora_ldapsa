@@ -22,6 +22,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,6 +36,8 @@ type normalReferencesActualModel struct {
 	stopped               atomic.Bool
 	mode                  string
 	started               chan struct{}
+	transportReturned     chan struct{}
+	preflightPassed       atomic.Bool
 	emptyPolls            *atomic.Int64
 	consecutiveEmptyPolls *atomic.Int64
 	idleMeasured          atomic.Bool
@@ -42,6 +45,7 @@ type normalReferencesActualModel struct {
 	idleRenewals          atomic.Int64
 	idleEmptyPolls        atomic.Int64
 	lateIdleFaultApplied  atomic.Bool
+	leaseFaultApplied     atomic.Bool
 }
 
 func (m *normalReferencesActualModel) GetModelID() string   { return "normal-reference-model" }
@@ -65,10 +69,12 @@ func (m *normalReferencesActualModel) ChatStream(
 	m.calls.Add(1)
 	defer close(m.started)
 	if err := types.CheckHistoryMaterialLifetime(ctx); err != nil {
+		m.t.Errorf("provider material preflight failed: %v", err)
 		return nil, err
 	}
 	for _, message := range input {
 		if !reflect.DeepEqual(message.SourceLineage, m.f.Lineage) {
+			m.t.Error("actual provider source union does not match captured original")
 			return nil, fmt.Errorf("actual provider source union does not match captured original")
 		}
 		if strings.Contains(message.Content, "Current employee policy") {
@@ -77,34 +83,51 @@ func (m *normalReferencesActualModel) ChatStream(
 	}
 
 	if !m.inputFound.Load() {
+		m.t.Error("actual retrieval did not reach provider")
 		return nil, fmt.Errorf("actual retrieval did not reach provider")
 	}
+	var heldBodies int64
+	if err := m.f.DB.Table("original_body_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&heldBodies).Error; err != nil || heldBodies == 0 {
+		m.t.Errorf("provider material preflight requires held original bodies: held=%d err=%v", heldBodies, err)
+		return nil, fmt.Errorf("provider material preflight failed")
+	}
+	m.preflightPassed.Store(true)
 	if strings.HasPrefix(m.mode, "source-after-start") {
 		m.f.Revoke()
 	}
 	if m.mode == "lease-after-start" {
-		if err := m.f.DB.Exec(
+		result := m.f.DB.Exec(
 			"UPDATE nextcloud_content_leases SET expires_at_ms=1 WHERE kind='read' AND released_at_ms IS NULL",
-		).Error; err != nil {
-			return nil, err
+		)
+		if !assert.NoError(m.t, result.Error, "the intended lease expiry must execute, not masquerade as refusal") {
+			return nil, result.Error
 		}
+		if !assert.Positive(m.t, result.RowsAffected, "the intended lease expiry must change a held lease") {
+			return nil, fmt.Errorf("no held source lease was expired")
+		}
+		m.leaseFaultApplied.Store(true)
 	}
 	if m.mode == "caller-disconnect" {
 		m.f.Cancel()
 	}
 	out := make(chan types.StreamResponse, 2)
 	if m.mode == "producer-stop" {
-		go func() { <-ctx.Done(); m.stopped.Store(true); close(out) }()
+		go func() { defer close(m.transportReturned); <-ctx.Done(); m.stopped.Store(true); close(out) }()
 		return out, nil
 	}
 	go func() {
+		defer close(m.transportReturned)
 		defer close(out)
 		if strings.Contains(m.mode, "idle") {
 			deadline := time.NewTimer(3 * time.Second)
 			defer deadline.Stop()
 			ticker := time.NewTicker(10 * time.Millisecond)
 			defer ticker.Stop()
-			for m.consecutiveEmptyPolls.Load() < 3 {
+			requiredEmpty := int64(3)
+			if strings.HasPrefix(m.mode, "late-idle-") {
+				requiredEmpty = 10
+			}
+			for m.consecutiveEmptyPolls.Load() < requiredEmpty {
 				select {
 				case <-ctx.Done():
 					m.stopped.Store(true)
@@ -140,6 +163,9 @@ func (m *normalReferencesActualModel) ChatStream(
 				m.idleRenewals.Store(m.f.BodyLeaseRenewals() - beforeRenewals)
 				m.idleEmptyPolls.Store(m.emptyPolls.Load() - beforeEmpty)
 			}
+			if strings.HasPrefix(m.mode, "late-idle-") {
+				m.idleEmptyPolls.Store(m.consecutiveEmptyPolls.Load())
+			}
 			m.idleMeasured.Store(true)
 			if m.mode == "idle-source-revoke" {
 				m.f.Revoke()
@@ -161,6 +187,13 @@ func (m *normalReferencesActualModel) ChatStream(
 				}
 				m.lateIdleFaultApplied.Store(true)
 			}
+		}
+		if strings.HasPrefix(m.mode, "late-idle-") {
+			// Keep the provider open: only the actual empty-poll material guard
+			// may cancel it, without a next frame, Done, EOF or test cancellation.
+			<-ctx.Done()
+			m.stopped.Store(true)
+			return
 		}
 		if m.mode == "eof-no-done" {
 			return
@@ -188,11 +221,43 @@ func (m *normalReferencesActualModel) ChatStream(
 			m.stopped.Store(true)
 			return
 		}
-		if m.mode == "done-open" {
+		if m.mode == "done-open" || m.mode == "source-after-start-open" {
 			<-ctx.Done()
+			m.stopped.Store(true)
 		}
 	}()
 	return out, nil
+}
+
+// Keep the durable contract independent from SSE shape and provider call count.
+// Source-only Nextcloud metadata changes are permitted by the current contract;
+// Live actor, original-material and sender refusals remain incomplete. A user
+// stop intentionally saves the partial assistant as completed without an answer.
+type normalReferencesHTTPExpectation struct {
+	denied     bool
+	completed  int64
+	modelCalls int64
+}
+
+func normalReferencesHTTPExpectationFor(t *testing.T, mode string) normalReferencesHTTPExpectation {
+	t.Helper()
+	switch mode {
+	case "current", "source-before-refs", "source-after-start", "done-open",
+		"source-after-start-open", "caller-disconnect", "idle-current", "idle-source-revoke":
+		return normalReferencesHTTPExpectation{completed: 1, modelCalls: 1}
+	case "empty-fixed":
+		return normalReferencesHTTPExpectation{completed: 1}
+	case "producer-stop":
+		return normalReferencesHTTPExpectation{denied: true, completed: 1, modelCalls: 1}
+	case "actor-before-refs", "lease-before-refs", "unknown-prefix", "references-refuse", "empty-fixed-refuse":
+		return normalReferencesHTTPExpectation{denied: true}
+	case "lease-after-start", "thinking-refuse", "model-error", "eof-no-done",
+		"late-idle-actor", "late-idle-body-lease":
+		return normalReferencesHTTPExpectation{denied: true, modelCalls: 1}
+	default:
+		t.Fatalf("missing explicit HTTP terminal expectation for %q", mode)
+		return normalReferencesHTTPExpectation{}
+	}
 }
 
 func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
@@ -200,7 +265,8 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	if len(modes) > 0 {
 		mode = modes[0]
 	}
-	model := &normalReferencesActualModel{t: t, mode: mode, started: make(chan struct{})}
+	expectation := normalReferencesHTTPExpectationFor(t, mode)
+	model := &normalReferencesActualModel{t: t, mode: mode, started: make(chan struct{}), transportReturned: make(chan struct{})}
 	f := service.NewNormalReferencesHTTPFixtureForTest(t, pg, model, mode)
 	model.f = f
 	mini := miniredis.RunT(t)
@@ -263,7 +329,15 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	})
 	router.POST("/knowledge-chat/:session_id", h.KnowledgeQA)
 	router.POST("/sessions/:session_id/stop", h.StopSession)
-	server := httptest.NewServer(router)
+	httpReturned := make(chan struct{}, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if strings.HasPrefix(r.URL.Path, "/knowledge-chat/") {
+				httpReturned <- struct{}{}
+			}
+		}()
+		router.ServeHTTP(w, r)
+	}))
 	t.Cleanup(func() { f.Cancel(); server.CloseClientConnections(); server.Close() })
 	client := &http.Client{Timeout: 8 * time.Second}
 	response, err := client.Post(
@@ -274,7 +348,16 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, response.Body.Close()) }()
+	var watcherCtx context.Context
 	if mode == "producer-stop" {
+		select {
+		case watcherCtx = <-observedStream.watcher:
+		case <-time.After(5 * time.Second):
+			t.Fatal("actual owned stop watcher did not start")
+		}
+		deadline, ok := watcherCtx.Deadline()
+		require.True(t, ok)
+		require.Greater(t, time.Until(deadline), time.Hour)
 		select {
 		case <-model.started:
 		case <-time.After(5 * time.Second):
@@ -303,21 +386,25 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	}
 	require.Equal(t, http.StatusOK, response.StatusCode)
 	content := body.String()
-	require.NotContains(t, content, `"source_lineage":`, "internal lineage is not an SSE response field")
-	// These are live user/material/transport boundaries, not the retired
-	// Nextcloud-specific ACL or lease callbacks.
-	denied := mode == "lease-before-refs" ||
-		mode == "lease-after-start" ||
-		mode == "late-idle-body-lease" ||
-		mode == "actor-before-refs" ||
-		mode == "late-idle-actor" ||
-		mode == "unknown-prefix" ||
-		mode == "references-refuse" ||
-		mode == "empty-fixed-refuse" ||
-		mode == "thinking-refuse" ||
-		mode == "model-error" ||
-		mode == "eof-no-done" ||
-		mode == "producer-stop"
+	require.NotContains(t, content, "source_lineage", "internal lineage must not leak anywhere in raw SSE")
+	// Terminal expectations are explicit for every current material/transport
+	// state; model invocation alone cannot establish durable completion.
+	denied := expectation.denied
+	require.EqualValues(t, expectation.modelCalls, model.calls.Load())
+	if expectation.modelCalls == 1 {
+		require.True(t, model.preflightPassed.Load(), "intended downstream boundary follows successful provider preflight")
+		require.True(t, model.inputFound.Load())
+		select {
+		case <-model.transportReturned:
+		case <-time.After(5 * time.Second):
+			t.Fatal("actual provider transport did not return")
+		}
+	}
+	select {
+	case <-httpReturned:
+	case <-time.After(normalReferencesHTTPReturnTimeout):
+		t.Fatal("actual HTTP handler did not return")
+	}
 	if denied {
 		require.NotContains(t, content, "CURRENT ADMITTED NORMAL ANSWER")
 		if mode != "producer-stop" {
@@ -331,17 +418,11 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 			t, saved.Content, "CURRENT ADMITTED NORMAL ANSWER",
 			"refused output is not persisted as an answer",
 		)
-		if mode == "lease-before-refs" ||
-			mode == "actor-before-refs" ||
-			mode == "unknown-prefix" ||
-			mode == "references-refuse" ||
-			mode == "empty-fixed-refuse" {
-			require.Zero(t, model.calls.Load())
-		} else {
-			require.EqualValues(t, 1, model.calls.Load())
-		}
+
 	} else if mode == "empty-fixed" {
 		require.Contains(t, content, "CURRENT FIXED SAFE FALLBACK")
+		require.Contains(t, content, `"response_type":"complete"`)
+		require.NotContains(t, content, `"response_type":"error"`)
 		require.Zero(t, model.calls.Load(), "configured fixed fallback must not invoke provider")
 	} else if mode != "caller-disconnect" {
 		refs := strings.Index(content, `"response_type":"references"`)
@@ -359,15 +440,16 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 		require.Equal(t, f.Lineage, assistant.SourceLineage)
 		require.Len(t, assistant.KnowledgeReferences, 2)
 	}
-	if !denied {
-		var completed int64
-		require.NoError(t, f.DB.Model(&types.Message{}).
-			Where("session_id=? AND role='assistant' AND is_completed=true", f.Session.ID).
-			Count(&completed).Error)
-		require.EqualValues(t, 1, completed, "actual permitted background production durably completed")
-	}
+	var completed int64
+	require.NoError(t, f.DB.Model(&types.Message{}).
+		Where("session_id=? AND role='assistant' AND is_completed=true", f.Session.ID).
+		Count(&completed).Error)
+	require.EqualValues(t, expectation.completed, completed, "durable terminal state for %s", mode)
 	if strings.Contains(mode, "idle") {
 		require.True(t, model.idleMeasured.Load(), "actual empty Redis reads preceded provider output")
+	}
+	if mode == "lease-after-start" {
+		require.True(t, model.leaseFaultApplied.Load(), "the expected refusal follows a real successful lease expiry")
 	}
 	if mode == "idle-current" || mode == "idle-source-revoke" {
 		require.Positive(t, model.idleHeldBodies.Load())
@@ -381,9 +463,18 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	}
 	if mode == "producer-stop" {
 		require.True(t, model.stopped.Load())
+		assert.Contains(t, content, `"response_type":"stop"`, "a successful user stop reaches its SSE caller")
+		assert.NotContains(t, content, `"response_type":"error"`, "a valid user stop is not a generation failure")
+		select {
+		case <-watcherCtx.Done():
+		case <-time.After(5 * time.Second):
+			t.Fatal("actual owned stop watcher did not terminate")
+		}
 	}
 	if strings.HasPrefix(mode, "late-idle-") {
 		require.True(t, model.lateIdleFaultApplied.Load())
+		require.GreaterOrEqual(t, model.idleEmptyPolls.Load(), int64(10))
+		require.True(t, model.stopped.Load(), "actual idle material refusal cancels the still-open provider")
 	}
 	// Producer return and HTTP completion can precede asynchronous holder cleanup.
 	require.Eventually(t, func() bool {

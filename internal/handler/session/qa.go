@@ -57,7 +57,7 @@ type qaRequestContext struct {
 	localBrowserEnabled   bool
 	webSearchEnabled      bool
 	mentionedItems        types.MentionedItems
-	effectiveTenantID     uint64                   // when using shared agent, tenant ID for model/KB/MCP resolution; 0 = use context tenant
+	effectiveTenantID     uint64                   // Shared agent tenant for model/KB/MCP; 0 uses context tenant
 	sharedAgentReadOnly   bool                     // access was granted by a read-only agent share
 	images                []ImageAttachment        // Uploaded images with analysis text
 	userMessageID         string                   // Created user message ID (populated after createUserMessage)
@@ -845,16 +845,21 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	}
 
 	eventBus := event.NewEventBus()
-	asyncCtx, cancel := context.WithCancel(logger.CloneContext(baseCtx))
+	asyncCtx, cancelGeneration := context.WithCancelCause(logger.CloneContext(baseCtx))
 	var materialAttach func(context.Context) context.Context
 	var materialCheck func() error
 	var materialClose func()
-	if hasExplicitInputMaterials(reqCtx) {
+	// KnowledgeQA always retains generic user/history material, even when no
+	// explicit file is attached. Share that owner with the HTTP idle checker;
+	// a producer-only holder cannot notice refusal while its provider is idle.
+	if mode == qaModeNormal || hasExplicitInputMaterials(reqCtx) {
 		native, ok := h.messageService.(interface{ HasOriginalMessageMaterialStore() bool })
 		if ok && native.HasOriginalMessageMaterialStore() {
-			asyncCtx, materialAttach, materialCheck, materialClose = applicationservice.BeginMessageMaterialHTTPBoundary(
-				asyncCtx,
-			)
+			beginMaterial := applicationservice.BeginMessageMaterialHTTPBoundary
+			if mode == qaModeNormal {
+				beginMaterial = applicationservice.BeginKnowledgeQAHTTPBoundary
+			}
+			asyncCtx, materialAttach, materialCheck, materialClose = beginMaterial(asyncCtx)
 		}
 	}
 
@@ -864,7 +869,7 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 		materialClose:    materialClose,
 		eventBus:         eventBus,
 		asyncCtx:         asyncCtx,
-		cancel:           cancel,
+		cancel:           func() { cancelGeneration(nil) },
 		assistantMessage: reqCtx.assistantMessage,
 	}
 
@@ -912,7 +917,7 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	)
 
 	// Setup stop event handler
-	h.setupStopEventHandler(eventBus, reqCtx.sessionID, reqCtx.session.TenantID, reqCtx.assistantMessage, cancel)
+	h.setupStopEventHandler(eventBus, reqCtx.sessionID, reqCtx.session.TenantID, reqCtx.assistantMessage, cancelGeneration)
 
 	// Watch for stop events on the generation context, which already survives
 	// client disconnects and the early KnowledgeQA return. Generation
@@ -1695,7 +1700,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 		sseCtx = streamCtx.materialAttach(sseCtx)
 	}
 	if streamCtx.materialCheck != nil {
-		phase := &liveMaterialWritePhase{MaterialCheck: streamCtx.materialCheck}
+		phase := &liveMaterialWritePhase{MaterialCheck: streamCtx.materialCheck, Generation: streamCtx.asyncCtx}
 		sseCtx = context.WithValue(sseCtx, liveMaterialWritePhaseKey{}, phase)
 		prior := reqCtx.c.Writer
 		writer := &nativeSavedReplayWriter{ResponseWriter: prior, ctx: reqCtx.c.Request.Context(), check: func() error {
