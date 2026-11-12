@@ -24,13 +24,21 @@ func (a *auditBlockingAdapter) DownloadFile(ctx context.Context, m *IncomingMess
 	}
 	return nil, "", errors.New("controlled download completion")
 }
+
 func (a *auditBlockingAdapter) SendReply(context.Context, *IncomingMessage, *ReplyMessage) error {
 	return nil
 }
 
 func TestAuditSameUserRunningRequestRemainsStoppable(t *testing.T) {
 	s := &Service{}
-	a := &auditBlockingAdapter{entered: make(chan string, 2), releases: map[string]chan struct{}{"a": make(chan struct{}), "b": make(chan struct{})}}
+	a := &auditBlockingAdapter{
+		entered: make(chan string,
+			2),
+		releases: map[string]chan struct{}{
+			"a": make(chan struct{}),
+			"b": make(chan struct{}),
+		},
+	}
 	finished := make(chan string, 2)
 	q := newQAQueue(2, 10, 3, 0, func(r *qaRequest) { s.executeQARequest(r); finished <- r.msg.MessageID }, nil)
 	stop := make(chan struct{})
@@ -39,7 +47,16 @@ func TestAuditSameUserRunningRequestRemainsStoppable(t *testing.T) {
 	newReq := func(id string) *qaRequest {
 		ctx, cancel := context.WithCancel(context.Background())
 		t.Cleanup(cancel)
-		return &qaRequest{ctx: ctx, cancel: cancel, userKey: "same-channel:user:chat", msg: &IncomingMessage{MessageID: id, MessageType: MessageTypeFile}, adapter: a}
+		return &qaRequest{
+			ctx:     ctx,
+			cancel:  cancel,
+			userKey: "same-channel:user:chat",
+			msg: &IncomingMessage{
+				MessageID:   id,
+				MessageType: MessageTypeFile,
+			},
+			adapter: a,
+		}
 	}
 	if _, err := q.Enqueue(newReq("a")); err != nil {
 		t.Fatal(err)
@@ -76,6 +93,7 @@ func TestAuditSameUserRunningRequestRemainsStoppable(t *testing.T) {
 		t.Fatal("running second request lost its cancellation mapping when first finished")
 	}
 }
+
 func TestAuditConcurrentDuplicateAndQueueRelease(t *testing.T) {
 	s := &Service{}
 	var accepted atomic.Int32

@@ -2,10 +2,11 @@ package im
 
 import (
 	"context"
-	"github.com/Tencent/WeKnora/internal/event"
-	"github.com/Tencent/WeKnora/internal/types"
 	"sort"
 	"sync"
+
+	"github.com/Tencent/WeKnora/internal/event"
+	"github.com/Tencent/WeKnora/internal/types"
 )
 
 // The channel grant and trusted producer event envelope are separate facts:
@@ -40,6 +41,7 @@ func (p *imMessageProvenance) observe(evt event.Event) {
 		p.lineage, _ = types.UnionSourceLineage(p.lineage, lineage)
 	}
 }
+
 func (p *imMessageProvenance) apply(ctx context.Context, message *types.Message) error {
 	if _, ok := types.IMChannelScopeFromContext(ctx); !ok {
 		return nil
@@ -52,6 +54,7 @@ func (p *imMessageProvenance) apply(ctx context.Context, message *types.Message)
 	message.SourceLineage, _ = types.UnionSourceLineage(p.lineage)
 	return nil
 }
+
 func imAssistantMessage(ctx context.Context, sessionID, requestID string, agent *types.CustomAgent) *types.Message {
 	message := createIMAssistantMessagePayload(sessionID, requestID)
 	if agent != nil {
@@ -85,7 +88,11 @@ func (s *Service) checkIMMessagePublication(ctx context.Context, p *imMessagePro
 	if !ok {
 		return nil
 	}
-	if err := scope.Check(ctx, scope.TenantID, types.GroupResourceTypeAgent, scope.AgentID, types.ResourceActionUse); err != nil {
+	if err := scope.Check(ctx,
+		scope.TenantID,
+		types.GroupResourceTypeAgent,
+		scope.AgentID,
+		types.ResourceActionUse); err != nil {
 		return err
 	}
 	if err := p.apply(ctx, message); err != nil {

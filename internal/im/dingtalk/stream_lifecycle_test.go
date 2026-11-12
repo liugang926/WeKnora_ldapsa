@@ -18,9 +18,17 @@ func ageLifecycle(t *testing.T, id string, age time.Duration) {
 	s.lastActivity = s.createdAt
 	s.mu.Unlock()
 }
+
 func TestLifecycleLiveLongAndCancelledFinalize(t *testing.T) {
 	var sends atomic.Int32
-	a := receiptAdapter(t, func(r *http.Request) (*http.Response, error) { sends.Add(1); return receiptResponse(200), nil })
+	a := receiptAdapter(t,
+		func(_ *http.Request) (*http.Response,
+			error,
+		) {
+			sends.Add(1)
+			return receiptResponse(200),
+				nil
+		})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	m := receiptMessage("long-active")
@@ -79,8 +87,9 @@ func TestLifecycleLiveLongAndCancelledFinalize(t *testing.T) {
 		t.Fatal("duplicate final")
 	}
 }
+
 func TestLifecycleOrphanAndAbsoluteBound(t *testing.T) {
-	a := receiptAdapter(t, func(r *http.Request) (*http.Response, error) { return receiptResponse(200), nil })
+	a := receiptAdapter(t, func(_ *http.Request) (*http.Response, error) { return receiptResponse(200), nil })
 	for _, kind := range []string{"background", "cancelled", "absolute"} {
 		t.Run(kind, func(t *testing.T) {
 			ctx := context.Background()
@@ -108,11 +117,12 @@ func TestLifecycleOrphanAndAbsoluteBound(t *testing.T) {
 		})
 	}
 }
+
 func TestLifecycleEndingCannotBeReaped(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var calls atomic.Int32
-	a := receiptAdapter(t, func(r *http.Request) (*http.Response, error) {
+	a := receiptAdapter(t, func(_ *http.Request) (*http.Response, error) {
 		if calls.Add(1) == 2 {
 			close(entered)
 			<-release
@@ -125,7 +135,9 @@ func TestLifecycleEndingCannotBeReaped(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	a.FinalizeStream(ctx, m, id, "final")
+	if err := a.FinalizeStream(ctx, m, id, "final"); err != nil {
+		t.Fatal(err)
+	}
 	done := make(chan error, 1)
 	go func() { done <- a.EndStream(ctx, m, id) }()
 	<-entered
@@ -150,7 +162,7 @@ func TestLifecycleInitializingReaper(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var n atomic.Int32
-	a := receiptAdapter(t, func(r *http.Request) (*http.Response, error) {
+	a := receiptAdapter(t, func(_ *http.Request) (*http.Response, error) {
 		if n.Add(1) == 1 {
 			close(entered)
 			<-release
@@ -183,7 +195,7 @@ func TestLifecycleCardUpdateCannotOvertakeEnd(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var calls atomic.Int32
-	a := receiptAdapter(t, func(r *http.Request) (*http.Response, error) {
+	a := receiptAdapter(t, func(_ *http.Request) (*http.Response, error) {
 		if calls.Add(1) == 1 {
 			close(entered)
 			<-release

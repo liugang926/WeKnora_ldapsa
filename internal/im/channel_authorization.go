@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -14,8 +15,22 @@ type imKnowledgeScopeResolver interface {
 	CheckIMChannelKnowledgeBase(context.Context, uint64, string) error
 }
 
-func (s *Service) authorizeChannelContext(ctx context.Context, channel *IMChannel, msg *IncomingMessage) (context.Context, *types.CustomAgent, error) {
-	if channel == nil || !channel.Enabled || channel.TenantID == 0 || channel.ID == "" || channel.AgentID == "" || msg == nil || msg.UserID == "" || string(msg.Platform) != channel.Platform {
+func (s *Service) authorizeChannelContext(
+	ctx context.Context,
+	channel *IMChannel,
+	msg *IncomingMessage) (context.Context,
+	*types.CustomAgent,
+	error,
+) {
+	if channel == nil ||
+		!channel.Enabled ||
+		channel.TenantID == 0 ||
+		channel.ID == "" ||
+		channel.AgentID == "" ||
+		msg == nil ||
+		msg.UserID == "" ||
+		string(msg.Platform) != channel.Platform {
+
 		return ctx, nil, fmt.Errorf("invalid IM channel identity")
 	}
 	agent, err := s.agentService.GetAgentByID(ctx, channel.AgentID)
@@ -31,8 +46,20 @@ func (s *Service) authorizeChannelContext(ctx context.Context, channel *IMChanne
 		return ctx, nil, err
 	}
 	config, _ := json.Marshal(agent.Config)
-	scope := types.IMChannelScope{TenantID: channel.TenantID, AgentID: channel.AgentID, OwnerID: imChannelSessionOwner(channel, msg), ChannelID: channel.ID, KnowledgeBases: kbIDs}
-	scope.Verify = func(checkCtx context.Context, tenant uint64, kind types.ResourceType, id string, action types.ResourceAction) error {
+	scope := types.IMChannelScope{
+		TenantID: channel.TenantID,
+		AgentID:  channel.AgentID,
+		OwnerID: imChannelSessionOwner(channel,
+			msg),
+		ChannelID:      channel.ID,
+		KnowledgeBases: kbIDs,
+	}
+	scope.Verify = func(checkCtx context.Context,
+		tenant uint64,
+		kind types.ResourceType,
+		id string,
+		_ types.ResourceAction,
+	) error {
 		fresh, err := s.GetChannelByID(channel.ID)
 		if err != nil || !sameChannelRuntimeConfig(channel, fresh) || !fresh.Enabled {
 			return fmt.Errorf("IM channel authorization changed")

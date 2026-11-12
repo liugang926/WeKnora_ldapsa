@@ -3,9 +3,10 @@ package im
 import (
 	"context"
 	"fmt"
-	"github.com/Tencent/WeKnora/internal/types"
 	"sort"
 	"strings"
+
+	"github.com/Tencent/WeKnora/internal/types"
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/logger"

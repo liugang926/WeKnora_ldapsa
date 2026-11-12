@@ -2,15 +2,20 @@ package im
 
 import (
 	"context"
+	"testing"
+
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
-	"testing"
 )
 
 func TestInflightOwnershipRedis(t *testing.T) {
 	mr := miniredis.RunT(t)
 	r := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer r.Close()
+	defer func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	s := &Service{redis: r}
 	ca, cancelA := context.WithCancel(context.Background())
 	defer cancelA()
@@ -43,7 +48,9 @@ func TestInflightOwnershipRedis(t *testing.T) {
 	if mr.Exists(RedisKeyInflight + "u") {
 		t.Fatal("cleanup leaked")
 	}
-	mr.Set(RedisKeyInflight+"u", "legacySession:legacyMessage")
+	if err := mr.Set(RedisKeyInflight+"u", "legacySession:legacyMessage"); err != nil {
+		t.Fatal(err)
+	}
 	x, y, ok = s.loadInflightMapping(a, "u")
 	if !ok || x != "legacySession" || y != "legacyMessage" {
 		t.Fatal("legacy mapping unsupported")
@@ -53,6 +60,7 @@ func TestInflightOwnershipRedis(t *testing.T) {
 		t.Fatal("old cleanup deleted unowned legacy")
 	}
 }
+
 func TestInflightReverseFinishAndMissingOwner(t *testing.T) {
 	s := &Service{}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -67,6 +75,7 @@ func TestInflightReverseFinishAndMissingOwner(t *testing.T) {
 	s.finishInflight(a, "u", ea)
 	s.bindInflight(ctx, "u", "none", "none")
 }
+
 func TestInflightActualStopSelectsCurrent(t *testing.T) {
 	s := &Service{}
 	s.qaQueue = newQAQueue(1, 5, 3, 0, func(*qaRequest) {}, nil)
@@ -79,16 +88,32 @@ func TestInflightActualStopSelectsCurrent(t *testing.T) {
 	a, ea := s.beginInflight(ca, key, cancelA)
 	b, eb := s.beginInflight(cb, key, cancelB)
 	s.finishInflight(a, key, ea)
-	err := s.handleCommand(context.Background(), newStopCommand(), nil, &IncomingMessage{UserID: "user", ChatID: "chat"}, &auditBlockingAdapter{}, &IMChannel{ID: "channel", OutputMode: "full"}, &ChannelSession{}, nil)
+	err := s.handleCommand(context.Background(),
+		newStopCommand(),
+		nil,
+		&IncomingMessage{
+			UserID: "user",
+			ChatID: "chat",
+		},
+		&auditBlockingAdapter{},
+		&IMChannel{
+			ID:         "channel",
+			OutputMode: "full",
+		},
+		&ChannelSession{},
+		nil)
 	if err != nil || cb.Err() == nil || ca.Err() != nil {
 		t.Fatalf("stop failed: %v A=%v B=%v", err, ca.Err(), cb.Err())
 	}
 	s.finishInflight(b, key, eb)
 }
+
 func TestInflightRedisUnavailableAndCancelled(t *testing.T) {
 	mr := miniredis.RunT(t)
 	r := redis.NewClient(&redis.Options{Addr: mr.Addr(), MaxRetries: -1})
-	r.Close()
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
 	s := &Service{redis: r}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

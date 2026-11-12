@@ -460,7 +460,13 @@ func withIMIdentity(ctx context.Context, tenantID uint64, channelID string, msg 
 		ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalIMUser, ID: principalID})
 	}
 	ctx = context.WithValue(ctx, types.TenantRoleContextKey, types.TenantRoleViewer)
-	ctx = types.WithCaller(ctx, types.Caller{TenantID: tenantID, UserID: fmt.Sprintf("system-%d", tenantID), Role: types.TenantRoleViewer})
+	ctx = types.WithCaller(ctx,
+		types.Caller{
+			TenantID: tenantID,
+			UserID: fmt.Sprintf("system-%d",
+				tenantID),
+			Role: types.TenantRoleViewer,
+		})
 	// IM bots have no live client that can complete an in-conversation MCP OAuth
 	// prompt, so mark the context non-interactive: the agent emits a one-shot
 	// authorization notice (surfaced in the reply) instead of blocking until the
@@ -2287,7 +2293,10 @@ func imInitialSessionTitle(msg *IncomingMessage, identityTitle func(*IncomingMes
 // re-maps an existing session, that JOIN needs a one-row-per-session guard.
 func (s *Service) resolveUserSession(ctx context.Context, msg *IncomingMessage, tenantID uint64, agentID string, imChannelID string) (*ChannelSession, error) {
 	var cs ChannelSession
-	result := s.db.Where("platform = ? AND user_id = ? AND chat_id = ? AND tenant_id = ? AND agent_id = ? AND im_channel_id = ? AND deleted_at IS NULL",
+	result := s.db.Where("platform = ? AND user_id = ? AND chat_id = ? AND "+
+		"tenant_id = ? AND agent_id = ? AND im_channel_id = ? "+
+		"AND deleted_at IS NULL",
+
 		string(msg.Platform), msg.UserID, msg.ChatID, tenantID, agentID, imChannelID).
 		First(&cs)
 
@@ -2331,7 +2340,10 @@ func (s *Service) resolveUserSession(ctx context.Context, msg *IncomingMessage, 
 			logger.Warnf(ctx, "[IM] Failed to clean up orphaned session %s: %v", createdSession.ID, delErr)
 		}
 		var existing ChannelSession
-		if findErr := s.db.Where("platform = ? AND user_id = ? AND chat_id = ? AND tenant_id = ? AND agent_id = ? AND im_channel_id = ? AND deleted_at IS NULL",
+		if findErr := s.db.Where("platform = ? AND user_id = ? AND chat_id = ? AND "+
+			"tenant_id = ? AND agent_id = ? AND im_channel_id = ? "+
+			"AND deleted_at IS NULL",
+
 			string(msg.Platform), msg.UserID, msg.ChatID, tenantID, agentID, imChannelID).
 			First(&existing).Error; findErr != nil {
 			return nil, fmt.Errorf("create channel session: %w (lookup fallback: %v)", err, findErr)
@@ -2361,7 +2373,10 @@ func (s *Service) resolveThreadSession(ctx context.Context, msg *IncomingMessage
 
 	var cs ChannelSession
 	result := s.db.Where(
-		"platform = ? AND chat_id = ? AND thread_id = ? AND tenant_id = ? AND agent_id = ? AND im_channel_id = ? AND deleted_at IS NULL",
+		"platform = ? AND chat_id = ? AND thread_id = ? AND "+
+			"tenant_id = ? AND agent_id = ? AND im_channel_id = ? "+
+			"AND deleted_at IS NULL",
+
 		string(msg.Platform), msg.ChatID, threadID, tenantID, agentID, imChannelID,
 	).First(&cs)
 
@@ -2406,7 +2421,10 @@ func (s *Service) resolveThreadSession(ctx context.Context, msg *IncomingMessage
 		}
 		var existing ChannelSession
 		if findErr := s.db.Where(
-			"platform = ? AND chat_id = ? AND thread_id = ? AND tenant_id = ? AND agent_id = ? AND im_channel_id = ? AND deleted_at IS NULL",
+			"platform = ? AND chat_id = ? AND thread_id = ? AND "+
+				"tenant_id = ? AND agent_id = ? AND im_channel_id = ? "+
+				"AND deleted_at IS NULL",
+
 			string(msg.Platform), msg.ChatID, threadID, tenantID, agentID, imChannelID,
 		).First(&existing).Error; findErr != nil {
 			return nil, fmt.Errorf("create thread session: %w (lookup fallback: %v)", err, findErr)
@@ -2489,8 +2507,20 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 	useAgent := customAgent != nil && customAgent.IsAgentMode()
 	eventBus := event.NewEventBus()
 	provenance := &imMessageProvenance{}
-	eventBus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error { provenance.observe(evt); return nil })
-	eventBus.On(event.EventAgentComplete, func(_ context.Context, evt event.Event) error { provenance.observe(evt); return nil })
+	eventBus.On(event.EventAgentFinalAnswer,
+		func(_ context.Context,
+			evt event.Event,
+		) error {
+			provenance.observe(evt)
+			return nil
+		})
+	eventBus.On(event.EventAgentComplete,
+		func(_ context.Context,
+			evt event.Event,
+		) error {
+			provenance.observe(evt)
+			return nil
+		})
 
 	var (
 		bufMu           sync.Mutex
@@ -2762,7 +2792,12 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 	}
 
 	// Create placeholder assistant message
-	assistantMsg, err = s.messageService.CreateMessage(qaCtx, imAssistantMessage(ctx, session.ID, requestID, customAgent))
+	assistantMsg,
+		err = s.messageService.CreateMessage(qaCtx,
+		imAssistantMessage(ctx,
+			session.ID,
+			requestID,
+			customAgent))
 	if err != nil {
 		return fmt.Errorf("create assistant message: %w", err)
 	}
@@ -2929,7 +2964,7 @@ loop:
 	if finalizeErr != nil && fallbackErr != nil {
 		return errors.Join(finalizeErr, endErr, fallbackErr)
 	}
-	if endErr != nil && !(finalizeErr != nil && fallbackErr == nil) {
+	if endErr != nil && (finalizeErr == nil || fallbackErr != nil) {
 		return endErr
 	}
 	logger.Infof(ctx, "[IM] Stream reply sent: platform=%s user=%s answer_len=%d", msg.Platform, msg.UserID, len(answer))
@@ -2960,8 +2995,20 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 
 	eventBus := event.NewEventBus()
 	provenance := &imMessageProvenance{}
-	eventBus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error { provenance.observe(evt); return nil })
-	eventBus.On(event.EventAgentComplete, func(_ context.Context, evt event.Event) error { provenance.observe(evt); return nil })
+	eventBus.On(event.EventAgentFinalAnswer,
+		func(_ context.Context,
+			evt event.Event,
+		) error {
+			provenance.observe(evt)
+			return nil
+		})
+	eventBus.On(event.EventAgentComplete,
+		func(_ context.Context,
+			evt event.Event,
+		) error {
+			provenance.observe(evt)
+			return nil
+		})
 
 	// Thread-safe answer collection
 	var answerMu sync.Mutex
@@ -3033,7 +3080,12 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	}
 
 	// Create a placeholder assistant message
-	assistantMsg, err := s.messageService.CreateMessage(ctx, imAssistantMessage(ctx, session.ID, requestID, customAgent))
+	assistantMsg,
+		err := s.messageService.CreateMessage(ctx,
+		imAssistantMessage(ctx,
+			session.ID,
+			requestID,
+			customAgent))
 	if err != nil {
 		return "", fmt.Errorf("create assistant message: %w", err)
 	}
