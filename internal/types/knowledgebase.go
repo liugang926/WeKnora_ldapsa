@@ -600,6 +600,7 @@ type VLMConfig struct {
 	// confirmed specialized type switches OCR to its fixed dedicated prompt;
 	// anything else keeps the source-type default. Costs one extra VLM call
 	// per image. Off by default — existing knowledge bases are unchanged.
+	//nolint:lll // Go struct tags cannot be split without changing the schema.
 	EnableImageClassification bool `yaml:"enable_image_classification,omitempty" json:"enable_image_classification,omitempty"`
 
 	// 兼容老版本
