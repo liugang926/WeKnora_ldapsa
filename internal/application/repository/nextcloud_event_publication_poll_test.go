@@ -295,8 +295,7 @@ func TestNextcloudQueuedPublicationRejectsUnprovenDeletedOrphanReasons(t *testin
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			db, _, connection, now, candidate, version :=
-				nextcloudDeletedOrphanPublicationProofFixture(t)
+			db, _, connection, now, candidate, version := nextcloudDeletedOrphanPublicationProofFixture(t)
 			tc.mutate(t, db, candidate, version)
 			target := int64(2)
 			if tc.name == "newer upsert keeps file indexed" {
@@ -1683,10 +1682,14 @@ func TestRecoverQueuedEventSyncAllowsOnlyExactStaleBlocked(t *testing.T) {
 		errorCode string
 		allowed   bool
 	}{
-		{name: "exact stale manual review", state: "blocked",
-			errorCode: "sync_stale_manual_review", allowed: true},
-		{name: "other blocked state", state: "blocked",
-			errorCode: "source_changed", allowed: false},
+		{
+			name: "exact stale manual review", state: "blocked",
+			errorCode: "sync_stale_manual_review", allowed: true,
+		},
+		{
+			name: "other blocked state", state: "blocked",
+			errorCode: "source_changed", allowed: false,
+		},
 		{name: "idle state", state: "idle", errorCode: "", allowed: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -1759,14 +1762,22 @@ func TestResetTerminalEventRetryRejectsNonTerminalOrMismatchedWork(t *testing.T)
 		logStatus string
 		logID     string
 	}{
-		{name: "active log", state: "retry", errorCode: "sync_not_successful",
-			logStatus: types.SyncLogStatusRunning, logID: "event-log"},
-		{name: "queued dispatch", state: "queued", errorCode: "sync_not_successful",
-			logStatus: types.SyncLogStatusFailed, logID: "event-log"},
-		{name: "mismatched log", state: "retry", errorCode: "sync_not_successful",
-			logStatus: types.SyncLogStatusFailed, logID: "different-log"},
-		{name: "blocked dispatch", state: "blocked", errorCode: "sync_stale_manual_review",
-			logStatus: types.SyncLogStatusFailed, logID: "event-log"},
+		{
+			name: "active log", state: "retry", errorCode: "sync_not_successful",
+			logStatus: types.SyncLogStatusRunning, logID: "event-log",
+		},
+		{
+			name: "queued dispatch", state: "queued", errorCode: "sync_not_successful",
+			logStatus: types.SyncLogStatusFailed, logID: "event-log",
+		},
+		{
+			name: "mismatched log", state: "retry", errorCode: "sync_not_successful",
+			logStatus: types.SyncLogStatusFailed, logID: "different-log",
+		},
+		{
+			name: "blocked dispatch", state: "blocked", errorCode: "sync_stale_manual_review",
+			logStatus: types.SyncLogStatusFailed, logID: "event-log",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			db, inbox, now, _ := newNextcloudQueuedPublicationTest(t)

@@ -20,7 +20,9 @@ type wikiSettlementTransactionKey struct{}
 // the queue row, so a repeated op for the same parse attempt cannot drain a
 // different enrichment slot. No schema change is needed: receipt rows occupy a
 // separate task namespace and are never consumed as Wiki pending work.
-func (r *knowledgeRepository) SettleWikiPendingOp(ctx context.Context, opID int64, knowledgeID string, attempt int, terminalError string, failures int) error {
+func (r *knowledgeRepository) SettleWikiPendingOp(
+	ctx context.Context, opID int64, knowledgeID string, attempt int, terminalError string, failures int,
+) error {
 	if opID <= 0 || knowledgeID == "" {
 		return errors.New("wiki settlement requires a durable operation")
 	}
@@ -33,7 +35,8 @@ func (r *knowledgeRepository) SettleWikiPendingOp(ctx context.Context, opID int6
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Serialize receipts and reparses on the document before taking the queue row.
 		var k types.Knowledge
-		if err := tx.Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", knowledgeID).Take(&k).Error; err != nil {
+		if err := tx.Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ?", knowledgeID).Take(&k).Error; err != nil {
 			return err
 		}
 		var op types.TaskPendingOp
@@ -49,11 +52,16 @@ func (r *knowledgeRepository) SettleWikiPendingOp(ctx context.Context, opID int6
 			Attempt     int    `json:"attempt"`
 			Op          string `json:"op"`
 		}
-		if json.Unmarshal(op.Payload, &saved) != nil || saved.KnowledgeID != knowledgeID || saved.Op != "ingest" || saved.Attempt != attempt || op.TaskType != "wiki:ingest" || op.Scope != "knowledge_base" || op.ScopeID != k.KnowledgeBaseID || op.TenantID != k.TenantID || op.DedupKey != knowledgeID {
+		if json.Unmarshal(op.Payload, &saved) != nil || saved.KnowledgeID != knowledgeID ||
+			saved.Op != "ingest" || saved.Attempt != attempt || op.TaskType != "wiki:ingest" ||
+			op.Scope != "knowledge_base" || op.ScopeID != k.KnowledgeBaseID || op.TenantID != k.TenantID ||
+			op.DedupKey != knowledgeID {
 			return errors.New("wiki settlement operation changed")
 		}
 		var latest int
-		if err := tx.Model(&types.KnowledgeProcessingSpan{}).Where("knowledge_id = ? AND kind = ?", knowledgeID, types.SpanKindRoot).Select("COALESCE(MAX(attempt),0)").Scan(&latest).Error; err != nil {
+		if err := tx.Model(&types.KnowledgeProcessingSpan{}).
+			Where("knowledge_id = ? AND kind = ?", knowledgeID, types.SpanKindRoot).
+			Select("COALESCE(MAX(attempt),0)").Scan(&latest).Error; err != nil {
 			return err
 		}
 		if attempt == 0 {
@@ -62,7 +70,10 @@ func (r *knowledgeRepository) SettleWikiPendingOp(ctx context.Context, opID int6
 			if op.EnqueuedAt.IsZero() {
 				return errors.New("legacy wiki operation has no enqueue time")
 			}
-			if err := tx.Model(&types.KnowledgeProcessingSpan{}).Where("knowledge_id = ? AND kind = ? AND created_at <= ?", knowledgeID, types.SpanKindRoot, op.EnqueuedAt).Select("COALESCE(MAX(attempt),0)").Scan(&attempt).Error; err != nil {
+			if err := tx.Model(&types.KnowledgeProcessingSpan{}).
+				Where("knowledge_id = ? AND kind = ? AND created_at <= ?",
+					knowledgeID, types.SpanKindRoot, op.EnqueuedAt).
+				Select("COALESCE(MAX(attempt),0)").Scan(&attempt).Error; err != nil {
 				return err
 			}
 		}
@@ -75,12 +86,15 @@ func (r *knowledgeRepository) SettleWikiPendingOp(ctx context.Context, opID int6
 		}
 		key := strconv.Itoa(attempt)
 		var receipts int64
-		if err := tx.Model(&types.TaskPendingOp{}).Where("task_type = ? AND scope = ? AND scope_id = ? AND dedup_key = ?", "wiki:settled", "knowledge", knowledgeID, key).Count(&receipts).Error; err != nil {
+		if err := tx.Model(&types.TaskPendingOp{}).
+			Where("task_type = ? AND scope = ? AND scope_id = ? AND dedup_key = ?",
+				"wiki:settled", "knowledge", knowledgeID, key).Count(&receipts).Error; err != nil {
 			return err
 		}
 		if receipts == 0 {
 			proof := KnowledgeBuildInputProofFromContext(ctx)
-			if proof == nil || proof.KnowledgeID != knowledgeID || proof.TenantID != k.TenantID || proof.KnowledgeBaseID != k.KnowledgeBaseID {
+			if proof == nil || proof.KnowledgeID != knowledgeID || proof.TenantID != k.TenantID ||
+				proof.KnowledgeBaseID != k.KnowledgeBaseID {
 				return types.ErrSourceLineageUnknown
 			}
 			if k.ParseStatus == types.ParseStatusProcessing {
@@ -90,18 +104,27 @@ func (r *knowledgeRepository) SettleWikiPendingOp(ctx context.Context, opID int6
 				nested := *r
 				nested.db, nested.completionObserver = tx, nil
 				var err error
-				_, promoted, err = nested.FinalizeSubtask(context.WithValue(ctx, wikiSettlementTransactionKey{}, tx), knowledgeID)
+				_, promoted, err = nested.FinalizeSubtask(
+					context.WithValue(ctx, wikiSettlementTransactionKey{}, tx), knowledgeID,
+				)
 				if err != nil {
 					return err
 				}
 			}
-			receipt := types.TaskPendingOp{TenantID: k.TenantID, TaskType: "wiki:settled", Scope: "knowledge", ScopeID: knowledgeID, Op: "settled", DedupKey: key, Payload: json.RawMessage(fmt.Sprintf(`{"op_id":%d}`, opID)), EnqueuedAt: time.Now()}
+			receipt := types.TaskPendingOp{
+				TenantID: k.TenantID, TaskType: "wiki:settled", Scope: "knowledge", ScopeID: knowledgeID,
+				Op: "settled", DedupKey: key, Payload: json.RawMessage(fmt.Sprintf(`{"op_id":%d}`, opID)),
+				EnqueuedAt: time.Now(),
+			}
 			if err := tx.Create(&receipt).Error; err != nil {
 				return err
 			}
 		}
 		if terminalError != "" {
-			if err := tx.Create(&types.TaskDeadLetter{TenantID: k.TenantID, TaskType: op.TaskType, Scope: op.Scope, ScopeID: op.ScopeID, RelatedID: knowledgeID, Payload: op.Payload, LastError: terminalError, FailCount: failures}).Error; err != nil {
+			if err := tx.Create(&types.TaskDeadLetter{
+				TenantID: k.TenantID, TaskType: op.TaskType, Scope: op.Scope, ScopeID: op.ScopeID,
+				RelatedID: knowledgeID, Payload: op.Payload, LastError: terminalError, FailCount: failures,
+			}).Error; err != nil {
 				return err
 			}
 		}
@@ -122,9 +145,14 @@ func (r *knowledgeRepository) SettleWikiPendingOp(ctx context.Context, opID int6
 // original material receipt. It neither admits new input nor infers lineage
 // from channel metadata. The caller must restore the original actor and recheck
 // this proof before use; transaction writes revalidate it again.
-func (s *KnowledgeInputProvenanceStore) LoadKnowledgeOriginalInput(ctx context.Context, tenant uint64, kb, id string) (*types.KnowledgeBuildInputProof, error) {
+func (s *KnowledgeInputProvenanceStore) LoadKnowledgeOriginalInput(
+	ctx context.Context, tenant uint64, kb, id string,
+) (*types.KnowledgeBuildInputProof, error) {
 	var a knowledgeInputAdmission
-	err := s.db.WithContext(ctx).Table("knowledge_input_admissions AS a").Select("a.*").Joins("JOIN knowledge_input_material_receipts r ON r.admission_id=a.admission_id AND r.row_kind='knowledge' AND r.row_id=a.knowledge_id").Where("a.tenant_id=? AND a.knowledge_base_id=? AND a.knowledge_id=?", tenant, kb, id).Take(&a).Error
+	err := s.db.WithContext(ctx).Table("knowledge_input_admissions AS a").Select("a.*").
+		Joins("JOIN knowledge_input_material_receipts r ON r.admission_id=a.admission_id "+
+			"AND r.row_kind='knowledge' AND r.row_id=a.knowledge_id").
+		Where("a.tenant_id=? AND a.knowledge_base_id=? AND a.knowledge_id=?", tenant, kb, id).Take(&a).Error
 	if err != nil {
 		return nil, err
 	}
@@ -132,5 +160,9 @@ func (s *KnowledgeInputProvenanceStore) LoadKnowledgeOriginalInput(ctx context.C
 	if json.Unmarshal([]byte(a.SourceLineage), &lineage) != nil || lineage.RequireComplete() != nil {
 		return nil, types.ErrSourceLineageUnknown
 	}
-	return &types.KnowledgeBuildInputProof{Version: 1, TenantID: tenant, KnowledgeBaseID: kb, KnowledgeID: id, AdmissionID: a.AdmissionID, BuildGeneration: a.BuildGeneration, InputDigest: a.InputDigest, ConfigDigest: a.ConfigDigest, SourceLineage: &lineage}, nil
+	return &types.KnowledgeBuildInputProof{
+		Version: 1, TenantID: tenant, KnowledgeBaseID: kb, KnowledgeID: id, AdmissionID: a.AdmissionID,
+		BuildGeneration: a.BuildGeneration, InputDigest: a.InputDigest, ConfigDigest: a.ConfigDigest,
+		SourceLineage: &lineage,
+	}, nil
 }

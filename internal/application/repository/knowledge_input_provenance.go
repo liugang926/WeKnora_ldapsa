@@ -391,7 +391,9 @@ func (s *KnowledgeInputProvenanceStore) CreateKnowledgeWithInput(
 	return proof, err
 }
 
-func (s *KnowledgeInputProvenanceStore) createKnowledgeWithInputInTx(ctx context.Context, tx *gorm.DB, k *types.Knowledge, input any, origin knowledgeInputOrigin) (*types.KnowledgeBuildInputProof, error) {
+func (s *KnowledgeInputProvenanceStore) createKnowledgeWithInputInTx(
+	ctx context.Context, tx *gorm.DB, k *types.Knowledge, input any, origin knowledgeInputOrigin,
+) (*types.KnowledgeBuildInputProof, error) {
 	kb, err := loadKnowledgeBuildConfigurationInTx(tx, k.TenantID, k.KnowledgeBaseID)
 	if err != nil {
 		return nil, err
@@ -446,7 +448,9 @@ func (s *KnowledgeInputProvenanceStore) admitInTx(
 	}
 	if local, _ := ctx.Value(dingTalkLocalReparseKey{}).(bool); local {
 		var previous uint64
-		if err := tx.Model(&knowledgeInputAdmission{}).Where("knowledge_id = ? AND tenant_id = ?", k.ID, k.TenantID).Select("COALESCE(MAX(build_generation), 0)").Scan(&previous).Error; err != nil {
+		if err := tx.Model(&knowledgeInputAdmission{}).
+			Where("knowledge_id = ? AND tenant_id = ?", k.ID, k.TenantID).
+			Select("COALESCE(MAX(build_generation), 0)").Scan(&previous).Error; err != nil {
 			return nil, err
 		}
 		generation = previous + 1

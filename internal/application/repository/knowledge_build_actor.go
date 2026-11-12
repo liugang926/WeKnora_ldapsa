@@ -529,8 +529,9 @@ func validateLiveIMActor(ctx context.Context, actor knowledgeBuildActorSelector)
 	principal, verified := types.PrincipalFromContext(ctx)
 	_, machine := types.TenantAPIKeyScopeFromContext(ctx)
 	if !ok || !verified || machine || actor.APIKeyID != nil || scope.OwnerID == "" || scope.ChannelID == "" ||
-		principal.Type != types.PrincipalIMUser || actor.PrincipalType != principal.Type || actor.PrincipalID != principal.ID ||
-		actor.CallerTenantID != caller.TenantID || actor.UserID != caller.UserID || caller.Role != types.TenantRoleViewer {
+		principal.Type != types.PrincipalIMUser || actor.PrincipalType != principal.Type ||
+		actor.PrincipalID != principal.ID || actor.CallerTenantID != caller.TenantID ||
+		actor.UserID != caller.UserID || caller.Role != types.TenantRoleViewer {
 		return ErrKnowledgeInputChanged
 	}
 	return scope.Check(ctx, scope.TenantID, types.GroupResourceTypeAgent, scope.AgentID, types.ResourceActionUse)
