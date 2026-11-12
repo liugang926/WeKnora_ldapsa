@@ -39,6 +39,8 @@ type directoryPeriodicHTTPModel struct {
 	calls              atomic.Int64
 	inputFound         atomic.Bool
 	stopped            atomic.Bool
+	preflightPassed    atomic.Bool
+	idleEmptyPolls     atomic.Int64
 	syncedEpochs       atomic.Int64
 	faultApplied       atomic.Bool
 	sourceCallsAtFault atomic.Int64
@@ -70,6 +72,7 @@ func (m *directoryPeriodicHTTPModel) ChatStream(
 ) (<-chan types.StreamResponse, error) {
 	m.calls.Add(1)
 	if err := types.CheckHistoryMaterialLifetime(ctx); err != nil {
+		m.t.Errorf("provider material preflight failed: %v", err)
 		return nil, err
 	}
 	for _, message := range input {
@@ -84,17 +87,21 @@ func (m *directoryPeriodicHTTPModel) ChatStream(
 		}
 	}
 	if !m.inputFound.Load() {
+		m.t.Error("actual search/summary/merge did not consume the original signed source")
 		return nil, fmt.Errorf("actual search/summary/merge did not consume the original signed source")
 	}
 	for _, table := range []string{"original_body_leases", "nextcloud_content_leases"} {
 		var held int64
 		if err := m.f.DB.Table(table).Where("kind='read' AND released_at_ms IS NULL").Count(&held).Error; err != nil {
+			m.t.Errorf("provider lease preflight failed: %v", err)
 			return nil, err
 		}
 		if table == "original_body_leases" && held == 0 {
+			m.t.Errorf("original material lifetime must hold %s at model entry", table)
 			return nil, fmt.Errorf("original material lifetime must hold %s at model entry", table)
 		}
 	}
+	m.preflightPassed.Store(true)
 	out := make(chan types.StreamResponse)
 	go func() {
 		defer close(out)
@@ -161,9 +168,22 @@ func (m *directoryPeriodicHTTPModel) ChatStream(
 			}
 			return
 		}
+		if m.mode == "disabled-open-idle" {
+			for m.stream.consecutiveEmptyPolls.Load() < 10 {
+				select {
+				case <-ctx.Done():
+					m.stopped.Store(true)
+					return
+				case <-m.abandon:
+					return
+				case <-ticker.C:
+				}
+			}
+			m.idleEmptyPolls.Store(m.stream.consecutiveEmptyPolls.Load())
+		}
 		var err error
 		switch m.mode {
-		case "disabled":
+		case "disabled", "disabled-open-idle":
 			err = m.apply(ctx, false, true)
 		case "out_of_scope":
 			err = m.apply(ctx, true, false)
@@ -178,6 +198,15 @@ func (m *directoryPeriodicHTTPModel) ChatStream(
 		}
 		m.sourceCallsAtFault.Store(m.f.SourceAuthorizeCalls())
 		m.faultApplied.Store(true)
+		if m.mode == "disabled-open-idle" {
+			// No next frame or EOF may authenticate this cancellation.
+			select {
+			case <-ctx.Done():
+				m.stopped.Store(true)
+			case <-m.abandon:
+			}
+			return
+		}
 		// Emit an actual next provider frame after the committed directory
 		// change. Live WeKnora eligibility must refuse it before delivery.
 		select {
@@ -195,7 +224,7 @@ func (m *directoryPeriodicHTTPModel) ChatStream(
 }
 
 func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
-	for _, mode := range []string{"unchanged_complete_sync", "disabled", "out_of_scope", "unlinked"} {
+	for _, mode := range []string{"unchanged_complete_sync", "disabled", "out_of_scope", "unlinked", "disabled-open-idle"} {
 		t.Run(mode, func(t *testing.T) {
 			model := &directoryPeriodicHTTPModel{
 				t:                 t,
@@ -430,6 +459,11 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 			assert.EqualValues(t, 2, model.syncedEpochs.Load())
 			assert.EqualValues(t, 1, model.calls.Load())
 			assert.True(t, model.inputFound.Load())
+			assert.True(t, model.preflightPassed.Load(), "intended directory boundary follows successful provider preflight")
+			if mode == "disabled-open-idle" {
+				assert.GreaterOrEqual(t, model.idleEmptyPolls.Load(), int64(10))
+				assert.True(t, model.stopped.Load(), "idle directory refusal cancels the open provider")
+			}
 			assert.Positive(t, observed.emptyPolls.Load())
 			assert.Zero(t, f.SourceAuthorizeCalls(), "retired source read ACL is not called")
 			assert.Equal(t, capturedCaller, types.CallerFromContext(f.Ctx))
