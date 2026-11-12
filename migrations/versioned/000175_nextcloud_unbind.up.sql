@@ -24,7 +24,11 @@ BEGIN
         JOIN pg_proc p ON p.oid = tg.tgfoid
         WHERE NOT tg.tgisinternal
           AND c.relname = 'knowledge_bases'
-          AND pg_get_functiondef(p.oid) ILIKE '%provenance cannot be cleared%'
+          AND n.nspname = current_schema()
+          AND p.prokind = 'f'
+          AND p.prorettype = 'trigger'::regtype
+          AND p.pronargs = 0
+          AND p.prosrc ILIKE '%provenance cannot be cleared%'
     LOOP
         EXECUTE format('DROP TRIGGER IF EXISTS %I ON %I.%I', t.trigger_name, t.schema_name, t.table_name);
     END LOOP;
@@ -32,6 +36,9 @@ END $$;
 
 DROP FUNCTION IF EXISTS preserve_kb_nextcloud_provenance();
 
+-- Read stored source directly: pg_get_functiondef rejects aggregates and window
+-- entries, and WHERE predicate order cannot safely guard its evaluation. Only
+-- zero-argument trigger functions in the migration schema are provenance guards.
 DO $$
 DECLARE
     f RECORD;
@@ -40,8 +47,11 @@ BEGIN
         SELECT n.nspname AS schema_name, p.proname AS func_name
         FROM pg_proc p
         JOIN pg_namespace n ON n.oid = p.pronamespace
-        WHERE pg_get_functiondef(p.oid) ILIKE '%provenance cannot be cleared%'
-          AND n.nspname = 'public'
+        WHERE n.nspname = current_schema()
+          AND p.prokind = 'f'
+          AND p.prorettype = 'trigger'::regtype
+          AND p.pronargs = 0
+          AND p.prosrc ILIKE '%provenance cannot be cleared%'
     LOOP
         EXECUTE format('DROP FUNCTION IF EXISTS %I.%I()', f.schema_name, f.func_name);
     END LOOP;
