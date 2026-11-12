@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
@@ -52,7 +51,7 @@ func TestEventReceiptReviewCompleteRAGRuntimeCannotCertifyUnaccountedEventBody(t
 				require.Len(t, store.events, 1, "actual event handler did not reach the durable append")
 				require.Equal(t, "unaccounted source-derived body", store.events[0].Content)
 			}
-			require.ErrorIs(t, err, access.ErrNextcloudPublicationDenied)
+			require.ErrorIs(t, err, types.ErrSourceLineageUnknown)
 			require.Empty(t, store.events)
 			require.Empty(t, message.Content)
 		})
@@ -101,7 +100,7 @@ func TestEventReceiptReviewCompletionCannotSmuggleNewDerivedFields(t *testing.T)
 			},
 		},
 	)
-	require.ErrorIs(t, err, access.ErrNextcloudPublicationDenied)
+	require.ErrorIs(t, err, types.ErrSourceLineageUnknown)
 	require.False(t, message.IsCompleted)
 	require.Empty(t, message.KnowledgeReferences)
 }

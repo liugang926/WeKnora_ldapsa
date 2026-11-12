@@ -164,7 +164,7 @@ func TestRAGSourceLineageRejectsMissingPrefixAndUncoveredAgentEvents(t *testing.
 				Data: event.AgentFinalAnswerData{Content: "unaccounted body"},
 			},
 		),
-		access.ErrNextcloudPublicationDenied,
+		types.ErrSourceLineageUnknown,
 	)
 	require.Empty(t, store.events, "uncovered producer persisted a replayable body")
 	verifier := &ragPrefixVerifier{}

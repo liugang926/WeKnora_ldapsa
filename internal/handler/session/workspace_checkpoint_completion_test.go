@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/sandbox"
@@ -167,7 +166,7 @@ func TestQuickAnswerCheckpointRejectsUnknownProducerPrefix(t *testing.T) {
 	h.Subscribe()
 	require.ErrorIs(t, h.eventBus.Emit(context.Background(), event.Event{
 		Type: event.EventAgentComplete, Data: event.AgentCompleteData{MessageID: message.ID},
-	}), access.ErrNextcloudPublicationDenied)
+	}), types.ErrSourceLineageUnknown)
 	require.Zero(t, runner.calls, "an unknown producer prefix cannot reach the checkpoint")
 	require.Nil(t, message.SandboxCheckpoint)
 }
