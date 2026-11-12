@@ -17,7 +17,11 @@ const inflightTTL = 10 * time.Minute
 
 // Registration order on Redis selects its current request. No distributed
 // wall-clock ordering is assumed. Later binding/cleanup can never steal it.
-func (s *Service) beginInflight(ctx context.Context, key string, cancel context.CancelFunc) (context.Context, *inflightEntry) {
+func (s *Service) beginInflight(ctx context.Context,
+	key string,
+	cancel context.CancelFunc) (context.Context,
+	*inflightEntry,
+) {
 	hash := sha256.Sum256([]byte(key))
 	lock := &s.inflightRegistration[int(hash[0])%len(s.inflightRegistration)]
 	lock.Lock()
@@ -47,6 +51,7 @@ if v and string.sub(v,1,string.len(prefix))==prefix then
  return 1
 end
 return 0`)
+
 var inflightDeleteScript = redis.NewScript(`
 local v=redis.call('GET',KEYS[1])
 local prefix='v1|'..ARGV[1]..'|'
@@ -64,11 +69,22 @@ func (s *Service) bindInflight(ctx context.Context, key, session, message string
 	if s.redis != nil && ctx.Err() == nil {
 		op, done := context.WithTimeout(ctx, 2*time.Second)
 		defer done()
-		if err := inflightBindScript.Run(op, s.redis, []string{RedisKeyInflight + key}, e.token, session, message, inflightTTL.Milliseconds()).Err(); err != nil {
+		if err := inflightBindScript.Run(
+			op,
+			s.redis,
+			[]string{
+				RedisKeyInflight +
+					key,
+			},
+			e.token,
+			session,
+			message,
+			inflightTTL.Milliseconds()).Err(); err != nil {
 			logger.Warn(ctx, "[IM] Inflight binding unavailable")
 		}
 	}
 }
+
 func (s *Service) finishInflight(ctx context.Context, key string, e *inflightEntry) {
 	s.inflight.CompareAndDelete(key, e)
 	if s.redis != nil {
@@ -79,6 +95,7 @@ func (s *Service) finishInflight(ctx context.Context, key string, e *inflightEnt
 		}
 	}
 }
+
 func (s *Service) loadInflightMapping(ctx context.Context, key string) (session, message string, ok bool) {
 	if s.redis == nil {
 		return "", "", false

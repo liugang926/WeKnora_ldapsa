@@ -36,7 +36,13 @@ func TestHandleMessageStreamFinalDelivery(t *testing.T) {
 	}{
 		{name: "successful card"},
 		{name: "fallback delivers answer", finalizeErr: cardErr, wantFallbackAttempts: 1},
-		{name: "fallback succeeds despite card end failure", finalizeErr: cardErr, endErr: endErr, wantFallbackAttempts: 1},
+		{
+			name:                 "fallback succeeds despite card end failure",
+			finalizeErr:          cardErr,
+			endErr:               endErr,
+			wantFallbackAttempts: 1,
+		},
+
 		{name: "both deliveries fail", finalizeErr: cardErr, sendErr: sendErr, wantFallbackAttempts: 1, wantErr: sendErr},
 		{name: "end failure is reported without duplicate answer", endErr: endErr, wantErr: endErr},
 	} {

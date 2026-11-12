@@ -878,10 +878,12 @@ func lockStreamState(id string) (*streamState, error) {
 	return state, nil
 }
 
-const processingReceiptTimeout = 2 * time.Second
-const processingReceiptText = "收到，正在处理，请稍候。"
+const (
+	processingReceiptTimeout = 2 * time.Second
+	processingReceiptText    = "收到，正在处理，请稍候。"
+)
 
-// This is reached only after the IM service authorizes and dequeues the request.
+// StartStream is reached only after the IM service authorizes and dequeues the request.
 // A receipt is transport feedback, never assistant content or a QA completion.
 func (a *Adapter) StartStream(ctx context.Context, incoming *im.IncomingMessage) (string, error) {
 	if err := ctx.Err(); err != nil {
@@ -899,7 +901,12 @@ func (a *Adapter) StartStream(ctx context.Context, incoming *im.IncomingMessage)
 	streamsMu.Lock()
 	state, exists := dStreams[streamID]
 	if !exists {
-		state = &streamState{createdAt: time.Now(), lastActivity: time.Now(), requestDone: ctx.Done(), ready: make(chan struct{})}
+		state = &streamState{
+			createdAt:    time.Now(),
+			lastActivity: time.Now(),
+			requestDone:  ctx.Done(),
+			ready:        make(chan struct{}),
+		}
 		if incoming.Extra != nil {
 			state.sessionWebhook = incoming.Extra["session_webhook"]
 		}
@@ -1031,6 +1038,7 @@ func (a *Adapter) SendStreamChunk(ctx context.Context, incoming *im.IncomingMess
 	return a.UpdateStreamContent(ctx, incoming, streamID, content)
 }
 
+// EndStream completes delivery once and preserves the terminal result on repeated calls.
 func (a *Adapter) EndStream(ctx context.Context, incoming *im.IncomingMessage, streamID string) (retErr error) {
 	state, err := lockStreamState(streamID)
 	if err != nil {
