@@ -175,7 +175,7 @@ func (c *Connector) ListResources(
 	}
 	resources := make([]types.Resource, 0, len(children))
 	for _, child := range children {
-		if !child.isFolder() && !child.isDocument() && !child.isBinaryDocument() {
+		if !child.isFolder() && !child.isSyncableFile() {
 			continue
 		}
 		if child.WorkspaceID != "" && child.WorkspaceID != parentRef.WorkspaceID {
@@ -269,6 +269,15 @@ func (n node) isBinaryDocument() bool {
 	}
 	_, supported := dingTalkBinaryContentTypes[strings.ToLower(strings.TrimSpace(n.Extension))]
 	return supported
+}
+
+func (n node) isWorkbook() bool {
+	return strings.EqualFold(n.Type, "FILE") && strings.EqualFold(n.Category, "ALIDOC") &&
+		strings.EqualFold(strings.TrimSpace(n.Extension), "axls")
+}
+
+func (n node) isSyncableFile() bool {
+	return n.isDocument() || n.isBinaryDocument() || n.isWorkbook()
 }
 
 func (n node) binaryContentType() string {
@@ -532,7 +541,7 @@ func (c *Connector) sync(
 				continue
 			}
 
-			blocks, err := api.documentBlocks(ctx, document.ID)
+			rendered, err := readOnlineDocument(ctx, api, document)
 			if err != nil {
 				if isContextError(err) {
 					return nil, nil, err
@@ -550,7 +559,6 @@ func (c *Connector) sync(
 				}
 				continue
 			}
-			rendered := renderDocument(document.title(), blocks)
 			item := fetchedDocument(scope.ResourceID, scope.Reference.WorkspaceID, document, rendered)
 			sealFetchedArtifact(ctx, &item, scope, document, configDigest)
 			items = append(items, item)
@@ -683,7 +691,7 @@ func resolveSyncScopes(
 			return syncScope{
 				ResourceID: canonicalID, Reference: ref, StartNodeID: selectedNode.ID,
 			}, nil
-		case selectedNode.isDocument():
+		case selectedNode.isSyncableFile():
 			document := selectedNode
 			return syncScope{
 				ResourceID: canonicalID, Reference: ref, Document: &document,
@@ -793,7 +801,7 @@ func scanWorkspace(
 			if len(seenNodes) > maxTraversalNodes {
 				return nil, fmt.Errorf("DingTalk workspace exceeds %d nodes", maxTraversalNodes)
 			}
-			if child.isDocument() || child.isBinaryDocument() {
+			if child.isSyncableFile() {
 				documents = append(documents, child)
 			}
 			if child.isFolder() || child.HasChildren {
@@ -818,6 +826,18 @@ func cloneRevisions(revisions map[string]string) map[string]string {
 type renderResult struct {
 	Markdown     string
 	UnknownTypes []string
+}
+
+func readOnlineDocument(ctx context.Context, api dingTalkAPI, document node) (renderResult, error) {
+	if document.isWorkbook() {
+		content, err := api.workbookMarkdown(ctx, document)
+		return renderResult{Markdown: content}, err
+	}
+	blocks, err := api.documentBlocks(ctx, document.ID)
+	if err != nil {
+		return renderResult{}, err
+	}
+	return renderDocument(document.title(), blocks), nil
 }
 
 func fetchedDocument(

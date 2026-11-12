@@ -123,6 +123,7 @@ type dingTalkAPI interface {
 	listWorkspaces(context.Context) ([]workspace, error)
 	listNodes(context.Context, string) ([]node, error)
 	documentBlocks(context.Context, string) ([]json.RawMessage, error)
+	workbookMarkdown(context.Context, node) (string, error)
 	downloadWikiNode(context.Context, string, string) ([]byte, error)
 }
 

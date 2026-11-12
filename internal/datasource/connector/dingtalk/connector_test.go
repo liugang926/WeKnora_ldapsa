@@ -32,6 +32,10 @@ func (f *fakeAPI) listNodes(_ context.Context, parentID string) ([]node, error) 
 	return f.nodes[parentID], nil
 }
 
+func (f *fakeAPI) workbookMarkdown(context.Context, node) (string, error) {
+	return "", errors.New("unexpected workbook read")
+}
+
 func (f *fakeAPI) downloadWikiNode(_ context.Context, _, nodeID string) ([]byte, error) {
 	if f.downloadErrors != nil {
 		if err := f.downloadErrors[nodeID]; err != nil {
