@@ -68,7 +68,7 @@ fi
 # and re-export that one function so anydoc-go can keep the official serializer.
 prepare_patched_anydoc() {
   local dest="$crate_dir/patched-anydoc"
-  local patch_version="$anydoc_version:zip9.0.5:calamine0.37.0"
+  local patch_version="$anydoc_version:zip9.0.5:calamine0.38.0"
   # The marker records which version was patched: after a version bump the
   # copy left by the previous build is the wrong crate, and reusing it would
   # fail deep inside cargo's patch resolution instead of here. Cargo.toml is
@@ -108,7 +108,7 @@ prepare_patched_anydoc() {
   sed -i.bak 's/^use render::markdown::document_to_markdown;/pub use render::markdown::document_to_markdown;/' "$dest/src/lib.rs"
   rm -f "$dest/src/lib.rs.bak"
   # RustSec 2026-0367/0368/0369 require zip >=9. Keep the parser/C ABI pin,
-  # and use calamine's published zip-9-compatible release for spreadsheets.
+  # and calamine >=0.38 fixes the CFB bounds issues in RustSec 2026-0436.
   # Check the exact normalized dependency sections so upstream drift fails.
   if ! awk '
     /^\[/ { section=$0 }
@@ -118,7 +118,7 @@ prepare_patched_anydoc() {
     }
     section=="[dependencies.calamine]" && /^version = / {
       if ($0 !~ /^version = "0[.]36([.][0-9]+)?"$/) exit 2
-      print "version = \"=0.37.0\""; patched_calamine++; next
+      print "version = \"=0.38.0\""; patched_calamine++; next
     }
     { print }
     END { if (patched_zip != 1 || patched_calamine != 1) exit 2 }
@@ -145,6 +145,20 @@ echo "Building anydoc $anydoc_version archive for $target"
 prepare_patched_anydoc
 if [ "$prepare_only" = true ]; then exit 0; fi
 
+# Rust archives can retain LLVM bitcode (including from the prebuilt standard
+# library) even though cgo links their native machine code. Go rejects those
+# sections as untrusted linker inputs. Remove only the unused bitcode metadata
+# from the final Linux archive; keep Cargo's cached build artifact unchanged.
+case "$target" in
+  *-linux-*)
+    objcopy=${OBJCOPY:-objcopy}
+    if ! command -v "$objcopy" >/dev/null 2>&1; then
+      echo "error: objcopy not found. Install target-compatible binutils to build the Linux anydoc archive." >&2
+      exit 1
+    fi
+    ;;
+esac
+
 # --locked: build exactly the dependency versions in the committed Cargo.lock.
 # That lockfile is what pins the patched pdf-inspector/lopdf, so a silent
 # resolver drift must fail the build rather than ship an unaudited tree.
@@ -152,7 +166,15 @@ cargo build --release --locked --manifest-path "$crate_dir/Cargo.toml" --target 
 
 dest="$crate_dir/lib/$lib_dir"
 mkdir -p "$dest"
-cp "$crate_dir/target/$target/release/$lib_name" "$dest/$lib_name"
+staged_archive=$(mktemp "$dest/.$lib_name.XXXXXX")
+trap 'rm -f "$staged_archive"' EXIT
+cp "$crate_dir/target/$target/release/$lib_name" "$staged_archive"
+case "$target" in
+  *-linux-*) "$objcopy" --remove-section=.llvmbc --remove-section=.llvmcmd "$staged_archive" ;;
+esac
+chmod 0644 "$staged_archive"
+mv "$staged_archive" "$dest/$lib_name"
+trap - EXIT
 
 echo "Wrote $dest/$lib_name"
 echo "Build WeKnora with the archive: go build -tags anydoc ./cmd/server"
