@@ -16,18 +16,24 @@ func TestQueuedKnowledgeSnapshotLiveStatesAndErrors(t *testing.T) {
 	calls := map[string]int{}
 	for _, name := range []string{"pending", "scheduled", "retry", "active"} {
 		name := name
-		states = append(states, cancellableTaskState{name: name, list: func(_ string, _ ...asynq.ListOption) ([]*asynq.TaskInfo, error) {
-			calls[name]++
-			count := 1
-			if name == "pending" && calls[name] == 1 {
-				count = listPageSize
-			}
-			tasks := make([]*asynq.TaskInfo, count)
-			for i := range tasks {
-				tasks[i] = &asynq.TaskInfo{Type: types.TypeDocumentProcess, Payload: []byte(fmt.Sprintf(`{"knowledge_id":"%s-%d-%d"}`, name, calls[name], i))}
-			}
-			return tasks, nil
-		}})
+		states = append(states, cancellableTaskState{
+			name: name,
+			list: func(_ string, _ ...asynq.ListOption) ([]*asynq.TaskInfo, error) {
+				calls[name]++
+				count := 1
+				if name == "pending" && calls[name] == 1 {
+					count = listPageSize
+				}
+				tasks := make([]*asynq.TaskInfo, count)
+				for i := range tasks {
+					tasks[i] = &asynq.TaskInfo{
+						Type:    types.TypeDocumentProcess,
+						Payload: []byte(fmt.Sprintf(`{"knowledge_id":"%s-%d-%d"}`, name, calls[name], i)),
+					}
+				}
+				return tasks, nil
+			},
+		})
 	}
 	ids, err := scanQueuedKnowledgeIDs(context.Background(), []string{"default"}, states)
 	require.NoError(t, err)

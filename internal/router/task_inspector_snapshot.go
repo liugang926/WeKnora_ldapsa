@@ -10,8 +10,10 @@ import (
 	"github.com/hibiken/asynq"
 )
 
-var _ interfaces.QueuedKnowledgeInspector = (*asynqTaskInspector)(nil)
-var _ interfaces.QueuedKnowledgeInspector = noopTaskInspector{}
+var (
+	_ interfaces.QueuedKnowledgeInspector = (*asynqTaskInspector)(nil)
+	_ interfaces.QueuedKnowledgeInspector = noopTaskInspector{}
+)
 
 // QueuedKnowledgeIDs walks each live queue state once, not once per document.
 // Unlike the legacy best-effort single-row probe, scan errors are propagated
@@ -23,7 +25,11 @@ func (a *asynqTaskInspector) QueuedKnowledgeIDs(ctx context.Context) (map[string
 	return scanQueuedKnowledgeIDs(ctx, queuesScanned, a.cancellableTaskStates())
 }
 
-func scanQueuedKnowledgeIDs(ctx context.Context, queues []string, states []cancellableTaskState) (map[string]struct{}, error) {
+func scanQueuedKnowledgeIDs(
+	ctx context.Context,
+	queues []string,
+	states []cancellableTaskState,
+) (map[string]struct{}, error) {
 	ids := make(map[string]struct{})
 	for _, queue := range queues {
 		for _, state := range states {
@@ -47,7 +53,9 @@ func scanQueuedKnowledgeIDs(ctx context.Context, queues []string, states []cance
 					}
 					var probe knowledgeIDProbe
 					if err := json.Unmarshal(task.Payload, &probe); err != nil {
-						return nil, fmt.Errorf("invalid document task payload in queue %s state %s: %w", queue, state.name, err)
+						return nil, fmt.Errorf(
+							"invalid document task payload in queue %s state %s: %w", queue, state.name, err,
+						)
 					}
 					if probe.KnowledgeID != "" {
 						ids[probe.KnowledgeID] = struct{}{}

@@ -14,7 +14,9 @@ import (
 
 func TestDingTalkQueueInspectorExactIdentityAndBackendFailure(t *testing.T) {
 	server := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: server.Addr(), MaxRetries: -1, DialTimeout: time.Second, ReadTimeout: time.Second})
+	client := redis.NewClient(&redis.Options{
+		Addr: server.Addr(), MaxRetries: -1, DialTimeout: time.Second, ReadTimeout: time.Second,
+	})
 	t.Cleanup(func() { _ = client.Close() })
 	queue := asynq.NewClientFromRedisClient(client)
 	inspector := asynq.NewInspectorFromRedisClient(client)
