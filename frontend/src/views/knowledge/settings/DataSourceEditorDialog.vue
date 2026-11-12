@@ -512,6 +512,8 @@ function parseDailyCustomCron(cron: string): string | null {
 function onScheduleChange(value: unknown) {
   if (value === DAILY_CUSTOM) {
     form.value.sync_schedule = dailyCustomCron(dailyCustomTime.value)
+  } else if (typeof value === 'string') {
+    form.value.sync_schedule = value
   }
 }
 
