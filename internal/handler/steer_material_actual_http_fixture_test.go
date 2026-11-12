@@ -174,6 +174,7 @@ type actualSteerHTTPModel struct {
 	resumeOnce   sync.Once
 	calls        atomic.Int64
 	inputs       [][]chat.Message
+	onCanceled   func()
 	followUp     bool
 	claimFailure bool
 	titleCalls   atomic.Int64
@@ -248,6 +249,9 @@ func (m *actualSteerHTTPModel) ChatStream(
 			defer close(out)
 			select {
 			case <-ctx.Done():
+				if m.onCanceled != nil {
+					m.onCanceled()
+				}
 				return
 			case <-m.resume:
 			}

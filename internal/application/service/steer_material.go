@@ -498,7 +498,16 @@ func (s *messageService) ConsumeActualSteerIntoMessage(
 	return message, proof, check, closeRead3, nil
 }
 
-type steerCompletionOwnerKey struct{}
+type (
+	steerCompletionOwnerKey struct{}
+	stoppedSteerCauseKey    struct{}
+)
+
+// WithStoppedSteerCompletion marks the producer's final write after a user
+// stop. The material owner must carry exactly the same cancellation cause.
+func WithStoppedSteerCompletion(ctx context.Context, cause error) context.Context {
+	return context.WithValue(ctx, stoppedSteerCauseKey{}, cause)
+}
 
 // WithSteerCompletionOwner marks the async owner of a live HTTP agent run.
 func WithSteerCompletionOwner(ctx context.Context) context.Context {

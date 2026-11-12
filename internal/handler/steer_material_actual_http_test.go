@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -931,4 +933,90 @@ func TestSteerOriginalMaterialActualHTTPDeleteUsesExactOriginalControl(t *testin
 	require.Zero(t, model.calls.Load())
 	assertActualSteerBodyLease(t, f.db, "", false)
 	assertActualHTTPTailLeases(t, f.db, false, "")
+}
+
+func TestSteerUserStopAfterDisconnectPersistsPartial(t *testing.T) {
+	t.Run("current_owner", func(t *testing.T) { runDisconnectedSteerStop(t, false) })
+	t.Run("revoked_owner", func(t *testing.T) { runDisconnectedSteerStop(t, true) })
+}
+
+func runDisconnectedSteerStop(t *testing.T, revoke bool) {
+	f := newActualSteerHTTPFixture(t, true)
+	model := &actualSteerHTTPModel{t: t, f: f, followUp: true, ready: make(chan struct{}), resume: make(chan struct{})}
+	revoked := make(chan bool, 1)
+	if revoke {
+		model.onCanceled = func() {
+			res := f.db.Model(&types.User{}).Where("id='user'").Update("is_active", false)
+			revoked <- res.Error == nil && res.RowsAffected == 1
+		}
+	}
+	t.Cleanup(model.release)
+	h, _, streams, _ := newActualSteerHTTPHandler(t, f, model)
+	r := actualSteerHTTPRouter(f.ctx, h)
+	runCtx, disconnect := context.WithCancel(f.ctx)
+	defer disconnect()
+	r.POST("/agent-chat-disconnect/:session_id", func(c *gin.Context) {
+		c.Request = c.Request.WithContext(runCtx)
+		h.AgentQA(c)
+	})
+	r.POST("/sessions/:session_id/stop", h.StopSession)
+	p := map[string]interface{}{
+		"query": "actual current user task", "agent_id": "actual-steer-agent",
+		"agent_enabled": true, "summary_model_id": "actual-http-tail-model", "disable_title": true,
+	}
+	raw, err := json.Marshal(p)
+	require.NoError(t, err)
+	w := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		q := httptest.NewRequest("POST", "/agent-chat-disconnect/"+f.parent.SessionID, strings.NewReader(string(raw)))
+		q.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, q)
+	}()
+	select {
+	case <-model.ready:
+	case <-time.After(10 * time.Second):
+		t.Fatal("provider didn't enter")
+	}
+	var a types.Message
+	require.NoError(t, f.db.Where("session_id=? AND role='assistant' AND request_id<>?",
+		f.parent.SessionID, f.parent.RequestID).Take(&a).Error)
+	disconnect()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("HTTP didn't disconnect")
+	}
+	raw, err = json.Marshal(map[string]string{"message_id": a.ID})
+	require.NoError(t, err)
+	stop := httptest.NewRecorder()
+	q := httptest.NewRequest("POST", "/sessions/"+f.parent.SessionID+"/stop", strings.NewReader(string(raw)))
+	q.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(stop, q)
+	require.Equal(t, 200, stop.Code, stop.Body.String())
+	require.Eventually(t, func() bool {
+		live, _, err := streams.GetLiveRun(f.ctx, f.parent.SessionID)
+		return err == nil && live == ""
+	}, 5*time.Second, 80*time.Millisecond, "producer must finalize after stop")
+	var saved types.Message
+	require.NoError(t, f.db.First(&saved, "id=?", a.ID).Error)
+	if revoke {
+		select {
+		case applied := <-revoked:
+			require.True(t, applied)
+		default:
+			t.Fatal("account revocation was not applied before the final write")
+		}
+	}
+	require.Equal(t, !revoke, saved.IsCompleted)
+	var receipts int64
+	require.NoError(t, f.db.Table("message_completion_input_manifests m").
+		Joins("JOIN message_material_admissions a ON a.id=m.assistant_admission_id").
+		Where("a.message_id=?", a.ID).Count(&receipts).Error)
+	if revoke {
+		require.Zero(t, receipts)
+	} else {
+		require.EqualValues(t, 1, receipts)
+	}
 }

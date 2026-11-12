@@ -415,7 +415,11 @@ func (s *messageService) UpdateMessage(ctx context.Context, message *types.Messa
 		}
 	}
 	var finishCompletion func(error) error
-	if materialBoundaryRequired || hasBoundSteerCompletion(ctx, message) {
+	boundSteer := hasBoundSteerCompletion(ctx, message)
+	if ctx.Value(stoppedSteerCauseKey{}) != nil && !boundSteer {
+		return types.ErrSourceLineageUnknown
+	}
+	if materialBoundaryRequired || boundSteer {
 		ctx, finishCompletion, err = s.beginMessageMaterialCompletion(ctx, message)
 		if err != nil {
 			return err

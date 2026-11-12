@@ -350,6 +350,7 @@ func (h *Handler) setupStopEventHandler(
 	sessionID string,
 	sessionTenantID uint64,
 	assistantMessage *types.Message,
+	producerSavesStop bool,
 	cancel context.CancelCauseFunc,
 ) {
 	eventBus.On(event.EventStop, func(ctx context.Context, evt event.Event) error {
@@ -359,6 +360,11 @@ func (h *Handler) setupStopEventHandler(
 			cancel(errGenerationStoppedByUser)
 		} else {
 			cancel(nil)
+		}
+		// A steerable producer saves a user stop after its last event, while
+		// it still holds the original inputs. Other causes leave it incomplete.
+		if producerSavesStop {
+			return nil
 		}
 		if data.Reason == "original_material_unavailable" || data.Reason == "source_access_changed" {
 			// Revocation terminates the producer without granting its partial

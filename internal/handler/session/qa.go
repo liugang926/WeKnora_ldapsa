@@ -924,7 +924,8 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 
 	// Setup stop event handler
 	h.setupStopEventHandler(
-		eventBus, reqCtx.sessionID, reqCtx.session.TenantID, reqCtx.assistantMessage, cancelGeneration,
+		eventBus, reqCtx.sessionID, reqCtx.session.TenantID, reqCtx.assistantMessage,
+		steerable && materialCheck != nil, cancelGeneration,
 	)
 
 	// Watch for stop events on the generation context, which already survives
@@ -1605,9 +1606,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 							injected = streamCtx.steerSink.InjectedIDs()
 						}
 						h.discardSteerBacklog(updateCtx, sessionID, streamCtx.assistantMessage.ID, injected)
-						h.completeStreamAssistantMessage(
-							updateCtx, streamCtx, reqCtx.query, reqCtx.userMessageID,
-						)
+						h.completeCanceledAgentTurn(updateCtx, streamCtx, reqCtx.query, reqCtx.userMessageID)
 					} else {
 						kicked := h.kickNextRunFromSteerBacklog(updateCtx, reqCtx, streamCtx)
 						h.completeStreamAssistantMessage(
@@ -2153,6 +2152,22 @@ func (h *Handler) sessionTenantInfoContext(ctx context.Context) (context.Context
 		return ctx, false
 	}
 	return context.WithValue(ctx, types.TenantInfoContextKey, tenant), true
+}
+
+// A stopped, steerable generation owns its inputs until this final write.
+// Only an explicit user stop can commit its partial assistant.
+func (h *Handler) completeCanceledAgentTurn(ctx context.Context, streamCtx *sseStreamContext, query, userID string) {
+	if streamCtx.steerSink == nil || streamCtx.materialCheck == nil {
+		h.completeStreamAssistantMessage(ctx, streamCtx, query, userID)
+		return
+	}
+	if context.Cause(streamCtx.asyncCtx) != errGenerationStoppedByUser {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	ctx = applicationservice.WithStoppedSteerCompletion(ctx, errGenerationStoppedByUser)
+	_ = h.completeAssistantMessage(ctx, streamCtx.assistantMessage, "", "")
 }
 
 // completeStreamAssistantMessage makes output readable before notifying clients
