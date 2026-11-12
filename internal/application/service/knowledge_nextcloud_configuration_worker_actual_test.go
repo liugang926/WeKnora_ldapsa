@@ -38,7 +38,9 @@ const (
 // A controlled, signed actual HTTP source. The document bytes pass through
 // the production connector, file storage, admission and processing pipeline.
 // These tests do not claim enterprise LDAPS or an external model provider.
-func newScopedConfigurationWorkerSource(t *testing.T, decision *atomic.Int32) *httptest.Server {
+func newScopedConfigurationWorkerSource(
+	t *testing.T, decision *atomic.Int32, managerRevoked *atomic.Bool,
+) *httptest.Server {
 	t.Helper()
 	artifact := strings.Repeat("Actual source document material for the approved processing template. ", 8)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -148,18 +150,21 @@ func newScopedConfigurationWorkerSource(t *testing.T, decision *atomic.Int32) *h
 			for key, value := range scope {
 				response[key] = value
 			}
-			response["binding_id"], response["allow"], response["reason"] = binding, true, "authorized"
+			response["binding_id"], response["checked_at"] = binding, time.Now().Unix()
+			if managerRevoked != nil && managerRevoked.Load() {
+				response["allow"], response["reason"] = false, "manager_denied"
+				w.WriteHeader(http.StatusForbidden)
+				require.NoError(t, json.NewEncoder(w).Encode(response))
+				return
+			}
+			response["allow"], response["reason"] = true, "authorized"
 			response["root_file_id"], response["rule_id"], response["rule_revision"] = "7",
 				"controlled-actual-rule",
 				"1"
 			if binding == scopedWorkerTargetBinding {
 				response["root_file_id"] = "8"
 			}
-			response["publication_epoch"], response["policy_revision"], response["checked_at"] = "1", strings.Repeat(
-				"a",
-				64,
-			), time.Now().
-				Unix()
+			response["publication_epoch"], response["policy_revision"] = "1", strings.Repeat("a", 64)
 			require.NoError(t, json.NewEncoder(w).Encode(response))
 		case strings.HasSuffix(r.URL.Path, "/authorize"):
 			var input struct {
@@ -314,7 +319,7 @@ func newScopedConfigurationWorkerFixture(
 	decision *atomic.Int32,
 ) (*machinePipelineFixture, types.NextcloudOnboardingCredential) {
 	t.Helper()
-	server := newScopedConfigurationWorkerSource(t, decision)
+	server := newScopedConfigurationWorkerSource(t, decision, nil)
 	var sourceOp types.NextcloudOnboardingOperation
 	var sourceCredential types.NextcloudOnboardingCredential
 	var sourcePairCtx context.Context
@@ -536,6 +541,7 @@ func newScopedConfigurationWorkerFixture(
 	scopedWorkerActivate(pairCtx, t, m.f, credential, op, &pair)
 	targetDS, err := sources.FindByID(context.Background(), pair.DataSourceID)
 	require.NoError(t, err)
+	setMachinePipelineCapacityPolicy(t, m.f.db, targetDS)
 	target := *m
 	target.ds, target.externalID, target.etag = targetDS, "nextcloud:instance:88", "target-etag"
 	return &target, credential
@@ -598,17 +604,12 @@ func TestNextcloudSourceBoundConfigurationFreshWorkerActualSQLite(t *testing.T) 
 				m.f.guard,
 				repository.NewDataSourceRepository(m.f.db),
 			)
-			require.ErrorIs(
-				t,
-				verifier.(*knowledgeOriginalInputSourceVerifier).CheckKnowledgeConfigurationSources(
-					context.Background(),
-					7,
-					config.ID,
-					sources,
-				),
-				access.ErrNextcloudPublicationDenied,
-				"a public reader cannot acquire the worker purpose from IDs or lineage",
+			_, closeRead, err := verifier.(*knowledgeOriginalInputSourceVerifier).BeginKnowledgeConfigurationSources(
+				context.Background(), 7, config.ID, sources,
 			)
+			closeRead()
+			require.ErrorIs(t, err, types.ErrSourceLineageUnknown,
+				"a public reader cannot acquire the worker purpose from IDs or lineage")
 			observed := false
 			m.f.s.modelService = scopedConfigurationObservingModels{
 				ModelService: m.f.s.modelService,

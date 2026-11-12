@@ -29,7 +29,7 @@ func TestHousekeeping_SnapshotOncePerSweep(t *testing.T) {
 	db := setupHousekeepingDB(t)
 	inspector := &sweepSnapshotInspector{fakeTaskInspector: fakeTaskInspector{queued: map[string]bool{}}}
 	svc := newHousekeepingSvcWithInspector(db, inspector)
-	stale := time.Now().Add(-3 * time.Hour)
+	stale := time.Now().Add(-90 * time.Minute)
 	for i := 0; i < 12; i++ {
 		id := fmt.Sprintf("queued-%d", i)
 		insertKnowledge(t, db, id, types.ParseStatusFinalizing, stale)
@@ -37,6 +37,9 @@ func TestHousekeeping_SnapshotOncePerSweep(t *testing.T) {
 	}
 	insertKnowledge(t, db, "durable", types.ParseStatusFinalizing, stale)
 	insertWikiPendingOp(t, db, "kb-1", "durable")
+	// Even a queued task must surface as failed beyond twice the 70-minute threshold.
+	inspector.queued["expired"] = true
+	insertKnowledge(t, db, "expired", types.ParseStatusProcessing, time.Now().Add(-3*time.Hour))
 	insertKnowledge(t, db, "orphan", types.ParseStatusProcessing, stale)
 	svc.runSweep(context.Background())
 	require.Equal(t, 1, inspector.scans)
@@ -47,6 +50,8 @@ func TestHousekeeping_SnapshotOncePerSweep(t *testing.T) {
 	}
 	status, _ := readKnowledgeStatus(t, db, "durable")
 	require.Equal(t, types.ParseStatusFinalizing, status)
+	status, _ = readKnowledgeStatus(t, db, "expired")
+	require.Equal(t, types.ParseStatusFailed, status)
 	status, _ = readKnowledgeStatus(t, db, "orphan")
 	require.Equal(t, types.ParseStatusFailed, status)
 }
