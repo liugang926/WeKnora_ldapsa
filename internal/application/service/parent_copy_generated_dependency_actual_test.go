@@ -160,9 +160,9 @@ func runParentCopyActualGeneratedDependency(t *testing.T, pg bool) {
 					},
 				),
 			)
-			_, err = messages.GetMessage(writer, session.ID, parent.ID)
+			_, err = readContractMessageInput(writer, messages, session.ID, parent.ID)
 			require.NoError(t, err)
-			_, err = messages.GetMessage(writer, session.ID, user.ID)
+			_, err = readContractMessageInput(writer, messages, session.ID, user.ID)
 			require.NoError(t, err)
 			require.NoError(
 				t,
@@ -192,7 +192,15 @@ func runParentCopyActualGeneratedDependency(t *testing.T, pg bool) {
 					},
 				),
 			)
-			_, err = messages.GetMessage(copyWriter, session.ID, user.ID)
+			// The legacy copy consumes the source image and pins the host rendered field.
+			readGeneratedUser := func(ctx context.Context, id string) error {
+				_, err := messages.admittedMessages(ctx, types.MessageMaterialReadRequest{
+					TenantID: session.TenantID, SessionID: session.ID, MessageIDs: []string{id},
+					IncludeOriginalUserFields: true,
+				})
+				return err
+			}
+			err = readGeneratedUser(copyWriter, user.ID)
 			require.NoError(t, err)
 			parents, err := messageMaterialBoundarySnapshots(copyWriter)
 			require.NoError(t, err)
@@ -211,7 +219,7 @@ func runParentCopyActualGeneratedDependency(t *testing.T, pg bool) {
 			require.Empty(t, user.SourceLineage.Sources)
 			require.Len(t, imageProof.SourceLineage.Sources, 1)
 			require.Len(t, parents[0].Proofs[0].SourceLineage.Sources, 1)
-			_, err = messages.GetMessage(copyWriter, session.ID, host.ID)
+			err = readGeneratedUser(copyWriter, host.ID)
 			require.NoError(t, err)
 			originalParents, err := messageMaterialBoundarySnapshots(copyWriter)
 			require.NoError(t, err)
@@ -489,10 +497,8 @@ func runParentCopyActualGeneratedDependency(t *testing.T, pg bool) {
 			})
 			require.NoError(t, versions.TombstoneNextcloudVersion(ctx, 7, "kb", m.ds.ID, "nextcloud:instance:77"))
 			m.allow.Store(false)
-			_, err = messages.GetMessage(
-				context.WithValue(ctx, agentHistoryCurrentRequestKey{}, "source-consuming-reader"),
-				session.ID,
-				user.ID,
+			err = readGeneratedUser(
+				context.WithValue(ctx, agentHistoryCurrentRequestKey{}, "source-consuming-reader"), user.ID,
 			)
 			require.Error(t, err, "original generated consumer must refuse retired source before copy purge")
 			_, err = messages.GetMessage(ctx, session.ID, host.ID)
