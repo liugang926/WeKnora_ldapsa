@@ -49,6 +49,7 @@ func executeCodeOwnedSandboxTool(
 	return result, err
 }
 
+// ExecuteSourceLineage accounts for the session-scoped sandbox listing.
 func (t *ListSandboxFilesTool) ExecuteSourceLineage(
 	ctx context.Context,
 	args json.RawMessage,
@@ -56,6 +57,7 @@ func (t *ListSandboxFilesTool) ExecuteSourceLineage(
 	return executeCodeOwnedSandboxTool(ctx, args, t.Execute)
 }
 
+// ExecuteSourceLineage accounts for the session-scoped file read.
 func (t *ReadFileTool) ExecuteSourceLineage(
 	ctx context.Context,
 	args json.RawMessage,
@@ -63,6 +65,7 @@ func (t *ReadFileTool) ExecuteSourceLineage(
 	return executeCodeOwnedSandboxTool(ctx, args, t.Execute)
 }
 
+// ExecuteSourceLineage accounts for the session-scoped sandbox write.
 func (t *WriteSandboxFileTool) ExecuteSourceLineage(
 	ctx context.Context,
 	args json.RawMessage,
@@ -70,6 +73,7 @@ func (t *WriteSandboxFileTool) ExecuteSourceLineage(
 	return executeCodeOwnedSandboxTool(ctx, args, t.Execute)
 }
 
+// ExecuteSourceLineage accounts for the session-scoped sandbox edit.
 func (t *EditSandboxFileTool) ExecuteSourceLineage(
 	ctx context.Context,
 	args json.RawMessage,
@@ -77,6 +81,7 @@ func (t *EditSandboxFileTool) ExecuteSourceLineage(
 	return executeCodeOwnedSandboxTool(ctx, args, t.Execute)
 }
 
+// ExecuteSourceLineage accounts for the session-scoped shell operation.
 func (t *ShellExecTool) ExecuteSourceLineage(
 	ctx context.Context,
 	args json.RawMessage,
