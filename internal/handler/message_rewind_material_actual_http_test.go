@@ -340,9 +340,15 @@ func TestMessageRewindActualHTTPFinalWriterRejectsActorSourceBodyAndControlABA(t
 				}
 			})
 			require.True(t, w.observed, "race must occur after actual delete and before guarded JSON serialization")
-			require.Zero(t, w.countWrites)
-			require.NotContains(t, w.Body.String(), "deleted_messages")
-			require.NotContains(t, w.Body.String(), `"success":true`)
+			if mode == "source_revoke" {
+				require.Equal(t, 1, w.countWrites)
+				require.Contains(t, w.Body.String(), `"deleted_messages":2`)
+				require.Contains(t, w.Body.String(), `"success":true`)
+			} else {
+				require.Zero(t, w.countWrites)
+				require.NotContains(t, w.Body.String(), "deleted_messages")
+				require.NotContains(t, w.Body.String(), `"success":true`)
+			}
 			assertActualHTTPTailLeases(t, f.db, false, "")
 		})
 	}
