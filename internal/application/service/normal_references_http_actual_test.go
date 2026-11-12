@@ -345,6 +345,11 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	}))
 	t.Cleanup(func() { f.Cancel(); server.CloseClientConnections(); server.Close() })
 	client := &http.Client{Timeout: 8 * time.Second}
+	if pg {
+		// The client deadline covers the entire streamed response, including
+		// PostgreSQL material checks before and after the bounded idle sample.
+		client.Timeout = normalReferencesHTTPReturnTimeout
+	}
 	response, err := client.Post(
 		server.URL+"/knowledge-chat/"+f.Session.ID,
 		"application/json",
