@@ -107,7 +107,7 @@ def _make_vector_sheet_pdf(
             (
                 b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] "
                 b"/Resources << /Font << /F1 3 0 R >> >> /Contents %d 0 R >>"
-                % next_id
+                % (next_id + 1)
             )
         )
         objects.append(
@@ -126,7 +126,7 @@ def _make_vector_sheet_pdf(
         objects.append(
             (
                 b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] "
-                b"/Contents %d 0 R >>" % next_id
+                b"/Contents %d 0 R >>" % (next_id + 1)
             )
         )
         objects.append(
