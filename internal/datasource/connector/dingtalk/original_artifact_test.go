@@ -12,9 +12,14 @@ import (
 
 func artifactFixture() (*Connector, *fakeAPI, *types.DataSourceConfig) {
 	api := &fakeAPI{workspaces: []workspace{{ID: "w", RootNodeID: "root"}}, nodes: map[string][]node{
-		"root":   {{ID: "folder", Type: "FOLDER", WorkspaceID: "w"}},
-		"folder": {{ID: "doc", Type: "FILE", Category: "ALIDOC", Extension: "adoc", WorkspaceID: "w", Name: "Synthetic", ModifiedTimestamp: 1234}},
-	}, blocks: map[string][]json.RawMessage{"doc": {rawJSON(`{"blockType":"paragraph","children":[{"elementType":"text","text":"synthetic text"}]}`)}}}
+		"root": {{ID: "folder", Type: "FOLDER", WorkspaceID: "w"}},
+		"folder": {{
+			ID: "doc", Type: "FILE", Category: "ALIDOC", Extension: "adoc",
+			WorkspaceID: "w", Name: "Synthetic", ModifiedTimestamp: 1234,
+		}},
+	}, blocks: map[string][]json.RawMessage{"doc": {rawJSON(
+		`{"blockType":"paragraph","children":[{"elementType":"text","text":"synthetic text"}]}`,
+	)}}}
 	return testConnector(api), api, testConfig("w")
 }
 
@@ -89,9 +94,9 @@ func TestOriginalArtifactRejectsForgeryAndMutation(t *testing.T) {
 	}
 	body, err := json.Marshal(original)
 	require.NoError(t, err)
-	var copy types.FetchedItem
-	require.NoError(t, json.Unmarshal(body, &copy))
-	_, err = VerifyOriginalFetchedArtifact(&copy)
+	var roundTripped types.FetchedItem
+	require.NoError(t, json.Unmarshal(body, &roundTripped))
+	_, err = VerifyOriginalFetchedArtifact(&roundTripped)
 	require.Error(t, err)
 	_, err = VerifyOriginalFetchedArtifact(nil)
 	require.Error(t, err)

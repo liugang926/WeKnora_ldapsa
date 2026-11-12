@@ -13,8 +13,10 @@ func TestCursorRecoveryOnlyRefetchesUnconfirmedLocalDeletion(t *testing.T) {
 		if version == 1 {
 			key = "workspaces"
 		}
-		cursor := &types.SyncCursor{ConnectorCursor: map[string]interface{}{"version": version,
-			key: map[string]map[string]string{"selected": {"still-remote": "unchanged-revision"}}}}
+		cursor := &types.SyncCursor{ConnectorCursor: map[string]interface{}{
+			"version": version,
+			key:       map[string]map[string]string{"selected": {"still-remote": "unchanged-revision"}},
+		}}
 		local, err := CursorContainsAnyDocument(cursor, []string{"still-remote"})
 		require.NoError(t, err)
 		require.True(t, local)
@@ -22,6 +24,9 @@ func TestCursorRecoveryOnlyRefetchesUnconfirmedLocalDeletion(t *testing.T) {
 		require.NoError(t, err)
 		require.False(t, remote, "a remote tombstone must not force permanent full body fetches")
 	}
-	_, err := CursorContainsAnyDocument(&types.SyncCursor{ConnectorCursor: map[string]interface{}{"version": -1}}, []string{"doc"})
+	_, err := CursorContainsAnyDocument(
+		&types.SyncCursor{ConnectorCursor: map[string]interface{}{"version": -1}},
+		[]string{"doc"},
+	)
 	require.Error(t, err)
 }
