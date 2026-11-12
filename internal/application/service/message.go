@@ -836,8 +836,10 @@ func (s *messageService) ListArtifactLibrary(
 		if err != nil {
 			return nil, err
 		}
-		if err := s.CheckMessagePublication(ctx, message); err != nil {
-			return nil, err
+		if message.ExecutionContext.ExplicitInputMaterials {
+			if err := s.checkTypedSourceLineage(ctx, message); err != nil {
+				return nil, err
+			}
 		}
 		if handle, ok := types.ParseResourcePath(item.URL); ok {
 			item.Handle = types.BuildResourcePath(handle)

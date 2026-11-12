@@ -1331,8 +1331,9 @@ func (s *agentService) getKnowledgeBaseInfos(
 			kbInfos = append(kbInfos, &agent.KnowledgeBaseInfo{
 				SourceLineage: sourceIndependentPromptLineage(),
 				ID:            kb.ID, Name: kb.Name, Type: kb.Type, Description: kb.Description,
-				Capabilities: kbRetrievalCapabilities(kb),
-				RecentDocs:   []agent.RecentDocInfo{},
+				Capabilities:         kbRetrievalCapabilities(kb),
+				OmitDocumentMetadata: true,
+				RecentDocs:           []agent.RecentDocInfo{},
 			})
 			continue
 		}

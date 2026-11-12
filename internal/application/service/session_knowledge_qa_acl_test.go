@@ -135,7 +135,7 @@ func TestKnowledgeQAAuthorizerRemainsStrictForExplicitInputMaterials(t *testing.
 	service := &sessionService{sessionRepo: repository}
 	manager := chatpipeline.NewEventManager()
 
-	_, err := manager.BeginSourceLineage(
+	ctx, err := manager.BeginSourceLineage(
 		ragReadContext(),
 		&types.ChatManage{PipelineRequest: types.PipelineRequest{
 			Images: []string{"resource://image"},
@@ -143,7 +143,9 @@ func TestKnowledgeQAAuthorizerRemainsStrictForExplicitInputMaterials(t *testing.
 		access.LineageReadScope{},
 		service.knowledgeQAAuthorizer(session),
 	)
-	require.Error(t, err)
+	require.NoError(t, err)
+	_, err = types.RAGSourceLineageFromContext(ctx).CheckedSnapshot(ctx)
+	require.ErrorIs(t, err, types.ErrSourceLineageUnknown)
 	require.Zero(t, repository.calls, "ordinary ACL authorizer handled explicit material input")
 }
 

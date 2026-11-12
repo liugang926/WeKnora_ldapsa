@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
@@ -72,11 +71,11 @@ func actualAgentHistoryRequest(t *testing.T, sessionService *sessionService, req
 
 // Only the locally constructed literal rows in the checkpoint unit test use
 // this adapter. Unknown, incomplete and nonempty sources remain rejected.
-type literalHistoryAdmission struct{ guard *access.NextcloudHistoryGuard }
+type literalHistoryAdmission struct{ checkReplay func(context.Context) error }
 
 // CheckAgentHistoryReplay rechecks the exact source-state seam under test.
 func (a literalHistoryAdmission) CheckAgentHistoryReplay(ctx context.Context) error {
-	return a.guard.CheckAgentHistoryReplay(ctx)
+	return a.checkReplay(ctx)
 }
 
 // CheckMessageSourceLineage accepts only the explicitly authored local literals.

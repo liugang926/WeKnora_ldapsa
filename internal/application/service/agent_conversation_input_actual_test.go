@@ -91,7 +91,7 @@ func TestAgentConversationActualControlledHistoryPreservesAllSourceInputs(t *tes
 	require.NoError(t, lineage.RequireComplete())
 	require.NotEmpty(t, lineage.Sources, "a source-aware saved answer must not become an empty-source tool result")
 	require.NoError(t, CheckMessageMaterialOutputBoundary(ctx))
-	f.m.allow.Store(false)
+	retireRAGFixtureSource(t, f.m, f.source)
 	require.Error(t, CheckMessageMaterialOutputBoundary(ctx))
 }
 

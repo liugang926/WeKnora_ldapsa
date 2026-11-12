@@ -95,9 +95,24 @@ func agentPromptProjectionBody(g *agentPromptInputGuard) (string, error) {
 	return string(body), err
 }
 
-// CheckHeld preserves the retired Nextcloud input-guard compatibility API.
+// CheckHeld binds held prompt bytes and the server-selected template to their consumer.
 func (g *agentPromptInputGuard) CheckHeld() error {
-	return nil // retired with the NextCloud decoupling 2026-11-09
+	if g == nil {
+		return access.ErrNextcloudPublicationUnavailable
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.closed || g.ctx == nil || g.ctx.Err() != nil {
+		return access.ErrNextcloudPublicationUnavailable
+	}
+	body, err := agentPromptProjectionBody(g)
+	if err != nil || body != g.body {
+		return access.ErrNextcloudPublicationDenied
+	}
+	if g.builtinCheck != nil {
+		return g.builtinCheck(g.ctx)
+	}
+	return nil
 }
 
 func (g *agentPromptInputGuard) Close() error {
