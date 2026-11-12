@@ -44,11 +44,11 @@ type KnowledgeBaseHandler struct {
 	// fileService and storageResolver back the optional `resource_urls=public`
 	// mode on hybrid-search. Both may be nil in tests, in which case only the
 	// default handle mode is available.
-	fileService         interfaces.FileService
-	storageResolver     interfaces.StorageBackendResolver
-	groupAccess         interfaces.GroupAccessService
-	dataSourceRepo      interfaces.DataSourceRepository
-	contentLeases       nextcloudHTTPReadLeaseStore
+	fileService     interfaces.FileService
+	storageResolver interfaces.StorageBackendResolver
+	groupAccess     interfaces.GroupAccessService
+	dataSourceRepo  interfaces.DataSourceRepository
+	contentLeases   nextcloudHTTPReadLeaseStore
 }
 
 // NewKnowledgeBaseHandler creates a new knowledge base handler instance

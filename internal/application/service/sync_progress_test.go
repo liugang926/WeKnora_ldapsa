@@ -13,7 +13,7 @@ import (
 // progressRecorder captures UpdateProgress calls so the writer's throttling
 // and field mapping can be asserted without a database.
 type progressRecorder struct {
-	calls   []map[string]any
+	calls []map[string]any
 }
 
 func (r *progressRecorder) Create(context.Context, *types.SyncLog) error { return nil }

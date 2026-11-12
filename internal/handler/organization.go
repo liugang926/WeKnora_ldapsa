@@ -29,11 +29,11 @@ type OrganizationHandler struct {
 	// and to back the tenant-centric invite picker. Plan 3 lifts org
 	// membership to the tenant level, so the UI needs to surface the
 	// tenant identity rather than the representative user alone.
-	tenantService  interfaces.TenantService
-	kbService      interfaces.KnowledgeBaseService
-	knowledgeRepo  interfaces.KnowledgeRepository
-	chunkRepo      interfaces.ChunkRepository
-	groupAccess    interfaces.GroupAccessService
+	tenantService interfaces.TenantService
+	kbService     interfaces.KnowledgeBaseService
+	knowledgeRepo interfaces.KnowledgeRepository
+	chunkRepo     interfaces.ChunkRepository
+	groupAccess   interfaces.GroupAccessService
 }
 
 // NewOrganizationHandler creates a new organization handler

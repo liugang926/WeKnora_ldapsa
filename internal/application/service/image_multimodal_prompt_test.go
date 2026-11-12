@@ -95,13 +95,13 @@ func TestVLMImageClassification(t *testing.T) {
 
 	t.Run("parse label tolerates wrappers", func(t *testing.T) {
 		cases := map[string]string{
-			"drawing_sheet":                  imageClassDrawingSheet,
-			"  product_image \n":             imageClassProduct,
-			"```document```":                 imageClassDocument,
-			"The answer is: drawing_sheet.":  imageClassDrawingSheet,
-			"\"product_image\"":              imageClassProduct,
-			" unrelated reply":               "",
-			"":                               "",
+			"drawing_sheet":                 imageClassDrawingSheet,
+			"  product_image \n":            imageClassProduct,
+			"```document```":                imageClassDocument,
+			"The answer is: drawing_sheet.": imageClassDrawingSheet,
+			"\"product_image\"":             imageClassProduct,
+			" unrelated reply":              "",
+			"":                              "",
 		}
 		for reply, want := range cases {
 			if got := parseImageClass(reply); got != want {
