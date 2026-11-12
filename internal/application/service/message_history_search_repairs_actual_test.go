@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -35,26 +34,8 @@ func historySearchRepairFixture(
 	return m, h.messages, h.ctx, session
 }
 
-// A test-only narrowing of the public projection decision. Actual material
-// read guards still use the embedded real CheckBatch implementation; this
-// adapter neither creates a receipt nor authorizes an otherwise denied source.
-type historySearchClosedProjectionPolicy struct {
-	access.SourceLineageAuthorizer
-}
-
-func (p historySearchClosedProjectionPolicy) Check(
-	ctx context.Context,
-	lineage *types.SourceLineage,
-	scope access.LineageReadScope,
-) error {
-	if err := p.SourceLineageAuthorizer.Check(ctx, lineage, scope); err != nil {
-		return err
-	}
-	return access.ErrNextcloudPublicationDenied
-}
-
 func TestHistorySearchActualClosedProjectionDoesNotMonopolizeCursor(t *testing.T) {
-	_, messages, ctx, session := historySearchRepairFixture(t)
+	m, messages, ctx, session := historySearchRepairFixture(t)
 	base := time.Now().Add(-time.Hour).UTC()
 	good, err := messages.CreateMessage(
 		ctx,
@@ -67,6 +48,15 @@ func TestHistorySearchActualClosedProjectionDoesNotMonopolizeCursor(t *testing.T
 			CreatedAt:   base,
 		},
 	)
+	require.NoError(t, err)
+	newer, err := messages.CreateMessage(ctx, &types.Message{
+		SessionID:   session.ID,
+		RequestID:   "newer-open",
+		Role:        "user",
+		Content:     "search marker newer authored question",
+		IsCompleted: true,
+		CreatedAt:   base.Add(time.Millisecond),
+	})
 	require.NoError(t, err)
 	question, err := messages.CreateMessage(
 		ctx,
@@ -113,18 +103,11 @@ func TestHistorySearchActualClosedProjectionDoesNotMonopolizeCursor(t *testing.T
 		}
 	}
 	require.NotNil(t, originalAnswer)
-	require.NoError(t, messages.CheckMessagePublication(original.Context(), originalAnswer))
-	// Exercise the independently closed public projection without pretending
-	// that any unsupported generated field has a valid producer contract.
-	messages.sourceLineageGuard = historySearchClosedProjectionPolicy{
-		SourceLineageAuthorizer: messages.sourceLineageGuard,
-	}
-	require.ErrorIs(
-		t,
-		messages.CheckMessagePublication(original.Context(), originalAnswer),
-		access.ErrNextcloudPublicationDenied,
-	)
+	require.Equal(t, answer.Content, originalAnswer.Content)
 	original.Close()
+	// Invalidate only this exchange's admitted original body before pagination.
+	require.NoError(t, m.f.db.Model(&types.Message{}).Where("id=?", answer.ID).
+		Update("content", "search marker unadmitted replacement").Error)
 
 	current := WithMessageMaterialOutputBoundary(ctx)
 	first, err := messages.SearchMessages(
@@ -137,7 +120,8 @@ func TestHistorySearchActualClosedProjectionDoesNotMonopolizeCursor(t *testing.T
 		},
 	)
 	require.NoError(t, err)
-	require.Zero(t, first.Total)
+	require.Equal(t, 1, first.Total)
+	require.Equal(t, newer.Content, first.Items[0].QueryContent)
 	require.True(t, first.HasMore)
 	require.NotEmpty(t, first.NextCursor)
 	require.NoError(t, CheckMessageMaterialOutputBoundary(current))
@@ -214,7 +198,7 @@ func TestHistorySearchActualConsumedSteerPreservesAllOriginalQuestions(t *testin
 	defer closeQueue()
 	require.Len(t, queue.Inputs, 1)
 	require.Equal(t, input.Proof.OriginID, queue.Inputs[0].Proof.OriginID)
-	producer := WithMessageMaterialOutputBoundary(ctx)
+	producer := WithMessageMaterialOutputBoundary(WithSteerCompletionOwner(ctx))
 	defer CloseMessageMaterialOutputBoundary(producer)
 	producer = context.WithValue(producer, agentHistoryCurrentRequestKey{}, run.RequestID)
 	_, err = messages.GetMessage(producer, session.ID, user.ID)
