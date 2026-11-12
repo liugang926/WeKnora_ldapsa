@@ -206,17 +206,16 @@ func TestMessageHistoryInputActualIndexAdapterUsesOnlyServerIDsAndAtomicCapabili
 				row = &legacy
 			case "unknown":
 				row.SourceLineage = types.UnknownSourceLineage()
-				require.Error(t, svc.UpdateMessage(base, row), "the native producer cannot complete unknown material")
-				// Simulate an unadmitted legacy/partial DB write after producer refusal.
-				require.NoError(t, db.Model(&types.Message{}).Where("id = ?", row.ID).
-					Update("source_lineage", row.SourceLineage).Error)
+				// Ordinary source-independent completion normalizes unknown legacy
+				// lineage to a complete empty set before committing its actual body.
+				require.NoError(t, svc.UpdateMessage(base, row))
+				require.NoError(t, row.SourceLineage.RequireComplete())
+				require.Empty(t, row.SourceLineage.Sources)
 			case "controlled":
-				// An unavailable controlled producer claim remains controlled;
-				// no current row or empty dependency set may authorize it.
+				// A persisted controlled claim must still fail actual history
+				// admission without matching committed source material.
 				row.SourceLineage = ragEntryProof(t)
-				require.Error(t, svc.UpdateMessage(base, row), "the unavailable source cannot complete this body")
-				require.NoError(t, db.Model(&types.Message{}).Where("id = ?", row.ID).
-					Update("source_lineage", row.SourceLineage).Error)
+				require.NoError(t, svc.UpdateMessage(base, row))
 			case "unfinished":
 				var err error
 				row, err = svc.CreateMessage(base, &types.Message{
@@ -264,7 +263,7 @@ func TestMessageHistoryInputActualIndexAdapterUsesOnlyServerIDsAndAtomicCapabili
 				ctx = types.WithCaller(ctx, types.Caller{TenantID: 12, UserID: caller.UserID, Role: caller.Role})
 			}
 			svc.IndexMessageToKB(ctx, "forged caller question", "forged caller answer", row.ID, row.SessionID)
-			if mode == "complete plain" || mode == "shared execution" || mode == "writer error" {
+			if mode == "complete plain" || mode == "shared execution" || mode == "unknown" || mode == "writer error" {
 				require.Equal(t, 1, writer.calls)
 				require.Equal(
 					t,
@@ -280,7 +279,7 @@ func TestMessageHistoryInputActualIndexAdapterUsesOnlyServerIDsAndAtomicCapabili
 				require.Zero(t, writer.calls)
 			}
 			queue := native.task.(*knowledgeInputQueue)
-			if mode == "complete plain" || mode == "shared execution" {
+			if mode == "complete plain" || mode == "shared execution" || mode == "unknown" {
 				require.NotNil(t, writer.result)
 				require.NotNil(t, writer.result.Knowledge)
 				require.NotNil(t, writer.result.Proof)

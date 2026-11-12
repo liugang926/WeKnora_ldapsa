@@ -496,20 +496,25 @@ func TestPostgresMessageBodyNoKBActualReader(t *testing.T) { runMessageBodyNoKBA
 
 func runMessageBodyNoKBHTTPHolder(t *testing.T, pg bool) {
 	messages, _, _, db, ctx, session, body := messageBodyIntegrationFixture(t, pg)
+	require.NoError(t, repository.UpgradeMessageProducerAdvanceSchema(db))
 	user, e := messages.CreateMessage(
 		ctx,
 		&types.Message{
-			SessionID:   session.ID,
-			RequestID:   "actual-no-kb-http-tail",
-			Role:        "user",
-			Content:     "actual no KB input for live model",
-			IsCompleted: true,
+			SessionID:        session.ID,
+			RequestID:        "actual-no-kb-http-tail",
+			Role:             "user",
+			Content:          "actual no KB input for live model",
+			IsCompleted:      true,
+			ExecutionContext: types.MessageExecutionContext{ExplicitInputMaterials: true},
 		},
 	)
 	require.NoError(t, e)
 	assistant, e := messages.CreateMessage(
 		ctx,
-		&types.Message{SessionID: session.ID, RequestID: user.RequestID, Role: "assistant"},
+		&types.Message{
+			SessionID: session.ID, RequestID: user.RequestID, Role: "assistant",
+			ExecutionContext: user.ExecutionContext,
+		},
 	)
 	require.NoError(t, e)
 	ctx, _, check, closeHTTP := BeginMessageMaterialHTTPBoundary(ctx)
@@ -583,7 +588,7 @@ func runMessageBodyActualGeneratedField(t *testing.T, pg bool) {
 		return CheckMessageMaterialOutputBoundary(ctx)
 	})
 	ctx = types.WithRAGSourceLineage(ctx, turn)
-	_, e = messages.GetMessage(ctx, session.ID, user.ID)
+	_, e = readContractMessageInput(ctx, messages, session.ID, user.ID)
 	require.NoError(t, e)
 	require.NoError(
 		t,
