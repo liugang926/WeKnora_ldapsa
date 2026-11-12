@@ -32,7 +32,8 @@ func TestWorkbookSyncReadsCellsAndRetriesFailedRevision(t *testing.T) {
 			data = `{"workspaces":[{"workspaceId":"w","rootNodeId":"root"}]}`
 		case "/v2.0/wiki/nodes":
 			data = `{"nodes":[{"nodeId":"book","name":"财务","type":"FILE","category":"ALIDOC",` +
-				`"extension":"axls","modifiedTimestamp":2},{"nodeId":"ai","type":"FILE","category":"ALIDOC","extension":"able"}]}`
+				`"extension":"axls","modifiedTimestamp":2},` +
+				`{"nodeId":"ai","type":"FILE","category":"ALIDOC","extension":"able"}]}`
 		case sheets:
 			data = `{"value":[{"id":"s1","name":"预算"},{"id":"s2","name":"进度"}]}`
 		case sheets + "/s1", sheets + "/s2":
