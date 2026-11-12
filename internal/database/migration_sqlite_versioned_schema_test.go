@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -159,7 +160,28 @@ var versionedSQLiteColumns = map[string][]string{
 	}, // SQLite 000050 / PostgreSQL 000131
 }
 
-const expectedSQLiteMigrationVersion = 86
+// latestSQLiteMigration derives the terminal expectation from the checked-in
+// upgrade inventory; historical-version assertions remain explicit in each test.
+func latestSQLiteMigration(t *testing.T, root string) int {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(root, "migrations", "sqlite"))
+	require.NoError(t, err)
+	latest := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".up.sql") {
+			continue
+		}
+		prefix, _, ok := strings.Cut(entry.Name(), "_")
+		require.True(t, ok, "migration filename has no version: %s", entry.Name())
+		version, err := strconv.Atoi(prefix)
+		require.NoError(t, err, "migration filename has invalid version: %s", entry.Name())
+		if version > latest {
+			latest = version
+		}
+	}
+	require.Positive(t, latest, "SQLite upgrade inventory must not be empty")
+	return latest
+}
 
 func TestSQLiteNextcloudRevisionUpgradeFrom43PreservesUnknownHistory(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)
@@ -178,7 +200,7 @@ func TestSQLiteNextcloudRevisionUpgradeFrom43PreservesUnknownHistory(t *testing.
 	chdirAndRestore(t, repoRoot)
 	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: dbPath}))
 	version, dirty := sqliteMigrationState(t, db)
-	require.Equal(t, expectedSQLiteMigrationVersion, version)
+	require.Equal(t, latestSQLiteMigration(t, repoRoot), version)
 	require.False(t, dirty)
 	var revision, unknown int
 	var etag, candidate, state string
@@ -314,7 +336,7 @@ func TestSQLiteMigrationsCreateVersionedSchema(t *testing.T) {
 
 	db := openSQLiteDB(t, dbPath)
 	version, dirty := sqliteMigrationState(t, db)
-	require.Equal(t, expectedSQLiteMigrationVersion, version)
+	require.Equal(t, latestSQLiteMigration(t, repoRoot), version)
 	require.False(t, dirty)
 
 	for _, table := range versionedSQLiteTables {
@@ -374,7 +396,7 @@ func TestSQLiteMigrationsUpgradeV4PreservesData(t *testing.T) {
 
 	db = openSQLiteDB(t, dbPath)
 	versionAfter, dirtyAfter := sqliteMigrationState(t, db)
-	require.Equal(t, expectedSQLiteMigrationVersion, versionAfter)
+	require.Equal(t, latestSQLiteMigration(t, repoRoot), versionAfter)
 	require.False(t, dirtyAfter)
 
 	for _, table := range versionedSQLiteTables {
@@ -429,7 +451,7 @@ func TestSQLiteMigrationsUpgradeV16AddsSessionForkColumns(t *testing.T) {
 
 	db = openSQLiteDB(t, dbPath)
 	versionAfter, dirtyAfter := sqliteMigrationState(t, db)
-	require.Equal(t, expectedSQLiteMigrationVersion, versionAfter)
+	require.Equal(t, latestSQLiteMigration(t, repoRoot), versionAfter)
 	require.False(t, dirtyAfter)
 	for _, column := range versionedSQLiteColumns["sessions"] {
 		require.Truef(
@@ -470,7 +492,7 @@ func TestSQLiteMigrationsUpgradeV32BackfillsNextcloudEventDispatch(t *testing.T)
 	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: dbPath}))
 	db = openSQLiteDB(t, dbPath)
 	versionAfter, dirtyAfter := sqliteMigrationState(t, db)
-	require.Equal(t, expectedSQLiteMigrationVersion, versionAfter)
+	require.Equal(t, latestSQLiteMigration(t, repoRoot), versionAfter)
 	require.False(t, dirtyAfter)
 	require.True(t, sqliteIndexExists(t, db, "idx_nextcloud_event_dispatch_due"))
 	require.True(t, sqliteIndexExists(t, db, "idx_nextcloud_event_dispatch_lease"))
