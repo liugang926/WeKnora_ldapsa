@@ -266,7 +266,7 @@ func (m *actualSteerHTTPModel) ChatStream(
 	} else {
 		assertActualSteerBodyLease(m.t, m.f.db, m.steerID, true)
 		if m.f.source != "" {
-			assertActualHTTPTailLeases(m.t, m.f.db, true, m.f.source)
+			assertActualHTTPTailLeases(m.t, m.f.db, false, m.f.source)
 		}
 		out <- types.StreamResponse{
 			ResponseType: types.ResponseTypeAnswer,
@@ -326,7 +326,7 @@ func (w *actualSteerHTTPWriter) Write(body []byte) (int, error) {
 	if w.lastDerived {
 		assertActualSteerBodyLease(w.t, w.f.db, w.steerID, true)
 		if w.f.source != "" {
-			assertActualHTTPTailLeases(w.t, w.f.db, true, w.f.source)
+			assertActualHTTPTailLeases(w.t, w.f.db, false, w.f.source)
 		}
 	}
 	if bytes.Contains(body, []byte(actualSteerHTTPAnswer)) {

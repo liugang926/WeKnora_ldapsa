@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -154,6 +155,12 @@ func TestSteerOriginalMaterialActualHTTPAfterRejectsCurrentOriginSlotAndControlC
 	}
 }
 
+// Saved history retains its source identities. Current WeKnora access governs
+// its reuse, including when the external Nextcloud ACL changes during a turn.
+func steerShouldComplete(mode string) bool {
+	return mode == "positive" || strings.HasPrefix(mode, "source_")
+}
+
 func runActualSteerAfterHTTP(t *testing.T, mode string) {
 	f := newActualSteerHTTPFixture(t, true)
 	model := &actualSteerHTTPModel{t: t, f: f, followUp: true, ready: make(chan struct{}), resume: make(chan struct{})}
@@ -205,6 +212,8 @@ func runActualSteerAfterHTTP(t *testing.T, mode string) {
 		},
 	)
 	require.Equal(t, http.StatusOK, queued.Code, queued.Body.String())
+	var sourceChanged atomic.Bool
+	var consumedProof atomic.Pointer[types.SteerConsumptionProof]
 	observed.beforeAssistant = func(input *types.SteerMaterialInput, _ *types.Message) {
 		switch mode {
 		case "old_run_aba":
@@ -243,6 +252,7 @@ func runActualSteerAfterHTTP(t *testing.T, mode string) {
 			)
 		case "source_before_consume":
 			f.revokeSource()
+			sourceChanged.Store(true)
 		case "actor_before_consume":
 			require.NoError(t, f.db.Model(&types.User{}).Where("id='user'").Update("is_active", false).Error)
 		}
@@ -279,7 +289,14 @@ func runActualSteerAfterHTTP(t *testing.T, mode string) {
 		observed.consumeContext = service.WithMessageMaterialOutputBoundary
 	}
 	if mode == "source_after_consume" {
-		observed.afterConsume = func(_ *types.Message, _ *types.SteerConsumptionProof) { f.revokeSource() }
+		observed.afterConsume = func(_ *types.Message, _ *types.SteerConsumptionProof) {
+			f.revokeSource()
+			sourceChanged.Store(true)
+		}
+	} else if mode == "claim_failed" {
+		observed.afterConsume = func(_ *types.Message, proof *types.SteerConsumptionProof) {
+			consumedProof.Store(proof)
+		}
 	}
 	model.release()
 	select {
@@ -287,7 +304,10 @@ func runActualSteerAfterHTTP(t *testing.T, mode string) {
 	case <-time.After(20 * time.Second):
 		t.Fatal("initial actual HTTP run did not finish")
 	}
-	if mode != "positive" {
+	if strings.HasPrefix(mode, "source_") {
+		require.True(t, sourceChanged.Load())
+	}
+	if !steerShouldComplete(mode) {
 		require.Eventually(t, func() bool {
 			var leases int64
 			return f.db.Table("original_body_leases").
@@ -345,12 +365,15 @@ func runActualSteerAfterHTTP(t *testing.T, mode string) {
 			var preserved types.Message
 			require.NoError(t, f.db.Unscoped().Where("id=?", failed.UserMessageID).Take(&preserved).Error)
 			require.False(t, preserved.DeletedAt.Valid)
-			_, err := f.messages.GetMessage(f.ctx, initial.SessionID, failed.UserMessageID)
-			require.Error(
-				t,
-				err,
-				"explicit reads must honestly reject this negatively terminated consumption instead of re-signing it",
-			)
+			// A failure to claim the successor invalidates its consumption proof.
+			// The original user row still belongs to the session owner.
+			proof := consumedProof.Load()
+			require.NotNil(t, proof)
+			require.Equal(t, failed.UserMessageID, proof.UserMessageID)
+			require.Error(t, f.store.CheckSteerConsumption(f.ctx, proof))
+			row, err := f.messages.GetMessage(f.ctx, initial.SessionID, failed.UserMessageID)
+			require.NoError(t, err)
+			require.Equal(t, failed.UserMessageID, row.ID)
 		}
 		return
 	}
@@ -567,12 +590,14 @@ func runActualSteerHTTPAgent(t *testing.T, controlled bool, mode string) {
 	)
 	require.NotEqual(t, initialHead, promotedHead)
 	forgeActualSteerHTTPMirror(t, f, redis, raw, run.ID, steerID)
+	var sourceChanged atomic.Bool
 	mutate := func(proof *types.SteerConsumptionProof) {
 		switch {
 		case strings.HasPrefix(mode, "actor_"):
 			require.NoError(t, f.db.Model(&types.User{}).Where("id='user'").Update("is_active", false).Error)
 		case strings.HasPrefix(mode, "source_"):
 			f.revokeSource()
+			sourceChanged.Store(true)
 		case strings.HasPrefix(mode, "control_aba_"):
 			current := promotedHead
 			if proof != nil {
@@ -635,7 +660,10 @@ func runActualSteerHTTPAgent(t *testing.T, controlled bool, mode string) {
 	)
 	var consumed int64
 	require.NoError(t, f.db.Table("steer_consumption_origins").Where("origin_id=?", origin.ID).Count(&consumed).Error)
-	if mode == "positive" {
+	if strings.HasPrefix(mode, "source_") {
+		require.True(t, sourceChanged.Load())
+	}
+	if steerShouldComplete(mode) {
 		require.EqualValues(t, 2, model.calls.Load())
 		require.Len(t, users, 2)
 		require.EqualValues(t, 1, consumed)
@@ -715,7 +743,7 @@ func runActualSteerHTTPAgent(t *testing.T, controlled bool, mode string) {
 	require.NoError(t, f.db.Table("message_completion_input_manifests m").
 		Joins("JOIN message_material_admissions a ON a.id=m.assistant_admission_id").
 		Where("a.message_id=?", run.ID).Count(&completedInputs).Error)
-	if mode == "positive" {
+	if steerShouldComplete(mode) {
 		require.True(t, completed.IsCompleted)
 		require.EqualValues(
 			t,

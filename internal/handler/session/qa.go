@@ -852,9 +852,15 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	// KnowledgeQA always retains generic user/history material, even when no
 	// explicit file is attached. Share that owner with the HTTP idle checker;
 	// a producer-only holder cannot notice refusal while its provider is idle.
-	if mode == qaModeNormal || hasExplicitInputMaterials(reqCtx) {
+	// Steer consumption and follow-up share the exact initial message and control
+	// with both the producer and the HTTP sender until their final writes.
+	steerable := mode == qaModeAgent && reqCtx.customAgent != nil
+	if mode == qaModeNormal || steerable || hasExplicitInputMaterials(reqCtx) {
 		native, ok := h.messageService.(interface{ HasOriginalMessageMaterialStore() bool })
 		if ok && native.HasOriginalMessageMaterialStore() {
+			if steerable {
+				asyncCtx = applicationservice.WithSteerCompletionOwner(asyncCtx)
+			}
 			beginMaterial := applicationservice.BeginMessageMaterialHTTPBoundary
 			if mode == qaModeNormal {
 				beginMaterial = applicationservice.BeginKnowledgeQAHTTPBoundary
@@ -884,7 +890,7 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	// SetLiveRun happens before SSE headers: a 409/503 after text/event-stream
 	// has started cannot change the status, and the client would sit on a
 	// stream nobody will write to.
-	if mode == qaModeAgent && reqCtx.customAgent != nil {
+	if steerable {
 		streamCtx.steerSink = newSteerSink(
 			asyncCtx, reqCtx.sessionID, reqCtx.requestID, reqCtx.assistantMessage,
 			h.messageService, h.streamManager,

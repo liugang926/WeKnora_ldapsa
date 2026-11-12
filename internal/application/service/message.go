@@ -415,7 +415,7 @@ func (s *messageService) UpdateMessage(ctx context.Context, message *types.Messa
 		}
 	}
 	var finishCompletion func(error) error
-	if materialBoundaryRequired {
+	if materialBoundaryRequired || hasBoundSteerCompletion(ctx, message) {
 		ctx, finishCompletion, err = s.beginMessageMaterialCompletion(ctx, message)
 		if err != nil {
 			return err

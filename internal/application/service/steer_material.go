@@ -497,3 +497,25 @@ func (s *messageService) ConsumeActualSteerIntoMessage(
 	}
 	return message, proof, check, closeRead3, nil
 }
+
+type steerCompletionOwnerKey struct{}
+
+// WithSteerCompletionOwner marks the async owner of a live HTTP agent run.
+func WithSteerCompletionOwner(ctx context.Context) context.Context {
+	return context.WithValue(ctx, steerCompletionOwnerKey{}, true)
+}
+
+func hasBoundSteerCompletion(ctx context.Context, message *types.Message) bool {
+	active, _ := ctx.Value(steerCompletionOwnerKey{}).(bool)
+	if !active || message.Role != "assistant" || !message.IsCompleted {
+		return false
+	}
+	slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot)
+	if !ok {
+		return false
+	}
+	slot.mu.Lock()
+	defer slot.mu.Unlock()
+	return slot.Completion != nil && slot.Completion.Assistant == message.ID &&
+		slot.Completion.Request == message.RequestID
+}
