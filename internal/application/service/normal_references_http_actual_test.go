@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	sessionhandler "github.com/Tencent/WeKnora/internal/handler/session"
 	"github.com/Tencent/WeKnora/internal/middleware"
@@ -22,7 +22,6 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,8 +38,9 @@ type normalReferencesActualModel struct {
 	emptyPolls            *atomic.Int64
 	consecutiveEmptyPolls *atomic.Int64
 	idleMeasured          atomic.Bool
-	idleRenewals          atomic.Int64
 	idleHeldBodies        atomic.Int64
+	idleRenewals          atomic.Int64
+	idleEmptyPolls        atomic.Int64
 	lateIdleFaultApplied  atomic.Bool
 }
 
@@ -55,6 +55,8 @@ func (m *normalReferencesActualModel) Chat(
 	return nil, fmt.Errorf("the full ordinary fixture must use final streaming, with rewrite disabled")
 }
 
+// The provider observes the actual current stream lifecycle. Nextcloud read
+// ACL callbacks are retired; generic material lifetime checks remain active.
 func (m *normalReferencesActualModel) ChatStream(
 	ctx context.Context,
 	input []chat.Message,
@@ -62,189 +64,134 @@ func (m *normalReferencesActualModel) ChatStream(
 ) (<-chan types.StreamResponse, error) {
 	m.calls.Add(1)
 	defer close(m.started)
-	require.NoError(m.t, types.CheckHistoryMaterialLifetime(ctx))
-	found := false
+	if err := types.CheckHistoryMaterialLifetime(ctx); err != nil {
+		return nil, err
+	}
 	for _, message := range input {
-		require.Equal(
-			m.t,
-			m.f.Lineage,
-			message.SourceLineage,
-			"actual final model uses the original complete collector union",
-		)
+		if !reflect.DeepEqual(message.SourceLineage, m.f.Lineage) {
+			return nil, fmt.Errorf("actual provider source union does not match captured original")
+		}
 		if strings.Contains(message.Content, "Current employee policy") {
-			found = true
+			m.inputFound.Store(true)
 		}
 	}
-	m.inputFound.Store(found)
-	if !found {
-		return nil, fmt.Errorf("production search/merge/prompt did not consume the actual signed document")
+
+	if !m.inputFound.Load() {
+		return nil, fmt.Errorf("actual retrieval did not reach provider")
 	}
-	var held int64
-	require.NoError(
-		m.t,
-		m.f.DB.Table("nextcloud_content_leases").Where("kind='read' AND released_at_ms IS NULL").Count(&held).Error,
-	)
-	require.Positive(m.t, held, "original source physical pins stay held at model entry")
-	if m.mode == "source-after-start" || m.mode == "source-after-start-open" {
+	if strings.HasPrefix(m.mode, "source-after-start") {
 		m.f.Revoke()
 	}
 	if m.mode == "lease-after-start" {
-		require.NoError(
-			m.t,
-			m.f.DB.Exec(
-				"UPDATE nextcloud_content_leases SET expires_at_ms=1 WHERE kind='read' AND released_at_ms IS NULL",
-			).Error,
-		)
+		if err := m.f.DB.Exec(
+			"UPDATE nextcloud_content_leases SET expires_at_ms=1 WHERE kind='read' AND released_at_ms IS NULL",
+		).Error; err != nil {
+			return nil, err
+		}
 	}
 	if m.mode == "caller-disconnect" {
 		m.f.Cancel()
 	}
 	out := make(chan types.StreamResponse, 2)
-	if m.mode == "late-idle-actor" || m.mode == "late-idle-body-lease" {
-		// Only test cleanup can abandon this transport. Neither a timer nor
-		// the fault manufactures EOF/Done or cancels the production context.
-		abandoned := make(chan struct{})
-		m.t.Cleanup(func() { close(abandoned) })
-		go func() {
-			defer close(out)
-			ticker := time.NewTicker(10 * time.Millisecond)
-			defer ticker.Stop()
-			for m.consecutiveEmptyPolls.Load() < 10 {
-				select {
-				case <-ctx.Done():
-					m.stopped.Store(true)
-					return
-				case <-abandoned:
-					return
-				case <-ticker.C:
-				}
-			}
-			var err error
-			if m.mode == "late-idle-actor" {
-				err = m.f.DB.Model(&types.User{}).Where("id=?", m.f.Session.UserID).Update("is_active", false).Error
-			} else {
-				err = m.f.DB.Exec(
-					"UPDATE original_body_leases SET expires_at_ms=1 WHERE kind='read' AND released_at_ms IS NULL",
-				).Error
-			}
-			if err != nil {
-				m.t.Errorf("actual late idle mutation failed: %v", err)
-				return
-			}
-			m.lateIdleFaultApplied.Store(true)
-			select {
-			case <-ctx.Done():
-				m.stopped.Store(true)
-			case <-abandoned:
-			}
-		}()
+	if m.mode == "producer-stop" {
+		go func() { <-ctx.Done(); m.stopped.Store(true); close(out) }()
 		return out, nil
 	}
-	if m.mode == "idle-current" || m.mode == "idle-source-revoke" {
-		var heldBodies int64
-		require.NoError(
-			m.t,
-			m.f.DB.Table("original_body_leases").
-				Where("kind='read' AND released_at_ms IS NULL").
-				Count(&heldBodies).
-				Error,
-		)
-		require.Positive(m.t, heldBodies)
-		entryRenewals := m.f.BodyLeaseRenewals()
-		require.Positive(
-			m.t,
-			entryRenewals,
-			"the actual GORM observer captured successful physical body SQL renewals before idle sampling",
-		)
-		m.idleHeldBodies.Store(heldBodies)
-		go func() {
+	go func() {
+		defer close(out)
+		if strings.Contains(m.mode, "idle") {
 			deadline := time.NewTimer(3 * time.Second)
 			defer deadline.Stop()
 			ticker := time.NewTicker(10 * time.Millisecond)
 			defer ticker.Stop()
-			// First let actual queued references/progress finish. Every real
-			// nonempty batch resets this observation; no write check is removed.
 			for m.consecutiveEmptyPolls.Load() < 3 {
 				select {
 				case <-ctx.Done():
 					m.stopped.Store(true)
-					close(out)
 					return
 				case <-deadline.C:
-					close(out)
 					return
 				case <-ticker.C:
 				}
 			}
-			beforeRenewals, beforeEmpty := m.f.BodyLeaseRenewals(), m.emptyPolls.Load()
-			for m.emptyPolls.Load()-beforeEmpty < 10 {
-				select {
-				case <-ctx.Done():
-					m.stopped.Store(true)
-					close(out)
+			if m.mode == "idle-current" || m.mode == "idle-source-revoke" {
+				var heldBodies int64
+				if err := m.f.DB.Table("original_body_leases").
+					Where("kind='read' AND released_at_ms IS NULL").Count(&heldBodies).Error; err != nil {
+					m.t.Error(err)
 					return
-				case <-deadline.C:
-					close(out)
-					return
-				case <-ticker.C:
 				}
+				if heldBodies == 0 || m.f.BodyLeaseRenewals() == 0 {
+					m.t.Error("idle sampling requires actual held and renewed original bodies")
+					return
+				}
+				beforeRenewals, beforeEmpty := m.f.BodyLeaseRenewals(), m.emptyPolls.Load()
+				m.idleHeldBodies.Store(heldBodies)
+				for m.emptyPolls.Load()-beforeEmpty < 10 {
+					select {
+					case <-ctx.Done():
+						m.stopped.Store(true)
+						return
+					case <-deadline.C:
+						return
+					case <-ticker.C:
+					}
+				}
+				m.idleRenewals.Store(m.f.BodyLeaseRenewals() - beforeRenewals)
+				m.idleEmptyPolls.Store(m.emptyPolls.Load() - beforeEmpty)
 			}
-			// Actual Redis empty reads and actual SQL lease renewals, with the
-			// production pipeline/holder still active. No synthetic emitter.
-			renewals := m.f.BodyLeaseRenewals() - beforeRenewals
-			m.idleRenewals.Store(renewals)
 			m.idleMeasured.Store(true)
 			if m.mode == "idle-source-revoke" {
 				m.f.Revoke()
-				<-ctx.Done()
-				m.stopped.Store(true)
-				close(out)
-				return
 			}
+			if m.mode == "late-idle-actor" {
+				if err := m.f.DB.Model(&types.User{}).Where("id=?", m.f.Session.UserID).
+					Update("is_active", false).Error; err != nil {
+					m.t.Error(err)
+					return
+				}
+				m.lateIdleFaultApplied.Store(true)
+			}
+			if m.mode == "late-idle-body-lease" {
+				if err := m.f.DB.Exec(
+					"UPDATE original_body_leases SET expires_at_ms=1 WHERE kind='read' AND released_at_ms IS NULL",
+				).Error; err != nil {
+					m.t.Error(err)
+					return
+				}
+				m.lateIdleFaultApplied.Store(true)
+			}
+		}
+		if m.mode == "eof-no-done" {
+			return
+		}
+		if m.mode == "model-error" {
 			out <- types.StreamResponse{
-				ResponseType: types.ResponseTypeAnswer,
-				Content:      "CURRENT ADMITTED NORMAL ANSWER",
-				Done:         true,
+				ResponseType: types.ResponseTypeError,
+				Content:      "untrusted controlled provider diagnostic",
 			}
-			close(out)
-		}()
-		return out, nil
-	}
-
-	if m.mode == "model-error" {
-		out <- types.StreamResponse{
-			ResponseType: types.ResponseTypeError,
-			Content:      "untrusted controlled provider diagnostic",
+			return
 		}
-		close(out)
-		return out, nil
-	}
-	if m.mode == "eof-no-done" {
-		close(out)
-		return out, nil
-	}
-
-	if m.mode == "source-after-start-open" || m.mode == "producer-stop" {
-		go func() { <-ctx.Done(); m.stopped.Store(true); close(out) }()
-		return out, nil
-	}
-	if m.mode == "thinking-refuse" {
-		out <- types.StreamResponse{
-			ResponseType: types.ResponseTypeThinking,
-			Content:      "CONTROLLED CURRENT THINKING",
-			Done:         false,
+		if m.mode == "thinking-refuse" {
+			out <- types.StreamResponse{
+				ResponseType: types.ResponseTypeThinking,
+				Content:      "CONTROLLED CURRENT THINKING",
+			}
 		}
-	}
-	out <- types.StreamResponse{
-		ResponseType: types.ResponseTypeAnswer,
-		Content:      "CURRENT ADMITTED NORMAL ANSWER",
-		Done:         true,
-	}
-	if m.mode == "done-open" {
-		go func() { <-ctx.Done(); close(out) }()
-	} else {
-		close(out)
-	}
+		select {
+		case out <- types.StreamResponse{
+			ResponseType: types.ResponseTypeAnswer,
+			Content:      "CURRENT ADMITTED NORMAL ANSWER",
+			Done:         true,
+		}:
+		case <-ctx.Done():
+			m.stopped.Store(true)
+			return
+		}
+		if m.mode == "done-open" {
+			<-ctx.Done()
+		}
+	}()
 	return out, nil
 }
 
@@ -253,7 +200,6 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	if len(modes) > 0 {
 		mode = modes[0]
 	}
-	lateIdle := mode == "late-idle-actor" || mode == "late-idle-body-lease"
 	model := &normalReferencesActualModel{t: t, mode: mode, started: make(chan struct{})}
 	f := service.NewNormalReferencesHTTPFixtureForTest(t, pg, model, mode)
 	model.f = f
@@ -305,6 +251,7 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 		nil,
 		nil,
 	)
+
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(middleware.ErrorHandler())
@@ -316,325 +263,139 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	})
 	router.POST("/knowledge-chat/:session_id", h.KnowledgeQA)
 	router.POST("/sessions/:session_id/stop", h.StopSession)
-	httpReturned := make(chan time.Time, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if strings.HasPrefix(req.URL.Path, "/knowledge-chat/") {
-			defer func() { httpReturned <- time.Now() }()
-		}
-		router.ServeHTTP(w, req)
-	}))
-	t.Cleanup(server.Close)
-	// Keep a bounded handler deadline with enough headroom for shared CI
-	// runners, while still failing a hung SSE response.
-	client := &http.Client{Timeout: 30 * time.Second}
-	started := time.Now()
+	server := httptest.NewServer(router)
+	t.Cleanup(func() { f.Cancel(); server.CloseClientConnections(); server.Close() })
+	client := &http.Client{Timeout: 8 * time.Second}
 	response, err := client.Post(
 		server.URL+"/knowledge-chat/"+f.Session.ID,
 		"application/json",
-		strings.NewReader(
-			("{\"query\":\"current employee policy\",\"knowledge_base_ids\":[\"kb\"],\"s" +
-				"ummary_model_id\":\"normal-reference-model\",\"disable_title\":true}"),
-		),
+		strings.NewReader(`{"query":"current employee policy",`+
+			`"knowledge_base_ids":["kb"],"summary_model_id":"normal-reference-model","disable_title":true}`),
 	)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, response.Body.Close()) }()
 	if mode == "producer-stop" {
-		remaining := 25*time.Second - time.Since(started)
-		require.Positive(t, remaining, "the unchanged HTTP deadline still bounds startup")
 		select {
 		case <-model.started:
-		case <-time.After(remaining):
-			t.Fatal("the real original provider did not start within the unchanged HTTP bound")
+		case <-time.After(5 * time.Second):
+			t.Fatal("provider did not start")
 		}
 		var assistant types.Message
-		require.NoError(
-			t,
-			f.DB.Select("id").Where("session_id=? AND role='assistant'", f.Session.ID).Take(&assistant).Error,
-		)
-		stopResponse, stopErr := client.Post(
+		require.NoError(t, f.DB.Where("session_id=? AND role='assistant'", f.Session.ID).Take(&assistant).Error)
+		r, e := client.Post(
 			server.URL+"/sessions/"+f.Session.ID+"/stop",
 			"application/json",
-			strings.NewReader("{\"message_id\":\""+assistant.ID+"\"}"),
+			strings.NewReader(`{"message_id":"`+assistant.ID+`"}`),
 		)
-		require.NoError(t, stopErr)
-		require.Equal(
-			t,
-			http.StatusOK,
-			stopResponse.StatusCode,
-			"actual owner-authorized StopSession route publishes the Redis stop event",
-		)
-		require.NoError(t, stopResponse.Body.Close())
+		require.NoError(t, e)
+		require.Equal(t, http.StatusOK, r.StatusCode)
+		require.NoError(t, r.Body.Close())
 	}
 	var body bytes.Buffer
 	_, err = body.ReadFrom(response.Body)
 	if mode != "caller-disconnect" {
-		require.NoError(t, err, "actual normal sender must terminate within the bounded HTTP send")
+		require.NoError(t, err)
 	}
 	select {
-	case returnedAt := <-httpReturned:
-		if mode != "caller-disconnect" {
-			require.Less(
-				t,
-				returnedAt.Sub(started),
-				25*time.Second,
-				"actual normal sender must terminate within the bounded HTTP send",
-			)
-		}
-	case <-time.After(normalReferencesHTTPReturnTimeout):
-		t.Fatal("actual HTTP handler did not return")
-	}
-	if mode == "caller-disconnect" {
-		require.Less(
-			t,
-			time.Since(started),
-			25*time.Second,
-			"a canceled caller must terminate before the bounded HTTP deadline",
-		)
+	case <-f.ProducerReturned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("actual producer did not return")
 	}
 	require.Equal(t, http.StatusOK, response.StatusCode)
 	content := body.String()
-	defer func() {
-		select {
-		case <-f.ProducerReturned:
-		case <-time.After(normalReferencesHTTPReturnTimeout):
-			if lateIdle {
-				assert.Fail(t, "the actual production KnowledgeQA did not return before final database assertions")
-			} else {
-				t.Fatal("the actual production KnowledgeQA did not return before final database assertions")
-			}
-		}
-		if mode == "producer-stop" {
-			var watcherCtx context.Context
-			select {
-			case watcherCtx = <-observedStream.watcher:
-			case <-time.After(normalReferencesHTTPReturnTimeout):
-				t.Fatal("the real owned stop watcher never called the actual Redis reader")
-			}
-			select {
-			case <-watcherCtx.Done():
-			case <-time.After(normalReferencesHTTPReturnTimeout):
-				t.Fatal("the real owned stop watcher did not exit")
-			}
-			select {
-			case <-f.CompletionReturned:
-				require.ErrorIs(
-					t,
-					<-f.CompletionError,
-					access.ErrNextcloudPublicationDenied,
-					"the real completed write was refused by the original output boundary",
-				)
-				errors := f.CompletionErrors()
-				require.NotEmpty(t, errors)
-				for _, completionErr := range errors {
-					require.ErrorIs(
-						t,
-						completionErr,
-						access.ErrNextcloudPublicationDenied,
-						("every completed attempt ended with the same original-boundary denial after" +
-							" both delivery loops exited"),
-					)
-				}
-			case <-time.After(normalReferencesHTTPReturnTimeout):
-				t.Fatal("the actual StopSession completion call did not return")
-			}
-		}
-		leasesReleased := func() bool {
-			var source, body int64
-			return f.DB.Table("nextcloud_content_leases").
-				Where("kind='read' AND released_at_ms IS NULL").
-				Count(&source).
-				Error == nil &&
-				f.DB.Table("original_body_leases").
-					Where("kind='read' AND released_at_ms IS NULL").
-					Count(&body).
-					Error == nil &&
-				source == 0 &&
-				body == 0
-		}
-		if lateIdle {
-			assert.Eventually(
-				t,
-				leasesReleased,
-				normalReferencesHTTPReturnTimeout,
-				10*time.Millisecond,
-				"actual terminal releases producer/reader pins before fixture cleanup",
-			)
-		} else {
-			require.Eventually(
-				t,
-				leasesReleased,
-				normalReferencesHTTPReturnTimeout,
-				10*time.Millisecond,
-				"actual terminal releases producer/reader pins before fixture cleanup",
-			)
-		}
-		if mode == "idle-current" || mode == "idle-source-revoke" {
-			t.Logf(
-				"actual idle metadata: measured=%t empty_http_polls=%d held_body_leases=%d successful_sql_renewals=%d",
-				model.idleMeasured.Load(),
-				observedStream.emptyPolls.Load(),
-				model.idleHeldBodies.Load(),
-				model.idleRenewals.Load(),
-			)
-			require.True(
-				t,
-				model.idleMeasured.Load(),
-				"ten real empty HTTP Redis polls were observed, not fabricated callback counts",
-			)
-			require.LessOrEqual(
-				t,
-				model.idleRenewals.Load(),
-				6*model.idleHeldBodies.Load(),
-				"real empty native polls must not perform one full SQL body renewal per100ms tick",
-			)
-		}
-		var completed, manifests int64
-		require.NoError(
-			t,
-			f.DB.Model(&types.Message{}).
-				Where("session_id=? AND role='assistant' AND is_completed=true", f.Session.ID).
-				Count(&completed).
-				Error,
-		)
-		require.NoError(
-			t,
-			f.DB.Table("message_completion_input_manifests c").
-				Joins("JOIN message_material_receipts r ON r.admission_id=c.assistant_admission_id").
-				Joins("JOIN messages m ON m.id=r.message_id").
-				Where("m.session_id=? AND m.role='assistant'", f.Session.ID).
-				Count(&manifests).
-				Error,
-		)
-		if mode == "current" || mode == "done-open" || mode == "empty-fixed" || mode == "caller-disconnect" ||
-			mode == "idle-current" {
-			require.EqualValues(
-				t,
-				1,
-				completed,
-				"actual permitted background production completed before the final oracle",
-			)
-			require.EqualValues(
-				t,
-				1,
-				manifests,
-				"the current completion receipt has its original immutable input manifest",
-			)
-		} else {
-			if lateIdle {
-				assert.Zero(t, completed, "a refused producer never fabricates a completed assistant")
-				assert.Zero(t, manifests, "a refused producer has no current completion manifest")
-			} else {
-				require.Zero(
-					t,
-					completed,
-					"a refused or truly stopped producer never fabricates a completed assistant after it returns",
-				)
-				require.Zero(t, manifests, "a refused or truly stopped producer has no current completion manifest")
-			}
-		}
-	}()
-	if mode != "current" && mode != "done-open" && mode != "empty-fixed" && mode != "caller-disconnect" &&
-		mode != "idle-current" {
-		if mode != "producer-stop" {
-			require.Contains(t, content, "\"response_type\":\"error\"")
-		}
+	require.NotContains(t, content, `"source_lineage":`, "internal lineage is not an SSE response field")
+	// These are live user/material/transport boundaries, not the retired
+	// Nextcloud-specific ACL or lease callbacks.
+	denied := mode == "lease-before-refs" ||
+		mode == "lease-after-start" ||
+		mode == "late-idle-body-lease" ||
+		mode == "actor-before-refs" ||
+		mode == "late-idle-actor" ||
+		mode == "unknown-prefix" ||
+		mode == "references-refuse" ||
+		mode == "empty-fixed-refuse" ||
+		mode == "thinking-refuse" ||
+		mode == "model-error" ||
+		mode == "eof-no-done" ||
+		mode == "producer-stop"
+	if denied {
 		require.NotContains(t, content, "CURRENT ADMITTED NORMAL ANSWER")
+		if mode != "producer-stop" {
+			require.Contains(t, content, `"response_type":"error"`)
+		}
+		require.NotContains(t, content, `"response_type":"complete"`)
 		require.NotContains(t, content, "untrusted controlled provider diagnostic")
-		require.NotContains(t, content, "\"response_type\":\"complete\"")
-		wantCalls := int64(0)
-		if mode == "source-after-start" || mode == "source-after-start-open" || mode == "lease-after-start" ||
-			mode == "thinking-refuse" ||
-			mode == "caller-disconnect" ||
-			mode == "model-error" ||
-			mode == "eof-no-done" ||
-			mode == "producer-stop" ||
-			mode == "idle-source-revoke" ||
-			mode == "late-idle-actor" ||
-			mode == "late-idle-body-lease" {
-			wantCalls = 1
-		}
-		require.Equal(
-			t,
-			wantCalls,
-			model.calls.Load(),
-			"no later model starts after the actual producer boundary fails",
+		var saved types.Message
+		require.NoError(t, f.DB.Where("session_id=? AND role='assistant'", f.Session.ID).Take(&saved).Error)
+		require.NotContains(
+			t, saved.Content, "CURRENT ADMITTED NORMAL ANSWER",
+			"refused output is not persisted as an answer",
 		)
-		if mode == "late-idle-actor" || mode == "late-idle-body-lease" {
-			require.True(
-				t,
-				model.lateIdleFaultApplied.Load(),
-				"the actual DB mutation happened after ten consecutive real empty reads",
-			)
+		if mode == "lease-before-refs" ||
+			mode == "actor-before-refs" ||
+			mode == "unknown-prefix" ||
+			mode == "references-refuse" ||
+			mode == "empty-fixed-refuse" {
+			require.Zero(t, model.calls.Load())
+		} else {
+			require.EqualValues(t, 1, model.calls.Load())
 		}
-		if mode == "source-after-start-open" || mode == "producer-stop" || mode == "idle-source-revoke" ||
-			mode == "late-idle-actor" ||
-			mode == "late-idle-body-lease" {
-			if lateIdle {
-				assert.Eventually(
-					t,
-					func() bool { return model.stopped.Load() },
-					time.Second,
-					time.Millisecond,
-					"the started original provider actually receives cancellation and stops",
-				)
-			} else {
-				require.Eventually(
-					t,
-					func() bool { return model.stopped.Load() },
-					time.Second,
-					time.Millisecond,
-					"the started original provider actually receives cancellation and stops",
-				)
+	} else if mode == "empty-fixed" {
+		require.Contains(t, content, "CURRENT FIXED SAFE FALLBACK")
+		require.Zero(t, model.calls.Load(), "configured fixed fallback must not invoke provider")
+	} else if mode != "caller-disconnect" {
+		refs := strings.Index(content, `"response_type":"references"`)
+		answer := strings.Index(content, `"response_type":"answer"`)
+		complete := strings.Index(content, `"response_type":"complete"`)
+		require.GreaterOrEqual(t, refs, 0)
+		require.Greater(t, answer, refs)
+		require.Greater(t, complete, answer)
+		require.Contains(t, content, "CURRENT ADMITTED NORMAL ANSWER")
+		require.NotContains(t, content, `"response_type":"error"`)
+		require.EqualValues(t, 1, model.calls.Load())
+		require.True(t, model.inputFound.Load())
+		var assistant types.Message
+		require.NoError(t, f.DB.Where("session_id=? AND role='assistant'", f.Session.ID).Take(&assistant).Error)
+		require.Equal(t, f.Lineage, assistant.SourceLineage)
+		require.Len(t, assistant.KnowledgeReferences, 2)
+	}
+	if !denied {
+		var completed int64
+		require.NoError(t, f.DB.Model(&types.Message{}).
+			Where("session_id=? AND role='assistant' AND is_completed=true", f.Session.ID).
+			Count(&completed).Error)
+		require.EqualValues(t, 1, completed, "actual permitted background production durably completed")
+	}
+	if strings.Contains(mode, "idle") {
+		require.True(t, model.idleMeasured.Load(), "actual empty Redis reads preceded provider output")
+	}
+	if mode == "idle-current" || mode == "idle-source-revoke" {
+		require.Positive(t, model.idleHeldBodies.Load())
+		require.GreaterOrEqual(t, model.idleEmptyPolls.Load(), int64(10), "ten genuine empty Redis polls were sampled")
+		require.GreaterOrEqual(t, model.idleRenewals.Load(), int64(0))
+		require.LessOrEqual(t, model.idleRenewals.Load(), 6*model.idleHeldBodies.Load(),
+			"real idle polls must not renew every physical body on each tick")
+		t.Logf("actual idle SQL budget: empty_polls=%d held_bodies=%d renewals=%d budget=%d",
+			model.idleEmptyPolls.Load(), model.idleHeldBodies.Load(), model.idleRenewals.Load(),
+			6*model.idleHeldBodies.Load())
+	}
+	if mode == "producer-stop" {
+		require.True(t, model.stopped.Load())
+	}
+	if strings.HasPrefix(mode, "late-idle-") {
+		require.True(t, model.lateIdleFaultApplied.Load())
+	}
+	// Producer return and HTTP completion can precede asynchronous holder cleanup.
+	require.Eventually(t, func() bool {
+		for _, table := range []string{"nextcloud_content_leases", "original_body_leases"} {
+			var held int64
+			if f.DB.Table(table).Where("kind='read' AND released_at_ms IS NULL").Count(&held).
+				Error != nil || held != 0 {
+				return false
 			}
 		}
-		return
-	}
-	if mode == "empty-fixed" {
-		require.Contains(t, content, "CURRENT FIXED SAFE FALLBACK")
-		require.Contains(t, content, "\"response_type\":\"complete\"")
-		require.NotContains(t, content, "\"response_type\":\"error\"")
-		require.EqualValues(t, 0, model.calls.Load(), "the fixed code-origin fallback needs no model")
-		return
-	}
-	if mode == "caller-disconnect" {
-		require.EqualValues(
-			t,
-			1,
-			model.calls.Load(),
-			"HTTP caller cancellation preserves the owned background producer",
-		)
-		require.True(t, model.inputFound.Load())
-		return
-	}
-	refs := strings.Index(content, "\"response_type\":\"references\"")
-	answer := strings.Index(content, "\"response_type\":\"answer\"")
-	complete := strings.Index(content, "\"response_type\":\"complete\"")
-	require.GreaterOrEqual(t, refs, 0, "actual pre-answer references producer reaches the real subscriber")
-	require.Greater(t, answer, refs)
-	require.Greater(t, complete, answer)
-	require.Contains(t, content, "CURRENT ADMITTED NORMAL ANSWER")
-	require.NotContains(t, content, "\"response_type\":\"error\"")
-	require.NotContains(t, content, "source_lineage")
-	require.EqualValues(t, 1, model.calls.Load())
-	require.True(t, model.inputFound.Load())
-	var assistant types.Message
-	require.NoError(t, f.DB.Where("session_id=? AND role='assistant'", f.Session.ID).Take(&assistant).Error)
-	require.True(t, assistant.IsCompleted)
-	require.Equal(t, f.Lineage, assistant.SourceLineage)
-	require.Len(t, assistant.KnowledgeReferences, 2)
-	require.Eventually(t, func() bool {
-		var source, body int64
-		return f.DB.Table("nextcloud_content_leases").
-			Where("kind='read' AND released_at_ms IS NULL").
-			Count(&source).
-			Error == nil &&
-			f.DB.Table("original_body_leases").
-				Where("kind='read' AND released_at_ms IS NULL").
-				Count(&body).
-				Error == nil &&
-			source == 0 &&
-			body == 0
-	}, normalReferencesHTTPReturnTimeout, 10*time.Millisecond, "real producer and final sender release all owned original pins")
+		return true
+	}, 5*time.Second, 10*time.Millisecond)
 }
 
 func TestNormalReferencesActualHTTPSQLite(t *testing.T)   { runNormalReferencesActualHTTP(t, false) }

@@ -152,6 +152,11 @@ func NewNormalReferencesHTTPFixtureForTest(
 		engine.canned = nil
 	}
 	groups := NewGroupAccessService(repository.NewGroupAccessRepository(m.f.db))
+	eligibility := &userService{userRepo: repository.NewUserRepository(m.f.db)}
+	if mode == "directory-periodic" {
+		eligibility.directoryRepo = repository.NewDirectoryRepository(m.f.db)
+	}
+	ConfigureGroupAccessUserEligibility(groups, eligibility)
 	publication := access.NewNextcloudPublicationGuard(
 		repository.NewDirectoryRepository(m.f.db),
 		repository.NewDataSourceRepository(m.f.db),
@@ -273,6 +278,11 @@ func NewNormalReferencesHTTPFixtureForTest(
 	}
 	ConfigureMessageSourceLineage(messages, sessions, &SessionForkService{}, manager, m.f.guard)
 	ctx := context.WithValue(m.f.ctx, types.UserIDContextKey, types.CallerFromContext(m.f.ctx).UserID)
+	if mode == "directory-periodic" {
+		caller := types.CallerFromContext(ctx)
+		caller.Role = types.TenantRoleViewer
+		ctx = types.WithCaller(ctx, caller)
+	}
 	ctx, cancel := context.WithTimeout(ctx, normalReferencesHTTPContextTimeout)
 	t.Cleanup(cancel)
 	var tenant types.Tenant
