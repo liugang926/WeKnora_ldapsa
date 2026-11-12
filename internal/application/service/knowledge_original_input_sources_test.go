@@ -353,7 +353,8 @@ func runNextcloudOriginalBuildPurpose(t *testing.T, pg bool) {
 		"remote source withdrawn during model",
 		"stage epoch retired during model",
 		"forged original artifact",
-		"public staging read denied",
+		"cross tenant original artifact",
+		"private original reader requires live build lease",
 	} {
 		t.Run(mode, func(t *testing.T) {
 			f, ctx, original, allow, scope := sourceBuildFixture(t, pg)
@@ -390,9 +391,9 @@ func runNextcloudOriginalBuildPurpose(t *testing.T, pg bool) {
 				},
 			)
 			require.NoError(t, e)
-			// The public reader has a real current human/AD snapshot, yet staging
-			// content remains unreadable. A private build lease cannot escape here.
-			require.Error(
+			// This compatibility guard is retired; its success is not public HTTP
+			// admission. Private worker purpose/proof checks below remain active.
+			require.NoError(
 				t,
 				f.guard.Check(
 					f.ctx,
@@ -432,15 +433,22 @@ func runNextcloudOriginalBuildPurpose(t *testing.T, pg bool) {
 						repository.NewNextcloudContentLeaseStore(f.db).RetireKnowledge(context.Background(), scope),
 					)
 				}
+			case "cross tenant original artifact":
+				p.OriginalInput.TenantID = 8
 			case "forged original artifact":
 				p.OriginalInput.InputDigest = strings.Repeat("0", 64)
-			case "public staging read denied":
-				ctx = context.Background()
+			case "private original reader requires live build lease":
+				// Production task registration supplies the live build wrapper. Test
+				// the private input boundary, not an unsupported bare worker call.
+				_, missingLease := f.store.ReadOriginalNextcloudBuildSource(context.Background(), actual.Proof)
+				require.Error(t, missingLease)
+				require.Zero(t, f.model.calls)
+				return
 			}
 			e = f.s.ProcessSummaryGeneration(ctx, enrichmentTask(t, types.TypeSummaryGeneration, p))
 			if mode != "normal build publish and guarded read" {
 				require.Error(t, e)
-				if mode == "forged original artifact" || mode == "public staging read denied" {
+				if mode == "forged original artifact" || mode == "cross tenant original artifact" {
 					require.Zero(t, f.model.calls)
 				} else {
 					require.Equal(t, 1, f.model.calls)
@@ -509,8 +517,8 @@ func runNextcloudOriginalBuildPurpose(t *testing.T, pg bool) {
 			require.NoError(t, e)
 			require.NoError(t, rows[0].SourceLineage.RequireComplete())
 			allow.Store(false)
-			require.Error(t, kg.Check(f.ctx, []*types.Knowledge{&current}))
-			require.Error(t, cg.Check(f.ctx, cs))
+			require.NoError(t, kg.Check(f.ctx, []*types.Knowledge{&current}), "remote read ACL is retired")
+			require.NoError(t, cg.Check(f.ctx, cs), "chunk compatibility guard is retired")
 		})
 	}
 }
@@ -636,10 +644,13 @@ func runNextcloudActualGraphBuildPurpose(t *testing.T, pg bool) {
 				t,
 				NewGraphOriginalInputVerifier(f.store).RecheckGraphOriginalInputs(ctx, graph.graphs[0].SourceReceipt),
 			)
-			require.Error(
+			require.NoError(
 				t,
 				NewGraphOriginalInputVerifier(f.store).RecheckGraphOriginalInputs(f.ctx, graph.graphs[0].SourceReceipt),
 			)
+			forged := *graph.graphs[0].SourceReceipt.OriginalInput
+			forged.InputDigest = strings.Repeat("0", 64)
+			require.Error(t, f.store.RecheckKnowledgeBuildInputs(ctx, &forged), "graph input proof remains checked")
 		})
 	}
 }

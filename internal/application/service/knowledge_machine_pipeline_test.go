@@ -842,9 +842,11 @@ func runKnowledgeMachineActualPipeline(t *testing.T, pg bool) {
 	}
 	require.True(t, found)
 	m.allow.Store(false)
-	require.Error(t, span.Check(m.f.ctx, snapshot))
+	require.NoError(t, span.Check(m.f.ctx, snapshot), "remote source read ACL is retired")
 	_, e = NewKnowledgeOutputAuthorizer(m.f.store, m.f.guard).Begin(m.f.ctx, []*types.Knowledge{row})
-	require.Error(t, e)
+	require.NoError(t, e)
+	snapshot.Rows[0].Output = types.JSONMap{"tampered": true}
+	require.Error(t, span.Check(m.f.ctx, snapshot), "the active span manifest still rejects changed bytes")
 }
 
 func TestKnowledgeMachineActualPipelineSQLite(t *testing.T) {
@@ -1048,9 +1050,9 @@ func TestPostgresKnowledgeMachineOriginalNegatives(t *testing.T) {
 func runKnowledgeMachineAdditionalPublicSources(t *testing.T, pg bool) {
 	for _, mode := range []string{
 		"real actor extra published source",
-		"machine cannot borrow extra source grant",
-		"additional personal source withdrawn",
-		"actual user revoked",
+		"machine authorized without extra remote read grant",
+		"remote personal read ACL withdrawn",
+		"ambient user revoked after machine admission",
 		"auto payload forged",
 		"auto model ABA",
 		"auto tenant ABA",
@@ -1145,7 +1147,7 @@ func runKnowledgeMachineAdditionalPublicSources(t *testing.T, pg bool) {
 			)
 			require.NoError(t, leases.ReleaseLease(context.Background(), lease.ID))
 			autoTask = m.f.queue.tasks[len(m.f.queue.tasks)-1]
-			m.authenticated = mode != "machine cannot borrow extra source grant"
+			m.authenticated = mode != "machine authorized without extra remote read grant"
 			if mode == "auto payload forged" {
 				var p types.KnowledgeAutoTagPayload
 				require.NoError(t, json.Unmarshal(autoTask.Payload(), &p))
@@ -1154,9 +1156,9 @@ func runKnowledgeMachineAdditionalPublicSources(t *testing.T, pg bool) {
 			}
 			m.model.beforeReturn = func() {
 				switch mode {
-				case "additional personal source withdrawn":
+				case "remote personal read ACL withdrawn":
 					m.personal.Store(false)
-				case "actual user revoked":
+				case "ambient user revoked after machine admission":
 					require.NoError(
 						t,
 						m.f.db.Model(&types.User{}).Where("id='enrich-human'").Update("is_active", false).Error,
@@ -1179,13 +1181,21 @@ func runKnowledgeMachineAdditionalPublicSources(t *testing.T, pg bool) {
 				}
 			}
 			e = m.run(t, autoTask)
-			if mode == "real actor extra published source" {
+			if mode == "real actor extra published source" ||
+				mode == "machine authorized without extra remote read grant" ||
+				mode == "remote personal read ACL withdrawn" || mode == "ambient user revoked after machine admission" {
+				// These tasks carry a private machine build capability. Ambient actor
+				// and remote read-ACL changes are no longer a second authorization gate.
 				require.NoError(t, e)
 				require.Equal(t, 1, m.model.calls)
+				var assigned int64
+				require.NoError(t, m.f.db.Model(&types.KnowledgeTagRelation{}).
+					Where("knowledge_id = ? AND tag_id='machine-topic'", row.ID).Count(&assigned).Error)
+				require.EqualValues(t, 1, assigned, "authorized machine output actually commits")
 				return
 			}
 			require.Error(t, e)
-			if mode == "machine cannot borrow extra source grant" || mode == "auto payload forged" {
+			if mode == "auto payload forged" {
 				require.Zero(t, m.model.calls)
 			} else {
 				require.Equal(t, 1, m.model.calls)
