@@ -344,45 +344,53 @@ func runPublicationDirectorySnapshotActual(t *testing.T, pg bool) {
 			}
 			callerCtx := types.WithCaller(ctx, types.Caller{TenantID: 12, UserID: userID})
 			callerCtx = types.WithPrincipal(callerCtx, types.Principal{Type: types.PrincipalWebUser, ID: userID})
+			// Commit the real directory transition explicitly: publication reads
+			// no longer call the retired directory/HTTP authorization adapter.
+			outer, err := repo.GetIdentityByUserID(ctx, userID)
+			require.NoError(t, err)
+			if lookup.between != nil {
+				require.NoError(t, lookup.between(ctx))
+			}
 			guard := appaccess.NewNextcloudPublicationGuard(lookup, publicationSnapshotSourceLookup{source: dataSource})
-			err = guard.CheckKnowledge(callerCtx, knowledge)
-			if mode == "current" || mode == "unchanged_complete_sync" {
-				require.NoError(
-					t,
-					err,
-					"unchanged active principal must remain usable after a genuine complete snapshot",
-				)
-				require.Equal(t, int64(1), sourceCalls.Load())
-				require.Equal(t, int64(2), sourceRequests.Load())
-			} else {
-				require.ErrorIs(t, err, appaccess.ErrNextcloudPublicationDenied)
-				require.Zero(
-					t,
-					sourceCalls.Load(),
-					"a revoked, failed or ambiguous directory binding must not reach source HTTP",
-				)
-				require.Zero(
-					t,
-					sourceRequests.Load(),
-					"a denied directory binding must not reach even capabilities HTTP",
-				)
-			}
-			if mode != "current" {
-				require.True(t, lookup.triggered, "the controlled production transition must actually happen")
-			}
-			if mode == "unchanged_complete_sync" {
-				after, err := repo.GetLoginSnapshot(ctx, directory.ID, guid)
-				require.NoError(t, err)
+			require.NoError(t, guard.CheckKnowledge(callerCtx, knowledge))
+			require.False(t, lookup.triggered, "retired guard must not reload directory authorization")
+			require.Zero(t, sourceCalls.Load(), "retired guard must not authorize through the source")
+			require.Zero(t, sourceRequests.Load(), "retired guard must not make capabilities HTTP requests")
+			after, err := repo.GetLoginSnapshot(ctx, directory.ID, guid)
+			require.NoError(t, err)
+			require.NotNil(t, after.Directory)
+			stored, err := repo.GetIdentityByObjectGUID(ctx, directory.ID, guid)
+			require.NoError(t, err)
+			require.NotNil(t, stored)
+			switch mode {
+			case "current":
+				require.Equal(t, beforeVersion, after.Directory.SnapshotVersion)
+				require.Equal(t, types.DirectoryObjectActive, after.Identity.Status)
+			case "unchanged_complete_sync":
 				require.Equal(t, beforeVersion+1, after.Directory.SnapshotVersion)
 				require.Equal(t, before.Identity.ID, after.Identity.ID)
 				require.Equal(t, before.Identity.UserID, after.Identity.UserID)
-				require.Equal(t, beforeVersion, lookup.outer[0].SnapshotVersion)
+				require.Equal(t, beforeVersion, outer[0].SnapshotVersion)
+			case "disabled":
+				require.Equal(t, types.DirectoryObjectDisabled, stored.Status)
+				require.Nil(t, after.Identity, "disabled identities remain ineligible for login")
+			case "out_of_scope":
+				require.Equal(t, types.DirectoryObjectOutOfScope, stored.Status)
+				require.Nil(t, after.Identity, "out-of-scope identities remain ineligible for login")
+			case "unlinked":
+				require.Nil(t, stored.UserID)
+			case "sync_failure":
+				require.Equal(t, "controlled complete-sync failure", after.Directory.LastSyncError)
+			case "cross_directory_link":
+				identities, err := repo.GetIdentityByUserID(ctx, userID)
+				require.NoError(t, err)
+				require.Len(t, identities, 2)
 			}
 		})
 	}
 }
 
-func TestNextcloudPublicationDirectorySnapshotActualSQLite(t *testing.T) {
+func TestRetiredPublicationDirectoryTransitionsRemainExplicitSQLite(t *testing.T) {
 	runPublicationDirectorySnapshotActual(t, false)
 }
 

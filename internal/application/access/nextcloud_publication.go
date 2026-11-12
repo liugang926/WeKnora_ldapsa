@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -43,9 +42,8 @@ type nextcloudSourceAuthorizer func(
 	context.Context, *types.DataSourceConfig, string, string, string, string, int64,
 ) (nextcloud.AuthorizationDecision, error)
 
-// NextcloudPublicationGuard checks the original source for a single knowledge
-// document. Call CheckKnowledge immediately before exposing source-derived
-// content; passing a document through a KB grant alone is insufficient.
+// NextcloudPublicationGuard retains the API of the retired publication read guard.
+// Source lifecycle helpers remain available to their existing callers.
 type NextcloudPublicationGuard struct {
 	directories NextcloudDirectoryLookup
 	dataSources NextcloudDataSourceLookup
@@ -70,226 +68,9 @@ func (g *NextcloudPublicationGuard) ConfigureSourcePathResolver(paths NextcloudS
 	g.checkPath = nextcloud.CheckCurrentPublication
 }
 
-// CheckKnowledge returns nil for unrelated knowledge and for a currently
-// authorized Nextcloud file. For Nextcloud knowledge every other outcome is a
-// denial, including an untrusted principal, stale directory snapshot, missing
-// source configuration, failed source call, or malformed source response.
+// CheckKnowledge is a compatibility no-op after the Nextcloud read guard retirement.
 func (g *NextcloudPublicationGuard) CheckKnowledge(ctx context.Context, knowledge *types.Knowledge) error {
-	return nil // retired with the NextCloud decoupling 2026-11-09
-
-	if knowledge == nil {
-		return ErrNextcloudPublicationDenied
-	}
-	metadata := map[string]json.RawMessage{}
-	if len(knowledge.Metadata) != 0 {
-		if err := json.Unmarshal(knowledge.Metadata, &metadata); err != nil || metadata == nil {
-			return apperrors.NewProtocolError(fmt.Errorf(
-				"%w: invalid knowledge metadata",
-				ErrNextcloudPublicationDenied,
-			), fmt.Sprintf("%s: invalid knowledge metadata", apperrors.PublicMessage(
-				ErrNextcloudPublicationDenied,
-			)))
-		}
-	}
-	marked := knowledge.Channel == types.ConnectorTypeNextcloud ||
-		metadata["nextcloud_instance_id"] != nil || metadata["nextcloud_binding_id"] != nil ||
-		metadata["nextcloud_file_id"] != nil
-	dsID, valid := publicationMetadataString(metadata, "datasource_id")
-	if !valid {
-		return apperrors.NewProtocolError(fmt.Errorf(
-			"%w: invalid data source identity",
-			ErrNextcloudPublicationDenied,
-		), fmt.Sprintf("%s: invalid data source identity", apperrors.PublicMessage(
-			ErrNextcloudPublicationDenied,
-		)))
-	}
-	if dsID == "" {
-		if marked {
-			return apperrors.NewProtocolError(fmt.Errorf(
-				"%w: missing data source identity",
-				ErrNextcloudPublicationDenied,
-			), fmt.Sprintf("%s: missing data source identity", apperrors.PublicMessage(
-				ErrNextcloudPublicationDenied,
-			)))
-		}
-		return nil
-	}
-	if g == nil || g.dataSources == nil {
-		return ErrNextcloudPublicationUnavailable
-	}
-	ds, err := g.dataSources.FindByID(ctx, dsID)
-	if err != nil || ds == nil {
-		return apperrors.NewProtocolError(fmt.Errorf(
-			"%w: data source lookup failed: %v",
-			ErrNextcloudPublicationUnavailable,
-			err,
-		), fmt.Sprintf("%s: data source lookup failed: %v", apperrors.PublicMessage(
-			ErrNextcloudPublicationUnavailable,
-		), func() any {
-			if err == nil {
-				return nil
-			}
-			return apperrors.PublicMessage(err)
-		}()))
-	}
-	if ds.ID != dsID || ds.TenantID != knowledge.TenantID ||
-		ds.KnowledgeBaseID != knowledge.KnowledgeBaseID {
-		return apperrors.NewProtocolError(fmt.Errorf(
-			"%w: data source ownership mismatch",
-			ErrNextcloudPublicationDenied,
-		), fmt.Sprintf("%s: data source ownership mismatch", apperrors.PublicMessage(
-			ErrNextcloudPublicationDenied,
-		)))
-	}
-	if ds.Type != types.ConnectorTypeNextcloud {
-		if marked {
-			return apperrors.NewProtocolError(fmt.Errorf(
-				"%w: source type mismatch",
-				ErrNextcloudPublicationDenied,
-			), fmt.Sprintf("%s: source type mismatch", apperrors.PublicMessage(
-				ErrNextcloudPublicationDenied,
-			)))
-		}
-		return nil
-	}
-	if knowledge.Channel != types.ConnectorTypeNextcloud ||
-		ds.Status != types.DataSourceStatusActive {
-		return apperrors.NewProtocolError(fmt.Errorf(
-			"%w: source channel or state mismatch",
-			ErrNextcloudPublicationDenied,
-		), fmt.Sprintf("%s: source channel or state mismatch", apperrors.PublicMessage(
-			ErrNextcloudPublicationDenied,
-		)))
-	}
-	instanceID, instanceValid := publicationMetadataString(metadata, "nextcloud_instance_id")
-	bindingID, bindingValid := publicationMetadataString(metadata, "nextcloud_binding_id")
-	fileIDRaw, fileIDValid := publicationMetadataString(metadata, "nextcloud_file_id")
-	importedETag, etagValid := publicationMetadataString(metadata, "nextcloud_etag")
-	sourceResourceID, sourceResourceValid := publicationMetadataString(metadata, "source_resource_id")
-	externalID, externalIDValid := publicationMetadataString(metadata, "external_id")
-	fileID, err := strconv.ParseInt(fileIDRaw, 10, 64)
-	if !instanceValid || !bindingValid || !fileIDValid || !etagValid || !sourceResourceValid || !externalIDValid ||
-		err != nil || fileID < 1 || strconv.FormatInt(fileID, 10) != fileIDRaw ||
-		instanceID == "" || bindingID == "" || strings.TrimSpace(importedETag) == "" ||
-		sourceResourceID != bindingID ||
-		externalID != "nextcloud:"+instanceID+":"+fileIDRaw {
-		return apperrors.NewProtocolError(fmt.Errorf(
-			"%w: incomplete source identity",
-			ErrNextcloudPublicationDenied,
-		), fmt.Sprintf("%s: incomplete source identity", apperrors.PublicMessage(
-			ErrNextcloudPublicationDenied,
-		)))
-	}
-	if err := g.checkSourceControls(ctx, instanceID); err != nil {
-		return err
-	}
-	config, err := ds.ParseConfig()
-	if err != nil || config == nil {
-		return apperrors.NewProtocolError(fmt.Errorf(
-			"%w: data source configuration failed: %v",
-			ErrNextcloudPublicationUnavailable,
-			err,
-		), fmt.Sprintf("%s: data source configuration failed: %v", apperrors.PublicMessage(
-			ErrNextcloudPublicationUnavailable,
-		), func() any {
-			if err == nil {
-				return nil
-			}
-			return apperrors.PublicMessage(err)
-		}()))
-	}
-	// The V1 rollout binds one dedicated knowledge base to one source folder.
-	// Old multi-binding configurations must not remain readable after a policy
-	// change, even if this particular file still belongs to one of the roots.
-	if len(config.ResourceIDs) != 1 || config.ResourceIDs[0] != bindingID {
-		return apperrors.NewProtocolError(fmt.Errorf(
-			"%w: source requires exactly one selected binding",
-			ErrNextcloudPublicationDenied,
-		), fmt.Sprintf("%s: source requires exactly one selected binding", apperrors.PublicMessage(
-			ErrNextcloudPublicationDenied,
-		)))
-	}
-	config.Type = ds.Type
-
-	currentIdentity, err := g.currentDirectoryIdentity(ctx)
-	if err != nil {
-		return err
-	}
-	if g.authorize == nil {
-		return ErrNextcloudPublicationUnavailable
-	}
-	importedRevision, _ := publicationMetadataString(metadata, "nextcloud_content_revision")
-	importedRevision, err = types.NormalizeNextcloudContentRevision(importedRevision)
-	if err != nil {
-		return ErrNextcloudPublicationDenied
-	}
-	decision, err := g.authorize(
-		types.WithNextcloudContentRevision(ctx, importedRevision),
-		config,
-		instanceID,
-		bindingID,
-		currentIdentity.DirectoryID,
-		currentIdentity.ObjectGUID,
-		fileID,
-	)
-	if err != nil {
-		return apperrors.NewProtocolError(fmt.Errorf(
-			"%w: source check failed: %v",
-			ErrNextcloudPublicationUnavailable,
-			err,
-		), fmt.Sprintf("%s: source check failed: %v", apperrors.PublicMessage(
-			ErrNextcloudPublicationUnavailable,
-		), func() any {
-			if err == nil {
-				return nil
-			}
-			return apperrors.PublicMessage(err)
-		}()))
-	}
-	if !decision.Allow {
-		return apperrors.NewProtocolError(fmt.Errorf(
-			"%w: source denied file access",
-			ErrNextcloudPublicationDenied,
-		), fmt.Sprintf("%s: source denied file access", apperrors.PublicMessage(
-			ErrNextcloudPublicationDenied,
-		)))
-	}
-	// Publication and ACL may still be valid while the source bytes have
-	// changed. Never expose an imported older version as the current file.
-	currentRevision, err := types.NormalizeNextcloudContentRevision(decision.SourceContentRevision)
-	if err != nil || currentRevision != importedRevision {
-		return ErrNextcloudPublicationDenied
-	}
-	if decision.SourceETag == "" || decision.SourceETag != importedETag {
-		return apperrors.NewProtocolError(fmt.Errorf(
-			"%w: source version changed",
-			ErrNextcloudPublicationDenied,
-		), fmt.Sprintf("%s: source version changed", apperrors.PublicMessage(
-			ErrNextcloudPublicationDenied,
-		)))
-	}
-	if g.paths != nil {
-		oldPath, valid := publicationMetadataString(metadata, "nextcloud_path")
-		if !valid || oldPath == "" || g.checkPath == nil {
-			return ErrNextcloudPublicationDenied
-		}
-		path, err := g.paths.ResolveCurrentSourcePath(ctx, knowledge.TenantID, knowledge.KnowledgeBaseID, dsID, oldPath)
-		if err != nil {
-			return ErrNextcloudPublicationUnavailable
-		}
-		if err := g.checkPath(
-			types.WithNextcloudContentRevision(ctx, importedRevision),
-			config,
-			instanceID,
-			bindingID,
-			fileID,
-			importedETag,
-			path,
-		); err != nil {
-			return ErrNextcloudPublicationDenied
-		}
-	}
-	return g.checkSourceControls(ctx, instanceID)
+	return nil // Retired with the Nextcloud decoupling on 2026-11-09.
 }
 
 // currentDirectoryIdentity validates only captured principal and local AD
@@ -421,43 +202,13 @@ func publicationMetadataString(metadata map[string]json.RawMessage, key string) 
 	return *value, true
 }
 
-// CheckSourceRoot gates KB labels and metadata before a complete document
-// listing exists, including an empty root. It retains the real principal and
-// NC/LDAPS checks; a target Owner/Admin or cached grant cannot bypass them.
+// CheckSourceRoot is a compatibility no-op after the Nextcloud read guard retirement.
 func (g *NextcloudPublicationGuard) CheckSourceRoot(
 	ctx context.Context,
 	ds *types.DataSource,
 	instance, binding string,
 ) error {
-	return nil // retired with the NextCloud decoupling 2026-11-09
-
-	if err := g.checkSourceControls(ctx, instance); err != nil {
-		return err
-	}
-
-	if g == nil || ds == nil || ds.Type != types.ConnectorTypeNextcloud || ds.Status != types.DataSourceStatusActive {
-		return ErrNextcloudPublicationDenied
-	}
-	identity, err := g.currentDirectoryIdentity(ctx)
-	if err != nil {
-		return err
-	}
-	cfg, err := ds.ParseConfig()
-	if err != nil || cfg == nil {
-		return ErrNextcloudPublicationUnavailable
-	}
-	cfg.Type = ds.Type
-	if err := nextcloud.AuthorizeCurrentRoot(
-		ctx,
-		cfg,
-		instance,
-		binding,
-		identity.DirectoryID,
-		identity.ObjectGUID,
-	); err != nil {
-		return ErrNextcloudPublicationDenied
-	}
-	return g.checkSourceControls(ctx, instance)
+	return nil // Retired with the Nextcloud decoupling on 2026-11-09.
 }
 
 func (g *NextcloudPublicationGuard) checkSourceControls(ctx context.Context, instance string) error {
