@@ -54,8 +54,10 @@ type DingTalkIdentity struct {
 	// (corp_id, dingtalk_user_id).
 	ID uint64 `json:"id" gorm:"primaryKey;autoIncrement"`
 	// CorpID is the DingTalk enterprise identifier the binding belongs to.
+	//nolint:lll // Go struct tags cannot be split without changing the schema.
 	CorpID string `json:"corp_id" gorm:"type:varchar(64);not null;uniqueIndex:uq_dingtalk_identities_dingtalk,priority:1"`
 	// DingTalkUserID is the stable per-corp user identifier from DingTalk.
+	//nolint:lll // Go struct tags cannot be split without changing the schema.
 	DingTalkUserID string `json:"dingtalk_user_id" gorm:"column:dingtalk_user_id;type:varchar(64);not null;uniqueIndex:uq_dingtalk_identities_dingtalk,priority:2"`
 	// UnionID is the cross-app DingTalk user identifier snapshot.
 	UnionID string `json:"union_id,omitempty" gorm:"type:varchar(64);not null;default:''"`
@@ -84,15 +86,17 @@ func (DingTalkIdentity) TableName() string { return "dingtalk_identities" }
 // DingTalkAuthEvent is the append-only audit trail for the DingTalk SSO
 // module (bind / unbind / login_success / login_rejected / snapshot_update).
 type DingTalkAuthEvent struct {
-	ID             uint64    `json:"id" gorm:"primaryKey;autoIncrement"`
-	EventType      string    `json:"event_type" gorm:"type:varchar(32);not null"`
-	CorpID         string    `json:"corp_id" gorm:"type:varchar(64);not null;default:''"`
-	DingTalkUserID string    `json:"dingtalk_user_id" gorm:"column:dingtalk_user_id;type:varchar(64);not null;default:''"`
-	JobNumber      string    `json:"job_number,omitempty" gorm:"type:varchar(128);not null;default:''"`
-	UserID         string    `json:"user_id,omitempty" gorm:"type:varchar(36);not null;default:''"`
-	Reason         string    `json:"reason,omitempty" gorm:"type:varchar(64);not null;default:''"`
-	Detail         string    `json:"detail,omitempty" gorm:"type:varchar(512);not null;default:''"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID        uint64 `json:"id" gorm:"primaryKey;autoIncrement"`
+	EventType string `json:"event_type" gorm:"type:varchar(32);not null"`
+	CorpID    string `json:"corp_id" gorm:"type:varchar(64);not null;default:''"`
+
+	DingTalkUserID string `json:"dingtalk_user_id" gorm:"column:dingtalk_user_id;type:varchar(64);not null;default:''"`
+
+	JobNumber string    `json:"job_number,omitempty" gorm:"type:varchar(128);not null;default:''"`
+	UserID    string    `json:"user_id,omitempty" gorm:"type:varchar(36);not null;default:''"`
+	Reason    string    `json:"reason,omitempty" gorm:"type:varchar(64);not null;default:''"`
+	Detail    string    `json:"detail,omitempty" gorm:"type:varchar(512);not null;default:''"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // TableName names the DingTalk audit event table.

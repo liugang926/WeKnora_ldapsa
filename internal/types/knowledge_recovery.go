@@ -13,9 +13,12 @@ type KnowledgeRecoveryEligibility struct {
 }
 type knowledgeRecoverySnapshotKey struct{}
 
+// WithKnowledgeRecoverySnapshot stores the expected recovery snapshot in a context.
 func WithKnowledgeRecoverySnapshot(ctx context.Context, snapshot string) context.Context {
 	return context.WithValue(ctx, knowledgeRecoverySnapshotKey{}, snapshot)
 }
+
+// KnowledgeRecoverySnapshot returns the expected recovery snapshot, if present.
 func KnowledgeRecoverySnapshot(ctx context.Context) string {
 	value, _ := ctx.Value(knowledgeRecoverySnapshotKey{}).(string)
 	return value
