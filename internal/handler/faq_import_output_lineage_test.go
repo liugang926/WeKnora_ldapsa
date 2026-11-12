@@ -138,7 +138,7 @@ func TestFAQImportActualHTTPCurrentKeyAndKBReadWithdraw(t *testing.T) {
 					},
 				)
 			}
-			w = serveFAQHTTP(ctx, h, http.MethodGet, "/faq/import/progress/"+task.TaskID, "")
+			w = serveAuthenticatedFAQRead(ctx, t, db, h, "/faq/import/progress/"+task.TaskID)
 			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 			require.Contains(t, w.Body.String(), "current read protected question")
 			switch change {
@@ -147,7 +147,7 @@ func TestFAQImportActualHTTPCurrentKeyAndKBReadWithdraw(t *testing.T) {
 			case "key-capability":
 				require.NoError(
 					t,
-					db.Model(key).Update("capabilities", types.StringArray{string(types.APIKeyCapabilityIngest)}).Error,
+					db.Model(key).Update("capabilities", types.StringArray{string(types.APIKeyCapabilityChat)}).Error,
 				)
 			case "key-kb-scope":
 				require.NoError(t, db.Model(key).Update("knowledge_base_ids", types.StringArray{"elsewhere"}).Error)
@@ -173,7 +173,10 @@ func TestFAQImportActualHTTPCurrentKeyAndKBReadWithdraw(t *testing.T) {
 						Error,
 				)
 			}
-			w = serveFAQHTTP(ctx, h, http.MethodGet, "/faq/import/progress/"+task.TaskID, "")
+			w = serveAuthenticatedFAQRead(ctx, t, db, h, "/faq/import/progress/"+task.TaskID)
+			if change == "key-kb-scope" || change == "kb-policy" {
+				require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+			}
 			require.NotEqual(t, http.StatusOK, w.Code, w.Body.String())
 			require.NotContains(t, w.Body.String(), "current read protected question")
 		})
@@ -238,7 +241,7 @@ func TestFAQImportActualHTTPCurrentActorAndMissingLegacyReceiptReject(t *testing
 	require.NoError(t, json.Unmarshal(queue.tasks[0].Payload(), &task))
 	require.NoError(t, h.knowledgeService.ProcessFAQImport(context.Background(), queue.tasks[0]))
 	require.NoError(t, db.Model(&types.User{}).Where("id='user'").Update("is_active", false).Error)
-	w = serveFAQHTTP(ctx, h, http.MethodGet, "/faq/import/progress/"+task.TaskID, "")
+	w = serveAuthenticatedFAQRead(ctx, t, db, h, "/faq/import/progress/"+task.TaskID)
 	require.NotEqual(t, http.StatusOK, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), "protected progress question")
 	require.NoError(t, db.Model(&types.User{}).Where("id='user'").Update("is_active", true).Error)

@@ -200,6 +200,7 @@ func TestAutoTagActualAsynqBeginModelEndOriginalSpanHTTP(t *testing.T) {
 					ctx,
 					types.TenantAPIKeyScope{
 						KeyID:            apiKey.ID,
+						ScopeType:        apiKey.ScopeType,
 						KnowledgeBaseIDs: apiKey.KnowledgeBaseIDs,
 						Capabilities:     apiKey.Capabilities,
 					},
@@ -357,6 +358,15 @@ func TestAutoTagActualAsynqBeginModelEndOriginalSpanHTTP(t *testing.T) {
 			h.kgService = publicationHandlerKnowledge{row: k}
 			h.spanRepo = repository.NewKnowledgeSpanRepository(db)
 			ConfigureKnowledgeHandlerSpanOutputLineage(h, service.NewSpanOutputAuthorizer(store, sourceGuard))
+			var withdrawn *bool
+			if mutation == "source withdraw during HTTP remote" {
+				withdrawn = onWorkspaceOutputActorRead(t, db, func(tx *gorm.DB) {
+					result := tx.Exec("UPDATE nextcloud_content_fences SET state='retired', epoch=epoch+1 " +
+						"WHERE tenant_id=7 AND knowledge_base_id='kb' AND knowledge_id='source' AND state='open'")
+					require.NoError(t, result.Error)
+					require.EqualValues(t, 1, result.RowsAffected)
+				})
+			}
 			router := documentHandlerRouter()
 			router.Use(func(c *gin.Context) {
 				readCtx := collectionHumanInputContext(7)
@@ -368,14 +378,17 @@ func TestAutoTagActualAsynqBeginModelEndOriginalSpanHTTP(t *testing.T) {
 			router.GET("/knowledge/:id/spans", h.GetKnowledgeSpans)
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, httptest.NewRequest("GET", "/knowledge/auto-span-document/spans?attempt=1", nil))
-			if mutation == "none" {
+			if withdrawn != nil {
+				require.True(t, *withdrawn)
+			}
+			if mutation == "none" || mutation == "remote revoke before HTTP" {
 				require.Equal(t, 200, w.Code, w.Body.String())
 				require.Contains(t, w.Body.String(), "postprocess.auto_tag")
 				require.Contains(t, w.Body.String(), `"matched_tag_count":1`)
 				require.Contains(t, w.Body.String(), `"content_provenance":"complete"`)
 				require.NotContains(t, w.Body.String(), "manifest_id")
 				require.NotContains(t, w.Body.String(), "actual_inputs")
-				require.Greater(t, calls.Load(), int64(0))
+				require.Zero(t, calls.Load())
 			} else {
 				require.NotEqual(t, 200, w.Code, w.Body.String())
 				require.NotContains(t, w.Body.String(), "matched_tag_count")

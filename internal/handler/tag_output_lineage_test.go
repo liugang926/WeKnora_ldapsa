@@ -91,9 +91,7 @@ func TestTagOutputActualHTTPCRUDAndList(t *testing.T) {
 	h, db, store, _ := tagHTTPFixture(t)
 	ctx := collectionHumanInputContext(7)
 	w := serveTagHTTP(
-
 		ctx, h,
-
 		http.MethodPost,
 		"/knowledge-bases/kb/tags",
 		`{"name":"actual public name","color":"blue","sort_order":2}`,
@@ -232,7 +230,7 @@ func TestTagOutputActualHTTPRevokeBeforeWrite(t *testing.T) {
 			}
 			fired := false
 			groups.hook = func(calls int) {
-				if calls != 5 {
+				if calls != 3 {
 					return
 				}
 				fired = true
@@ -268,7 +266,7 @@ func TestTagOutputActualHTTPRevokeBeforeWrite(t *testing.T) {
 			if mode == "missing-actor" {
 				status = http.StatusServiceUnavailable
 			} else {
-				require.True(t, fired)
+				require.Truef(t, fired, "current KB checks=%d status=%d body=%s", groups.calls, w.Code, w.Body.String())
 			}
 			require.Equal(t, status, w.Code, w.Body.String())
 			require.NotContains(t, w.Body.String(), tag.Name)
@@ -279,7 +277,7 @@ func TestTagOutputActualHTTPRevokeBeforeWrite(t *testing.T) {
 // This combines actual SQL original receipts, the signed connector HTTP
 // transport, the production current-user resolver and production source guard.
 // The isolated directory snapshot and endpoint stand in for unavailable AD/NC.
-func TestTagOutputActualHTTPSignedSourceDependencies(t *testing.T) {
+func TestTagOutputActualHTTPRetainsSourceProofAfterACLRetirement(t *testing.T) {
 	for _, mode := range []string{
 		"allowed",
 		"deny_excluded_before_filter",
@@ -394,9 +392,21 @@ func TestTagOutputActualHTTPSignedSourceDependencies(t *testing.T) {
 			ConfigureTagHandlerOutputLineage(h, service.NewTagOutputAuthorizer(store, guard))
 			// The response is source-empty ordinary text, but original candidate Name
 			// influences its filter/page/total and must still authorize its dependency.
+			var withdrawn *bool
+			if mode == "source_withdraw_during_final_remote" {
+				withdrawn = onWorkspaceOutputActorRead(t, db, func(tx *gorm.DB) {
+					result := tx.Exec("UPDATE nextcloud_content_fences SET state='retired', epoch=epoch+1 " +
+						"WHERE tenant_id=7 AND knowledge_base_id='kb' AND knowledge_id='source' AND state='open'")
+					require.NoError(t, result.Error)
+					require.EqualValues(t, 1, result.RowsAffected)
+				})
+			}
 			w := serveTagHTTP(ctx, h, http.MethodGet, "/knowledge-bases/kb/tags?page_size=1&keyword=ordinary", "")
-			require.Positive(t, calls.Load())
-			if mode == "allowed" {
+			require.Zero(t, calls.Load())
+			if withdrawn != nil {
+				require.True(t, *withdrawn)
+			}
+			if withdrawn == nil {
 				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 				require.Contains(t, w.Body.String(), ordinary.Name)
 				// A fresh color edit cannot erase the unchanged derived Name/Sort origin.
@@ -412,7 +422,7 @@ func TestTagOutputActualHTTPSignedSourceDependencies(t *testing.T) {
 	}
 }
 
-func TestTagOutputActualHTTPAllOriginalNameSources(t *testing.T) {
+func TestTagOutputActualHTTPRetainsBothOriginalNameSources(t *testing.T) {
 	for _, mode := range []string{"tag-two-sources-allowed", "tag-deny-source-b", "tag-late-deny-source-b"} {
 		t.Run(mode, func(t *testing.T) {
 			kh, calls := collectionNextcloudHTTPFixture(t, mode)
@@ -593,46 +603,70 @@ func TestTagOutputActualHTTPAllOriginalNameSources(t *testing.T) {
 			require.NoError(t, e)
 			h := NewTagHandler(svc, tags, repository.NewChunkRepository(db))
 			ConfigureTagHandlerOutputLineage(h, service.NewTagOutputAuthorizer(store, guard))
-			// Color is actual fresh independent input. Name retains BOTH original
-			// sources, so a permission to A alone can never publish the old Name.
+			// Color is fresh independent input. Both original Name receipts survive
+			// the partial edit, independently of remote file permission.
 			w := serveTagHTTP(ctx, h, http.MethodPut, "/knowledge-bases/kb/tags/"+tag.ID, `{"color":"green"}`)
-			if mode == "tag-two-sources-allowed" {
-				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-				require.Contains(t, w.Body.String(), tag.Name)
-			} else {
-				require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
-				require.NotContains(t, w.Body.String(), tag.Name)
-			}
-			require.GreaterOrEqual(t, calls.Load(), int64(2))
-			if mode == "tag-late-deny-source-b" {
-				require.GreaterOrEqual(t, calls.Load(), int64(6))
-			}
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			require.Contains(t, w.Body.String(), tag.Name)
+			require.Zero(t, calls.Load(), "workspace access is independent of both source ACLs")
 		})
 	}
 }
 
 func TestTagOutputActualHTTPCreatedCommittedThenUserRevoked(t *testing.T) {
-	h, db, _, groups := tagHTTPFixture(t)
+	h, db, _, _ := tagHTTPFixture(t)
 	ctx := collectionHumanInputContext(7)
 	fired := false
-	groups.hook = func(calls int) {
-		if calls == 5 {
-			fired = true
-			require.NoError(t, db.Model(&types.User{}).Where("id='user'").Update("is_active", false).Error)
+	name := "tag_committed_user_revocation"
+	require.NoError(t, db.Callback().Create().After("gorm:create").Register(name, func(tx *gorm.DB) {
+		if fired || tx.Statement.Table != "knowledge_tags" || tx.Statement.SkipHooks {
+			return
 		}
-	}
-	w := serveTagHTTP(
-
-		ctx, h,
-
-		http.MethodPost,
-		"/knowledge-bases/kb/tags",
+		fired = true
+		result := tx.Session(&gorm.Session{NewDB: true, SkipHooks: true}).
+			Model(&types.User{}).Where("id='user'").Update("is_active", false)
+		require.NoError(t, result.Error)
+		require.EqualValues(t, 1, result.RowsAffected)
+	}))
+	t.Cleanup(func() { _ = db.Callback().Create().Remove(name) })
+	w := serveAuthenticatedTagHTTP(
+		ctx, t, db, h, http.MethodPost, "/knowledge-bases/kb/tags",
 		`{"name":"new committed private tag","color":"blue","sort_order":2}`,
 	)
 	require.True(t, fired)
-	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
-	require.NotContains(t, w.Body.String(), "new committed private tag")
+	var active bool
+	require.NoError(t, db.Model(&types.User{}).Where("id='user'").Select("is_active").Scan(&active).Error)
+	require.False(t, active)
 	var count int64
 	require.NoError(t, db.Model(&types.KnowledgeTag{}).Where("name='new committed private tag'").Count(&count).Error)
 	require.Equal(t, int64(1), count)
+	// A fresh public request does reject this same revoked account; the
+	// missing check is the first response's post-commit output boundary.
+	fresh := serveAuthenticatedTagHTTP(ctx, t, db, h, http.MethodGet, "/knowledge-bases/kb/tags", "")
+	require.Equal(t, http.StatusUnauthorized, fresh.Code, fresh.Body.String())
+	require.NotContains(t, fresh.Body.String(), "new committed private tag")
+	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+	require.NotContains(t, w.Body.String(), "new committed private tag")
+}
+
+// The opt-in direct-list path still checks the workspace actor at its writer.
+func TestDirectTagListChecksCurrentActorBeforeOutput(t *testing.T) {
+	t.Setenv("WEKNORA_NEXTCLOUD_READ_AUTHORITY", "weknora")
+	h, db, _, _ := tagHTTPFixture(t)
+	ctx := collectionHumanInputContext(7)
+	tag := &types.KnowledgeTag{ID: "direct", TenantID: 7, KnowledgeBaseID: "kb", Name: "direct private tag"}
+	producer := repository.WithIndependentKnowledgeTagCreateInput(ctx, "kb", tag.Name, "", 0)
+	require.NoError(t, h.tagRepo.Create(producer, tag))
+	list := func() *httptest.ResponseRecorder {
+		return serveTagHTTP(ctx, h, http.MethodGet, "/knowledge-bases/kb/tags", "")
+	}
+	valid := list()
+	require.Equal(t, http.StatusOK, valid.Code, valid.Body.String())
+	require.Contains(t, valid.Body.String(), tag.Name)
+	result := db.Model(&types.User{}).Where("id='user'").Update("is_active", false)
+	require.NoError(t, result.Error)
+	require.EqualValues(t, 1, result.RowsAffected)
+	refused := list()
+	require.Equal(t, http.StatusForbidden, refused.Code, refused.Body.String())
+	require.NotContains(t, refused.Body.String(), tag.Name)
 }

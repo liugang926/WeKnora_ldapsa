@@ -1,12 +1,14 @@
 package handler
 
 import (
+	stderrors "errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
@@ -632,6 +634,10 @@ func (h *FAQHandler) GetImportProgress(c *gin.Context) {
 	progress, err := h.knowledgeService.GetFAQImportProgress(ctx, taskID)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
+		if stderrors.Is(err, access.ErrNextcloudPublicationDenied) ||
+			stderrors.Is(err, access.ErrNextcloudPublicationUnavailable) {
+			err = knowledgeOutputHTTPError(err)
+		}
 		c.Error(err)
 		return
 	}

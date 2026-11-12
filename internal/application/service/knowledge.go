@@ -75,7 +75,7 @@ type knowledgeService struct {
 	knowledgeInputs         interfaces.KnowledgeBuildInputReader
 	knowledgeInputWriter    interfaces.KnowledgeInputWriter
 	faqInputs               *repository.KnowledgeInputProvenanceStore
-	faqLineageChecker       knowledgeOutputLineageChecker
+	faqLineageChecker       *access.NextcloudSourceLineageGuard
 	imageResolver           *docparser.ImageResolver
 	taskPendingRepo         interfaces.TaskPendingOpsRepository
 
