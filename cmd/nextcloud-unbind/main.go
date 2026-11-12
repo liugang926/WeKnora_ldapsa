@@ -66,15 +66,19 @@ func privateFile(path string) ([]byte, error) {
 	return data, nil
 }
 
-const requiredSchemaPG = 175
-const requiredSchemaSQLite = 92
+const (
+	requiredSchemaPG     = 175
+	requiredSchemaSQLite = 92
+)
 
 func schemaVersion(db *gorm.DB) (int, bool) {
 	var rows []struct {
 		Version int  `gorm:"column:version"`
 		Dirty   bool `gorm:"column:dirty"`
 	}
-	if e := db.Raw("SELECT version, dirty FROM schema_migrations ORDER BY version DESC LIMIT 1").Scan(&rows).Error; e != nil || len(rows) != 1 {
+	if e := db.Raw(
+		"SELECT version, dirty FROM schema_migrations ORDER BY version DESC LIMIT 1",
+	).Scan(&rows).Error; e != nil || len(rows) != 1 {
 		return 0, false
 	}
 	return rows[0].Version, !rows[0].Dirty
@@ -127,20 +131,27 @@ func run() error {
 	}
 	version, clean := schemaVersion(db)
 	if !clean || version < required {
-		return fmt.Errorf("schema migration %d (nextcloud unbind) must be applied first; current version=%d dirty=%v", required, version, !clean)
+		return fmt.Errorf(
+			"schema migration %d (nextcloud unbind) must be applied first; current version=%d dirty=%v",
+			required, version, !clean,
+		)
 	}
 	before, e := survey(db)
 	if e != nil {
 		return fmt.Errorf("survey: %w", e)
 	}
-	fmt.Printf("before: active nextcloud data sources=%d, flagged knowledge bases=%d\n", before.ActiveNextcloudSources, before.FlaggedKnowledgeBases)
+	fmt.Printf("before: active nextcloud data sources=%d, flagged knowledge bases=%d\n",
+		before.ActiveNextcloudSources, before.FlaggedKnowledgeBases)
 	if *dryRun {
 		fmt.Println("dry-run: no changes applied")
 		fmt.Println("plan: soft-delete nextcloud data_sources; clear ever_had_nextcloud_source on knowledge_bases")
 		return nil
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
-		res := tx.Exec("UPDATE data_sources SET deleted_at = ?, updated_at = ? WHERE type = 'nextcloud' AND deleted_at IS NULL", time.Now(), time.Now())
+		res := tx.Exec(
+			"UPDATE data_sources SET deleted_at = ?, updated_at = ? WHERE type = 'nextcloud' AND deleted_at IS NULL",
+			time.Now(), time.Now(),
+		)
 		if res.Error != nil {
 			return fmt.Errorf("soft-delete nextcloud data sources: %w", res.Error)
 		}
@@ -155,12 +166,14 @@ func run() error {
 			return fmt.Errorf("post-change survey: %w", e)
 		}
 		fmt.Printf("applied: soft-deleted %d data source(s), cleared %d knowledge base flag(s)\n", sources, kbs)
-		fmt.Printf("after:  active nextcloud data sources=%d, flagged knowledge bases=%d\n", after.ActiveNextcloudSources, after.FlaggedKnowledgeBases)
+		fmt.Printf("after:  active nextcloud data sources=%d, flagged knowledge bases=%d\n",
+			after.ActiveNextcloudSources, after.FlaggedKnowledgeBases)
 		if after.ActiveNextcloudSources != 0 || after.FlaggedKnowledgeBases != 0 {
 			return errors.New("unbind incomplete: rows remain; rolling back")
 		}
 		fmt.Println("unbind complete; retained knowledge and chunk content is untouched")
-		fmt.Println("rollback guidance: restore from the pre-unbind backup (pg_dump) if the binding must be re-established")
+		fmt.Println("rollback guidance: restore from the pre-unbind backup (pg_dump) " +
+			"if the binding must be re-established")
 		return nil
 	})
 }

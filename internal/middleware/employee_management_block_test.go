@@ -209,7 +209,8 @@ func TestEmployeeManagementBlock_EmployeeRejectedByCategory(t *testing.T) {
 func TestEmployeeManagementBlock_ContributorRejected(t *testing.T) {
 	blockedForContributor := []struct{ method, template string }{
 		{http.MethodPost, "/api/v1/knowledge-bases"},
-		{http.MethodPut, "/api/v1/knowledge-bases/:id"}, // would pass EditableKBOrAdmin for a KB the contributor created
+		// Would pass EditableKBOrAdmin for a KB the contributor created.
+		{http.MethodPut, "/api/v1/knowledge-bases/:id"},
 		{http.MethodPut, "/api/v1/knowledge/tags"},
 		{http.MethodPost, "/api/v1/knowledge/move"},
 		{http.MethodPut, "/api/v1/agents/:id"},

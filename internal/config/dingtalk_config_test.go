@@ -40,7 +40,8 @@ func TestApplyDingTalkEnvOverrides(t *testing.T) {
 		d := cfg.DingTalkAuth
 		if !d.Enable || d.CorpID != "ding-env-corp" || d.AppKey != "ding-env-key" ||
 			d.AppSecret != "ding-env-secret" || d.AgentID != "ding-env-agent" ||
-			d.ProviderDisplayName != "公司钉钉" || d.RedirectURL != "https://app.example.com/api/v1/auth/dingtalk/callback" {
+			d.ProviderDisplayName != "公司钉钉" ||
+			d.RedirectURL != "https://app.example.com/api/v1/auth/dingtalk/callback" {
 			t.Fatalf("overrides not applied: %+v", d)
 		}
 	})
@@ -60,7 +61,9 @@ func TestApplyDingTalkEnvOverrides(t *testing.T) {
 	t.Run("explicit redirect url wins over derivation", func(t *testing.T) {
 		cfg := &Config{
 			FrontendBaseURL: "https://weknora.example.com",
-			DingTalkAuth:    &DingTalkAuthConfig{RedirectURL: "https://other.example.com/api/v1/auth/dingtalk/callback"},
+			DingTalkAuth: &DingTalkAuthConfig{
+				RedirectURL: "https://other.example.com/api/v1/auth/dingtalk/callback",
+			},
 		}
 		applyDingTalkEnvOverrides(cfg)
 		if cfg.DingTalkAuth.RedirectURL != "https://other.example.com/api/v1/auth/dingtalk/callback" {

@@ -257,7 +257,8 @@ func EmployeeManagementBlock() gin.HandlerFunc {
 		uid, _ := types.UserIDFromContext(ctx)
 		tenantID := types.CallerFromContext(ctx).TenantID
 		logger.Warnf(ctx,
-			"[employee-block] non-admin write to management route rejected: user=%s role=%s tenant=%d method=%s path=%s",
+			"[employee-block] non-admin write to management route rejected: "+
+				"user=%s role=%s tenant=%d method=%s path=%s",
 			uid, role, tenantID, c.Request.Method, c.FullPath())
 		if svc := AuditServiceFromContext(c); svc != nil {
 			_ = svc.LogDenied(ctx, c, tenantID, uid, string(role), types.TenantRoleAdmin)

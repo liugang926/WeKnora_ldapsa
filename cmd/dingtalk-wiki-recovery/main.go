@@ -30,6 +30,7 @@ func main() {
 		os.Exit(1)
 	}
 }
+
 func run() error {
 	mode := flag.String("mode", "plan", "plan or apply (enqueue only)")
 	action := flag.String("action", "", "resume-wiki or reparse")
@@ -39,19 +40,24 @@ func run() error {
 	id := flag.String("knowledge-id", "", "exact failed document")
 	path := flag.String("plan", "", "private plan file (created exclusively in plan mode)")
 	flag.Parse()
-	if (*mode != "plan" && *mode != "apply") || *tenant == 0 || *kb == "" || *source == "" || *id == "" || *path == "" {
+	if (*mode != "plan" && *mode != "apply") || *tenant == 0 || *kb == "" ||
+		*source == "" || *id == "" || *path == "" {
 		return errors.New("mode, action, tenant-id, kb-id, source-id, knowledge-id and plan are required")
 	}
 	dsn := os.Getenv("WEKNORA_POSTGRES_DSN")
 	if dsn == "" {
-		if os.Getenv("DB_DRIVER") != "postgres" || os.Getenv("RETRIEVE_DRIVER") != "postgres" || os.Getenv("DB_HOST") == "" || os.Getenv("DB_USER") == "" || os.Getenv("DB_NAME") == "" {
+		if os.Getenv("DB_DRIVER") != "postgres" || os.Getenv("RETRIEVE_DRIVER") != "postgres" ||
+			os.Getenv("DB_HOST") == "" || os.Getenv("DB_USER") == "" || os.Getenv("DB_NAME") == "" {
 			return errors.New("existing PostgreSQL DB_* and RETRIEVE_DRIVER environment required")
 		}
 		port := os.Getenv("DB_PORT")
 		if port == "" {
 			port = "5432"
 		}
-		u := url.URL{Scheme: "postgres", Host: net.JoinHostPort(os.Getenv("DB_HOST"), port), Path: os.Getenv("DB_NAME"), User: url.UserPassword(os.Getenv("DB_USER"), os.Getenv("DB_PASSWORD"))}
+		u := url.URL{
+			Scheme: "postgres", Host: net.JoinHostPort(os.Getenv("DB_HOST"), port), Path: os.Getenv("DB_NAME"),
+			User: url.UserPassword(os.Getenv("DB_USER"), os.Getenv("DB_PASSWORD")),
+		}
 		q := u.Query()
 		q.Set("sslmode", "disable")
 		q.Set("TimeZone", "UTC")
@@ -66,11 +72,14 @@ func run() error {
 	if err != nil {
 		return errors.New("database unavailable")
 	}
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	var owner bool
-	if err = db.WithContext(ctx).Raw("SELECT r.rolsuper OR pg_has_role(current_user, d.datdba, 'USAGE') FROM pg_roles r JOIN pg_database d ON d.datname=current_database() WHERE r.rolname=current_user").Scan(&owner).Error; err != nil || !owner {
+	if err = db.WithContext(ctx).Raw(
+		"SELECT r.rolsuper OR pg_has_role(current_user, d.datdba, 'USAGE') FROM pg_roles r " +
+			"JOIN pg_database d ON d.datname=current_database() WHERE r.rolname=current_user",
+	).Scan(&owner).Error; err != nil || !owner {
 		return errors.New("database owner maintenance connection required")
 	}
 	// Reuse the application's retention read path, including vault-backed
@@ -90,7 +99,7 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		f, err := os.OpenFile(*path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		f, err := os.OpenFile(*path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err != nil {
 			return errors.New("plan path must be new and private")
 		}
@@ -102,10 +111,13 @@ func run() error {
 		if closeErr != nil {
 			return closeErr
 		}
-		return json.NewEncoder(os.Stdout).Encode(map[string]any{"mode": "plan", "knowledge_id": *id, "action": *action, "digest": fresh.Digest, "authorization": "worker must recheck original actor before execution"})
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"mode": "plan", "knowledge_id": *id, "action": *action, "digest": fresh.Digest,
+			"authorization": "worker must recheck original actor before execution",
+		})
 	}
 	info, err := os.Lstat(*path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
 		return errors.New("plan must be a private regular file")
 	}
 	data, err := os.ReadFile(*path)
@@ -132,12 +144,21 @@ func run() error {
 			return errors.New("invalid REDIS_DB")
 		}
 	}
-	client := asynq.NewClient(asynq.RedisClientOpt{Addr: os.Getenv("REDIS_ADDR"), Username: os.Getenv("REDIS_USERNAME"), Password: os.Getenv("REDIS_PASSWORD"), DB: redisDB, TLSConfig: common.RedisTLSConfig()})
-	defer client.Close()
+	client := asynq.NewClient(asynq.RedisClientOpt{
+		Addr: os.Getenv("REDIS_ADDR"), Username: os.Getenv("REDIS_USERNAME"),
+		Password: os.Getenv("REDIS_PASSWORD"), DB: redisDB, TLSConfig: common.RedisTLSConfig(),
+	})
+	defer func() { _ = client.Close() }()
 	taskID := "dingtalk-recovery-" + saved.Digest
-	_, err = client.EnqueueContext(ctx, asynq.NewTask(repository.DingTalkRecoveryTask, data), asynq.Queue(types.QueueMaintenance), asynq.TaskID(taskID), asynq.MaxRetry(3), asynq.Timeout(10*time.Minute), asynq.Retention(7*24*time.Hour))
+	_, err = client.EnqueueContext(
+		ctx, asynq.NewTask(repository.DingTalkRecoveryTask, data), asynq.Queue(types.QueueMaintenance),
+		asynq.TaskID(taskID), asynq.MaxRetry(3), asynq.Timeout(10*time.Minute), asynq.Retention(7*24*time.Hour),
+	)
 	if err != nil && !errors.Is(err, asynq.ErrTaskIDConflict) {
 		return errors.New("maintenance enqueue failed")
 	}
-	return json.NewEncoder(os.Stdout).Encode(map[string]any{"mode": "apply", "task_id": taskID, "knowledge_id": *id, "action": *action, "submitted": true, "completed": false})
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"mode": "apply", "task_id": taskID, "knowledge_id": *id, "action": *action,
+		"submitted": true, "completed": false,
+	})
 }

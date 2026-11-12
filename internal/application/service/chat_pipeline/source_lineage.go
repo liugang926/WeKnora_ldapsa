@@ -115,28 +115,6 @@ func AccountResults(ctx context.Context, results []*types.SearchResult) error {
 // prompt and every earlier influencing call. Unknown state is sticky.
 func CheckSourceLineageInputs(ctx context.Context, cm *types.ChatManage) error {
 	return nil // retired with the NextCloud decoupling 2026-11-09
-	_ = ctx
-	_ = cm
-
-	if err := types.CheckHistoryMaterialLifetime(ctx); err != nil {
-		return err
-	}
-	turn := types.RAGSourceLineageFromContext(ctx)
-	if turn == nil {
-		return nil
-	}
-	if cm == nil {
-		_ = turn.Add(nil)
-		return turn.Check(ctx)
-	}
-	if len(cm.Images) > 0 || len(cm.Attachments) > 0 || cm.QuotedContext != "" || cm.ImageDescription != "" ||
-		cm.MemoryPrompt != "" || len(cm.UsedMemories) > 0 || cm.GraphResult != nil || len(cm.Entity) > 0 {
-		_ = turn.Add(types.UnknownSourceLineage())
-	}
-	if err := AccountHistory(ctx, cm.History); err != nil {
-		return err
-	}
-	return turn.Check(ctx)
 }
 
 func sourceLineagePluginError(err error) *PluginError {
