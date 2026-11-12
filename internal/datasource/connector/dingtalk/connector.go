@@ -264,14 +264,41 @@ var dingTalkBinaryContentTypes = map[string]string{
 // the pipeline can parse (finance folders hold PDF/PPT/Word files alongside
 // the ALIDOC wiki documents; skipping them silently emptied whole sync runs).
 func (n node) isBinaryDocument() bool {
-	if !strings.EqualFold(n.Type, "FILE") || !strings.EqualFold(n.Category, "DOCUMENT") {
+	if !strings.EqualFold(n.Type, "FILE") {
+		return false
+	}
+	if isDingTalkSheetNode(n.Category, n.Extension) {
+		return true
+	}
+	if !strings.EqualFold(n.Category, "DOCUMENT") {
 		return false
 	}
 	_, supported := dingTalkBinaryContentTypes[strings.ToLower(strings.TrimSpace(n.Extension))]
 	return supported
 }
 
+// isDingTalkSheetNode matches the wiki-node shapes DingTalk uses for online
+// spreadsheets: category DTABLE (modern) / SPREADSHEET, or a sheet-typed
+// extension. The storage download-info endpoint exports online sheets as
+// xlsx, so they flow through the binary path like uploaded office files.
+func isDingTalkSheetNode(category, extension string) bool {
+	category = strings.ToUpper(strings.TrimSpace(category))
+	if category == "DTABLE" || category == "SPREADSHEET" {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(extension)) {
+	case "dtable", "dtablex", "dsheet", "sheet":
+		return true
+	}
+	return false
+}
+
+const dingTalkSheetExportContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
 func (n node) binaryContentType() string {
+	if isDingTalkSheetNode(n.Category, n.Extension) {
+		return dingTalkSheetExportContentType
+	}
 	return dingTalkBinaryContentTypes[strings.ToLower(strings.TrimSpace(n.Extension))]
 }
 
@@ -683,7 +710,9 @@ func resolveSyncScopes(
 			return syncScope{
 				ResourceID: canonicalID, Reference: ref, StartNodeID: selectedNode.ID,
 			}, nil
-		case selectedNode.isDocument():
+		case selectedNode.isDocument(), selectedNode.isBinaryDocument():
+			// Binary scopes cover wiki FILE nodes (uploaded office files and
+			// online sheets exported as xlsx) selected as standalone documents.
 			document := selectedNode
 			return syncScope{
 				ResourceID: canonicalID, Reference: ref, Document: &document,
@@ -876,12 +905,17 @@ func fetchedBinaryDocument(
 	}
 	extension := strings.ToLower(strings.TrimSpace(document.Extension))
 	title := document.title()
+	fileName := sanitizeFilename(title) + "." + extension
+	if isDingTalkSheetNode(document.Category, document.Extension) {
+		// Online sheets download as an exported xlsx office file.
+		fileName = sanitizeFilename(title) + ".xlsx"
+	}
 	return types.FetchedItem{
 		ExternalID:       document.ID,
 		Title:            title,
 		Content:          body,
 		ContentType:      document.binaryContentType(),
-		FileName:         sanitizeFilename(title) + "." + extension,
+		FileName:         fileName,
 		URL:              documentURL,
 		UpdatedAt:        document.modifiedAt(),
 		Metadata:         metadata,

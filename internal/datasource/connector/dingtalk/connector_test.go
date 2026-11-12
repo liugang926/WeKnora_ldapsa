@@ -513,3 +513,77 @@ func TestBinaryWikiNodesSync(t *testing.T) {
 		t.Fatalf("pdf content type = %q", byID["pdf-1"].ContentType)
 	}
 }
+
+func TestOnlineSheetNodesSyncAsExportedXlsx(t *testing.T) {
+	api := &fakeAPI{
+		workspaces: []workspace{{ID: "ws-1", Name: "财务", RootNodeID: "root-1"}},
+		nodes: map[string][]node{
+			"root-1": {
+				{ID: "sheet-1", Type: "FILE", Category: "DTABLE", Name: "预算表", WorkspaceID: "ws-1", ModifiedTime: "2026-11-12T09:00:00Z"},
+				{ID: "sheet-2", Type: "FILE", Category: "DOCUMENT", Extension: "dtable", Name: "台账", WorkspaceID: "ws-1", ModifiedTime: "2026-11-12T09:05:00Z"},
+				{ID: "adoc-1", Type: "FILE", Category: "ALIDOC", Extension: "adoc", Name: "说明.adoc", WorkspaceID: "ws-1"},
+			},
+		},
+		blocks: map[string][]json.RawMessage{"adoc-1": {}},
+	}
+	connector := testConnector(api)
+	config := testConfig("ws-1")
+
+	resources, err := connector.ListResources(context.Background(), config, "ws-1")
+	if err != nil {
+		t.Fatalf("list resources: %v", err)
+	}
+	visible := map[string]bool{}
+	for _, r := range resources {
+		visible[r.ExternalID] = true
+	}
+	sheetURI := "dingtalk:v1?node=sheet-1&workspace=ws-1"
+	if !visible[sheetURI] || !visible["dingtalk:v1?node=sheet-2&workspace=ws-1"] {
+		t.Fatalf("online sheets must be selectable: %+v", resources)
+	}
+
+	// Whole-workspace sync routes sheets through the binary download path,
+	// which the storage endpoint answers with an exported xlsx file.
+	items, _, err := connector.FetchAllFromCursor(context.Background(), config, []string{"ws-1"}, nil)
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	byID := map[string]types.FetchedItem{}
+	for _, item := range items {
+		byID[item.ExternalID] = item
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected 3 synced documents (2 sheets + 1 adoc), got %d: %+v", len(items), items)
+	}
+	const xlsxType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	for _, id := range []string{"sheet-1", "sheet-2"} {
+		item := byID[id]
+		if item.ContentType != xlsxType {
+			t.Fatalf("%s content type = %q, want xlsx", id, item.ContentType)
+		}
+		if !strings.HasSuffix(item.FileName, ".xlsx") {
+			t.Fatalf("%s filename = %q, want .xlsx suffix", id, item.FileName)
+		}
+		if want := "binary-bytes-" + id; string(item.Content) != want {
+			t.Fatalf("%s body = %q, want %q", id, string(item.Content), want)
+		}
+		if api.blockCalls[id] != 0 {
+			t.Fatalf("%s must download as binary, not read document blocks", id)
+		}
+	}
+
+	// Selecting a single sheet node as its own scope must resolve and sync
+	// (it used to be rejected as "not a supported online document").
+	items, _, err = connector.FetchAllFromCursor(
+		context.Background(), testConfig(sheetURI), []string{sheetURI}, nil,
+	)
+	if err != nil {
+		t.Fatalf("direct sheet scope: %v", err)
+	}
+	if len(items) != 1 || items[0].ExternalID != "sheet-1" || items[0].ContentType != xlsxType {
+		t.Fatalf("direct sheet scope items = %+v", items)
+	}
+	if !strings.HasSuffix(items[0].FileName, ".xlsx") {
+		t.Fatalf("direct sheet filename = %q, want .xlsx suffix", items[0].FileName)
+	}
+}
