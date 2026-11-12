@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
@@ -58,7 +57,7 @@ func TestCommandOutputUnknownProducerCannotEnterPublishedStream(t *testing.T) {
 			ToolCallID: "call-1", Command: "python analysis.py",
 			Output: "unknown private command body", Done: true,
 		},
-	}), access.ErrNextcloudPublicationDenied)
+	}), types.ErrSourceLineageUnknown)
 	require.Empty(t, streams.events)
 	require.Empty(t, message.Content)
 	require.Error(t, message.SourceLineage.RequireComplete())
