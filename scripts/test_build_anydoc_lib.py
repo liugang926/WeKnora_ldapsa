@@ -1,4 +1,4 @@
-"""The pinned parser must receive both zip-9 security dependency updates."""
+"""The pinned parser must receive zip-9 and calamine CFB security updates."""
 from pathlib import Path
 import os
 import shutil
@@ -37,7 +37,7 @@ class PrepareAnyDocTest(unittest.TestCase):
         patched = self.crate / 'patched-anydoc'
         manifest = (patched / 'Cargo.toml').read_text()
         self.assertIn('version = "=9.0.5"', manifest)
-        self.assertIn('version = "=0.37.0"', manifest)
+        self.assertIn('version = "=0.38.0"', manifest)
         self.assertIn('features = ["dates"]', manifest)
         self.assertIn('features = ["deflate"]', manifest)
         self.assertTrue((patched / 'src/lib.rs').read_text().startswith('pub use '))
@@ -49,6 +49,22 @@ class PrepareAnyDocTest(unittest.TestCase):
         (patched / '.weknora-patched').write_text('0.1.9\n')
         self.assertEqual(self.prepare().returncode, 0)
         self.assertIn('version = "=9.0.5"', (patched / 'Cargo.toml').read_text())
+
+    def test_refreshes_cache_prepared_with_vulnerable_calamine(self):
+        patched = self.crate / 'patched-anydoc'
+        shutil.copytree(self.source, patched)
+        manifest = patched / 'Cargo.toml'
+        manifest.write_text(manifest.read_text().replace('0.36.1', '=0.37.0'))
+        marker = patched / '.weknora-patched'
+        marker.write_text('0.1.9:zip9.0.5:calamine0.37.0\n')
+        self.assertEqual(self.prepare().returncode, 0)
+        self.assertIn('version = "=0.38.0"', manifest.read_text())
+        self.assertNotIn('0.37.0', manifest.read_text())
+        self.assertEqual(marker.read_text(), '0.1.9:zip9.0.5:calamine0.38.0\n')
+        # The refreshed marker must also permit a subsequent cached build.
+        (patched / 'cache-sentinel').write_text('retained')
+        self.assertEqual(self.prepare().returncode, 0)
+        self.assertTrue((patched / 'cache-sentinel').exists())
 
     def test_dependency_drift_refuses_incomplete_patch(self):
         path = self.source / 'Cargo.toml'
