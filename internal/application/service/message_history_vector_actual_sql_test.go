@@ -440,10 +440,10 @@ func (f *historyVectorActualFixture) produce(t *testing.T, index int) {
 	require.NoError(t, err)
 	producer := WithMessageMaterialOutputBoundary(f.base)
 	defer CloseMessageMaterialOutputBoundary(producer)
+	producer = context.WithValue(producer, agentHistoryCurrentRequestKey{}, question.RequestID)
 	_, err = f.messages.GetMessage(producer, session.ID, question.ID)
 	require.NoError(t, err)
 	require.NoError(t, f.messages.bindInitialMessageMaterial(producer, answer.ID, question.ID, question.RequestID))
-	producer = context.WithValue(producer, agentHistoryCurrentRequestKey{}, question.RequestID)
 	manager := chatpipeline.NewEventManager()
 	chatpipeline.ConfigureSourceLineage(manager, f.m.f.guard)
 	chatpipeline.NewPluginMerge(manager, f.m.f.s.chunkRepo, f.m.f.s.chunkService)
@@ -693,7 +693,7 @@ func TestHistoryVectorActualSQLFreshMultiSessionOriginalsAndHTTPLease(t *testing
 
 func TestHistoryVectorActualSQLSourceRevokedDuringModelLookupRefusesHTTP(t *testing.T) {
 	f := newHistoryVectorActualFixture(t)
-	f.models.lookupHook = func(context.Context) { f.m.allow.Store(false) }
+	f.models.lookupHook = func(context.Context) { retireRAGFixtureSource(t, f.m, f.source) }
 	response := f.httpSearch(t, nil)
 	require.Equal(t, http.StatusForbidden, response.Code)
 	require.EqualValues(t, 1, f.models.lookups.Load())
