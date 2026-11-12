@@ -288,8 +288,7 @@ func (s *embedChannelService) EmbedChunk(
 	}
 	// A chunk's KB grant is not proof that its original source is still
 	// published. Resolve the parent document and verify its current source
-	// before returning any body text. Embed callers are anonymous, so source
-	// backed documents always fail closed.
+	// before returning any body text to an anonymous embed visitor.
 	if s.knowledgeService == nil || chunk.KnowledgeID == "" {
 		return nil, ErrEmbedChunkForbidden
 	}
@@ -298,10 +297,7 @@ func (s *embedChannelService) EmbedChunk(
 		knowledge.TenantID != chunk.TenantID || knowledge.KnowledgeBaseID != chunk.KnowledgeBaseID {
 		return nil, ErrEmbedChunkForbidden
 	}
-	publicationCtx := types.WithCaller(ctx, types.Caller{
-		TenantID: ch.TenantID, UserID: fmt.Sprintf("system-%d", ch.TenantID),
-	})
-	if err := s.publicationGuard.CheckKnowledge(publicationCtx, knowledge); err != nil {
+	if err := s.publicationGuard.CheckAnonymousPublication(ctx, knowledge); err != nil {
 		return nil, ErrEmbedChunkForbidden
 	}
 	return chunk, nil
