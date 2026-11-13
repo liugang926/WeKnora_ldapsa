@@ -146,7 +146,10 @@ func (h *DataSourceHandler) CreateDataSource(c *gin.Context) {
 	req.TenantID = tenantID
 	ctx = repository.WithIndependentDataSourceNameInput(ctx, req.Name)
 
-	ds, err := h.service.CreateDataSource(repository.WithDingTalkScheduleEdit(ctx), &req)
+	if req.Type == types.ConnectorTypeDingTalk && req.SyncSchedule != "" && req.Status != types.DataSourceStatusPaused {
+		ctx = repository.WithDingTalkScheduleEdit(ctx)
+	}
+	ds, err := h.service.CreateDataSource(ctx, &req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": apperrors.PublicMessage(err)})
 		return
@@ -241,7 +244,11 @@ func (h *DataSourceHandler) UpdateDataSource(c *gin.Context) {
 
 	id := c.Param("id")
 
-	var req types.DataSource
+	var req struct {
+		types.DataSource
+		SyncSchedule *string `json:"sync_schedule"`
+		SaveSchedule bool    `json:"save_schedule"`
+	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
@@ -253,13 +260,26 @@ func (h *DataSourceHandler) UpdateDataSource(c *gin.Context) {
 		return
 	}
 
+	if existing.Type == types.ConnectorTypeDingTalk && req.Type == "" {
+		req.Type = existing.Type
+	}
+	if req.SaveSchedule && req.SyncSchedule == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "save_schedule requires sync_schedule"})
+		return
+	}
+	if req.SyncSchedule != nil {
+		req.DataSource.SyncSchedule = *req.SyncSchedule
+		if existing.Type == types.ConnectorTypeDingTalk && req.SaveSchedule {
+			ctx = repository.WithDingTalkScheduleEdit(ctx)
+		}
+	}
 	req.ID = id
 	req.TenantID = existing.TenantID
 	req.KnowledgeBaseID = existing.KnowledgeBaseID
 	if req.Name != "" {
 		ctx = repository.WithIndependentDataSourceNameInput(ctx, req.Name)
 	}
-	ds, err := h.service.UpdateDataSource(repository.WithDingTalkScheduleEdit(ctx), &req)
+	ds, err := h.service.UpdateDataSource(ctx, &req.DataSource)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": apperrors.PublicMessage(err)})
 		return
@@ -553,7 +573,7 @@ func (h *DataSourceHandler) ResumeDataSource(c *gin.Context) {
 		return
 	}
 
-	if err := h.service.ResumeDataSource(repository.WithDingTalkScheduleEdit(ctx), id); err != nil {
+	if err := h.service.ResumeDataSource(repository.WithDingTalkScheduleResume(ctx), id); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": apperrors.PublicMessage(err)})
 		return
 	}

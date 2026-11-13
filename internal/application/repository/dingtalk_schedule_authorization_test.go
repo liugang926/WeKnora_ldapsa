@@ -58,6 +58,12 @@ func TestDingTalkScheduledActorGrantLifecycle(t *testing.T) {
 	require.NoError(t, store.FinalizeDingTalkRun(ctx, types.SyncLogStatusSuccess,
 		&types.SyncResult{Skipped: 1}, nil, ""))
 
+	repo := &DataSourceRepository{db: db, nameAuthorityFactory: store.displayAuthorityFactory}
+	patch := &types.DataSource{ID: ds.ID, TenantID: ds.TenantID, KnowledgeBaseID: ds.KnowledgeBaseID, Name: "Renamed"}
+	require.NoError(t, repo.Update(editor, patch))
+	require.Equal(t, ds.SyncSchedule, patch.SyncSchedule)
+	require.Equal(t, types.DataSourceStatusActive, patch.Status)
+	require.NoError(t, repo.Update(WithDingTalkScheduleResume(editor), patch)) // Already active.
 	later, ctx := newRun(start.Add(2 * time.Minute))
 	require.Equal(t, log.DingTalkScheduleGrant, later.DingTalkScheduleGrant)
 	ctx, err = store.RestoreDingTalkScheduledActor(ctx)
@@ -73,4 +79,26 @@ func TestDingTalkScheduledActorGrantLifecycle(t *testing.T) {
 	save(WithDingTalkScheduleEdit(editor)) // Reauthorization cannot transfer a queued run to a new grant.
 	_, err = store.RestoreDingTalkScheduledActor(ctx)
 	require.ErrorIs(t, err, ErrDingTalkScheduleAuthorizationRequired)
+
+	ds.Status = types.DataSourceStatusPaused
+	require.NoError(t, repo.Update(editor, ds))
+	var count int64
+	require.NoError(t, db.Model(&dingTalkScheduleAuthorization{}).Count(&count).Error)
+	require.Zero(t, count)
+	ds.Status = types.DataSourceStatusActive
+	require.NoError(t, repo.Update(WithDingTalkScheduleResume(editor), ds))
+	grant, err := findDingTalkScheduleAuthorization(db, ds.ID, ds.TenantID)
+	require.NoError(t, err)
+	require.NotEmpty(t, grant.GrantID)
+	require.NotEqual(t, log.DingTalkScheduleGrant, grant.GrantID)
+
+	// Generic writes may change the cron but cannot restore a superseded authorization.
+	originalCron := ds.SyncSchedule
+	ds.SyncSchedule = "0 0 8 * * *"
+	require.NoError(t, repo.Update(editor, ds))
+	ds.SyncSchedule = originalCron
+	require.NoError(t, repo.Update(editor, ds))
+	grant, err = findDingTalkScheduleAuthorization(db, ds.ID, ds.TenantID)
+	require.NoError(t, err)
+	require.Empty(t, grant.GrantID)
 }

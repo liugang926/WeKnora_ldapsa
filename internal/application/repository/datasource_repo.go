@@ -363,6 +363,16 @@ func (r *DataSourceRepository) Update(ctx context.Context, ds *types.DataSource)
 		if previous.TenantID != ds.TenantID || previous.KnowledgeBaseID != ds.KnowledgeBaseID {
 			return errors.New("data source owner cannot change")
 		}
+		if previous.Type == types.ConnectorTypeDingTalk && ctx.Value(dingTalkScheduleResumeKey{}) == true {
+			if previous.Status != types.DataSourceStatusPaused {
+				*ds = previous
+				return nil
+			}
+			// Resume the locked configuration, even if an editor changed it after the HTTP lookup.
+			*ds = previous
+			ds.Status = types.DataSourceStatusActive
+			ctx = WithDingTalkScheduleEdit(ctx)
+		}
 		if previous.Type != ds.Type &&
 			(previous.Type == types.ConnectorTypeNextcloud || ds.Type == types.ConnectorTypeNextcloud) {
 			return apperrors.NewProtocolError(errors.New(
@@ -390,7 +400,7 @@ func (r *DataSourceRepository) Update(ctx context.Context, ds *types.DataSource)
 			UpdateColumn("sync_deletions", ds.SyncDeletions).Error; err != nil {
 			return err
 		}
-		if ctx.Value(dingTalkScheduleEditKey{}) == true && ds.Type == types.ConnectorTypeDingTalk &&
+		if IsDingTalkScheduleEdit(ctx) && ds.Type == types.ConnectorTypeDingTalk &&
 			ds.SyncSchedule == "" {
 			if err := tx.Model(ds).UpdateColumn("sync_schedule", "").Error; err != nil {
 				return err
@@ -400,10 +410,25 @@ func (r *DataSourceRepository) Update(ctx context.Context, ds *types.DataSource)
 		if err := tx.Where("id = ?", ds.ID).Take(&actual).Error; err != nil {
 			return err
 		}
+		if previous.Type == types.ConnectorTypeDingTalk && !IsDingTalkScheduleEdit(ctx) &&
+			(previous.SyncSchedule != actual.SyncSchedule || actual.Status == types.DataSourceStatusPaused) {
+			// A subsequent generic update restoring the old cron/status must not revive its grant.
+			if err := tx.Where("data_source_id = ?", actual.ID).
+				Delete(&dingTalkScheduleAuthorization{}).Error; err != nil {
+				return err
+			}
+		}
 		if err := saveDingTalkScheduleAuthorization(ctx, tx, &actual, r.nameAuthorityFactory); err != nil {
 			return err
 		}
-		return admitDataSourceNameInput(ctx, tx, &actual, r.nameAuthorityFactory)
+		if err := admitDataSourceNameInput(ctx, tx, &actual, r.nameAuthorityFactory); err != nil {
+			return err
+		}
+		if actual.Type == types.ConnectorTypeDingTalk {
+			// Re-register the persisted schedule after a partial PUT.
+			*ds = actual
+		}
+		return nil
 	})
 }
 

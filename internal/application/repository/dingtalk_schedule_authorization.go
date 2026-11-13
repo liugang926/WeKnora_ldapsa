@@ -24,6 +24,7 @@ func isDingTalkScheduleMessage(message string) bool {
 
 type (
 	dingTalkScheduleEditKey   struct{}
+	dingTalkScheduleResumeKey struct{}
 	dingTalkScheduledActorKey struct{}
 	dingTalkScheduledActor    struct {
 		store      *KnowledgeInputProvenanceStore
@@ -47,18 +48,30 @@ func WithDingTalkScheduleEdit(ctx context.Context) context.Context {
 	return context.WithValue(ctx, dingTalkScheduleEditKey{}, true)
 }
 
+// WithDingTalkScheduleResume requires a paused predecessor under the source update lock.
+func WithDingTalkScheduleResume(ctx context.Context) context.Context {
+	return context.WithValue(ctx, dingTalkScheduleResumeKey{}, true)
+}
+
+// IsDingTalkScheduleEdit reports whether the caller explicitly saved the schedule.
+func IsDingTalkScheduleEdit(ctx context.Context) bool {
+	return ctx.Value(dingTalkScheduleEditKey{}) == true
+}
+
 func saveDingTalkScheduleAuthorization(ctx context.Context, tx *gorm.DB, ds *types.DataSource,
 	factory KnowledgeDisplayAuthorityFactory,
 ) error {
-	if ctx.Value(dingTalkScheduleEditKey{}) != true || ds.Type != types.ConnectorTypeDingTalk {
+	if !IsDingTalkScheduleEdit(ctx) || ds.Type != types.ConnectorTypeDingTalk {
 		return nil
+	}
+	principal, _ := types.PrincipalFromContext(ctx)
+	if principal.Type != types.PrincipalWebUser || types.IsBackgroundTask(ctx) {
+		return types.ErrSourceLineageUnknown
 	}
 	if err := tx.Where("data_source_id = ?", ds.ID).Delete(&dingTalkScheduleAuthorization{}).Error; err != nil {
 		return err
 	}
-	principal, _ := types.PrincipalFromContext(ctx)
-	if ds.SyncSchedule == "" || ds.Status == types.DataSourceStatusPaused ||
-		principal.Type != types.PrincipalWebUser || types.IsBackgroundTask(ctx) {
+	if ds.SyncSchedule == "" || ds.Status == types.DataSourceStatusPaused {
 		return nil
 	}
 	actor, err := captureKnowledgeActorSelector(ctx, "")
