@@ -5,9 +5,9 @@ export interface TypewriterOptions {
   minCps?: number;
   /** Time window (seconds) over which ordinary backlog is drained. */
   drainSeconds?: number;
-  /** Upper speed limit when a large SSE chunk arrives at once. */
+  /** Upper speed limit for smoothly animated text. */
   maxCps?: number;
-  /** Largest frame delta honored after a backgrounded tab resumes. */
+  /** Largest frame delta used for ordinary animation. */
   maxFrameSeconds?: number;
 }
 
@@ -95,7 +95,6 @@ export function useTypewriter(
   let revealCredit = 0;
   let raf: number | null = null;
   let lastTs = 0;
-  let initialized = false;
   let reduceMotion = false;
   let motionQuery: MediaQueryList | null = null;
 
@@ -108,7 +107,7 @@ export function useTypewriter(
     const full = getTarget();
     let n = Math.min(typedLength.value, full.length);
     // Never cut on a high surrogate, which would render a broken glyph.
-    if (n > 0 && n < full.length) {
+    if (n > 0 && (n < full.length || !getComplete())) {
       const code = full.charCodeAt(n - 1);
       if (code >= 0xd800 && code <= 0xdbff) n -= 1;
     }
@@ -123,6 +122,12 @@ export function useTypewriter(
     lastTs = 0;
   };
 
+  const catchUp = () => {
+    typedLength.value = getTarget().length;
+    revealCredit = 0;
+    stop();
+  };
+
   const tick = (ts: number) => {
     const full = getTarget();
     const target = full.length;
@@ -135,9 +140,16 @@ export function useTypewriter(
       return;
     }
 
-    const dt = lastTs ? Math.min((ts - lastTs) / 1000, maxFrameSeconds) : 0;
+    const elapsed = Math.max(0, (ts - lastTs) / 1000);
     lastTs = ts;
     const remaining = target - typedLength.value;
+    // A burst too large to animate within the smoothing window, or a tab
+    // returning after a missed window, should paint the current text at once.
+    if (remaining > maxCps * drainSeconds || elapsed >= drainSeconds) {
+      catchUp();
+      return;
+    }
+    const dt = Math.min(elapsed, maxFrameSeconds);
     const cps = Math.min(maxCps, Math.max(minCps, remaining / drainSeconds));
     revealCredit += cps * dt;
 
@@ -152,49 +164,30 @@ export function useTypewriter(
 
   const ensure = () => {
     if (raf === null) {
-      lastTs = 0;
+      lastTs = performance.now();
       raf = requestAnimationFrame(tick);
     }
   };
 
   const handleMotionChange = (event: MediaQueryListEvent) => {
     reduceMotion = event.matches;
-    if (reduceMotion) {
-      typedLength.value = getTarget().length;
-      revealCredit = 0;
-      stop();
-    }
+    if (reduceMotion) catchUp();
   };
   motionQuery?.addEventListener('change', handleMotionChange);
 
   watch(
     [getTarget, getComplete],
-    ([full, complete], [previous, wasComplete]) => {
+    ([full, complete]) => {
       const target = full.length;
-      if (!initialized) {
-        initialized = true;
-        if (complete || reduceMotion) {
-          typedLength.value = target;
-          return;
-        }
-      }
-      // A completed answer can be reconciled after artifact collection. This
-      // replaces already-rendered content; it is not another streaming chunk.
-      if (complete && wasComplete && full !== previous) {
-        typedLength.value = target;
-        revealCredit = 0;
-        stop();
+      if (complete || reduceMotion) {
+        catchUp();
         return;
       }
       if (typedLength.value > target) {
         typedLength.value = 0;
         revealCredit = 0;
       }
-      if (reduceMotion) {
-        typedLength.value = target;
-      } else if (typedLength.value < target) {
-        ensure();
-      }
+      if (typedLength.value < target) ensure();
     },
     { immediate: true },
   );

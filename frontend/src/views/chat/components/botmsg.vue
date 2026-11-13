@@ -392,9 +392,7 @@ const { displayed: typedAnswer } = useTypewriter(
     () => Boolean(props.session?.is_completed),
 );
 
-// The backend completion event can arrive while the local typewriter still has
-// buffered text to reveal. Treat the answer as visually complete only after the
-// displayed text has caught up, so actions never appear beside a moving answer.
+// Enable actions once the completion event and its final text are both visible.
 const answerFullyRendered = computed(() =>
     Boolean(props.session?.is_completed) && typedAnswer.value.length >= answerText.value.length
 );

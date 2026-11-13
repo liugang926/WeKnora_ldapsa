@@ -29,10 +29,15 @@ test('never splits a surrogate pair', () => {
   assert.equal(nextTypewriterReveal(text, 0, 1), 2)
 })
 
-test('artifact reconciliation replaces completed text without replaying the typewriter', async () => {
+test('live bursts catch up and completed answers and corrections display without animation', async () => {
   const originalRequest = globalThis.requestAnimationFrame
   const originalCancel = globalThis.cancelAnimationFrame
   const frames = new Map<number, FrameRequestCallback>()
+  const paint = (time: number) => {
+    const pending = [...frames.values()]
+    frames.clear()
+    pending.forEach(callback => callback(time))
+  }
   let id = 0
   globalThis.requestAnimationFrame = (callback) => { frames.set(++id, callback); return id }
   globalThis.cancelAnimationFrame = (frame) => { frames.delete(frame) }
@@ -54,18 +59,27 @@ test('artifact reconciliation replaces completed text without replaying the type
   })
   try {
     app.mount({})
-    answer.value.content = 'PPT 已生成。![比赛文件](sandbox:很长的比赛信息文件名.pptx)'
+    answer.value.content = '文件已生成。![比赛文件](sandbox:很长的比赛信息文件名.pptx)'
     await nextTick()
     assert.equal(displayed.value, '', 'live content must still animate')
+    paint(performance.now() + 40)
+    assert.ok(displayed.value.length > 0 && displayed.value.length < answer.value.content.length)
+    // A browser whose animation frames were suspended should catch up on
+    // its first frame back, even with only a small chunk pending.
+    paint(performance.now() + 5000)
+    assert.equal(displayed.value, answer.value.content)
+    const burst = '知识库🙂'.repeat(1000)
+    answer.value.content += burst
+    await nextTick()
+    paint(performance.now() + 16)
+    assert.equal(displayed.value, answer.value.content, 'a large live burst needs only one paint')
+    answer.value.content += '新内容'
+    await nextTick()
+    assert.notEqual(displayed.value, answer.value.content)
     answer.value.done = true
     await nextTick()
-    assert.equal(displayed.value, '', 'normal completion must let the remaining animation finish')
-    for (let time = 16; frames.size && time < 10000; time += 16) {
-      const pending = [...frames.values()]
-      frames.clear()
-      pending.forEach(callback => callback(time))
-    }
-    assert.equal(displayed.value, answer.value.content)
+    assert.equal(displayed.value, answer.value.content, 'completion paints text without a further frame')
+    assert.equal(frames.size, 0)
     for (const content of [
       'PPT 已生成。![比赛文件](resource://short)',
       'PPT 已生成。![比赛文件](resource://a-much-longer-persistent-resource-reference)',
