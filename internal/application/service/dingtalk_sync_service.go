@@ -135,6 +135,17 @@ func dingTalkSyncFailure(result *types.SyncResult, title, code string, err error
 	logger.Errorf(context.Background(), "DingTalk sync stage=%s: %v", code, err)
 }
 
+func dingTalkScheduleErrorCode(err error) string {
+	switch {
+	case errors.Is(err, repository.ErrDingTalkScheduleAuthorizationRequired):
+		return repository.ErrDingTalkScheduleAuthorizationRequired.Error()
+	case errors.Is(err, repository.ErrDingTalkScheduleAuthorizationRevoked):
+		return repository.ErrDingTalkScheduleAuthorizationRevoked.Error()
+	default:
+		return ""
+	}
+}
+
 // dingTalkCancelMessage renders the finalize error_message for a canceled
 // run. The dominant cause is a concurrent configuration update invalidating
 // the run claim (RenewDingTalkRun/ErrDingTalkRunExpired): without this the
@@ -171,8 +182,9 @@ func (s *DataSourceService) processDingTalkSync(
 		return err
 	} // No claim: never finalize someone else's log.
 	ctx, cancel := context.WithCancelCause(claimCtx)
+	finishScope := ctx
 	done := make(chan struct{})
-	go func(heartbeatCtx context.Context) {
+	heartbeat := func(heartbeatCtx context.Context) {
 		defer close(done)
 		ticker := time.NewTicker(dingTalkRunTTL / 3)
 		defer ticker.Stop()
@@ -187,13 +199,13 @@ func (s *DataSourceService) processDingTalkSync(
 				}
 			}
 		}
-	}(ctx)
+	}
 	result := &types.SyncResult{}
 	status := types.SyncLogStatusFailed
 	progress := newSyncProgressWriter(s.syncLogRepo, payload.SyncLogID)
 	var cursorJSON types.JSON
 	defer func() {
-		cause := context.Cause(ctx)
+		cause := context.Cause(finishScope)
 		cancel(nil)
 		<-done
 		finalMessage := ""
@@ -202,18 +214,35 @@ func (s *DataSourceService) processDingTalkSync(
 			status = types.SyncLogStatusCanceled
 			finalMessage = dingTalkCancelMessage(cause)
 		}
-		if runErr != nil && result.Failed == 0 {
+		authCode := dingTalkScheduleErrorCode(runErr)
+		if authCode != "" {
+			status = types.SyncLogStatusFailed
+			finalMessage = authCode
+			runErr = errors.Join(asynq.SkipRetry, runErr)
+		}
+		if runErr != nil && result.Failed == 0 && authCode == "" {
 			dingTalkSyncFailure(result, "", "dingtalk_sync_failed", runErr)
 		}
-		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(claimCtx), 10*time.Second)
+		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(finishScope), 10*time.Second)
 		defer finishCancel()
-		runErr = errors.Join(runErr,
-			s.sourceInputs.FinalizeDingTalkRun(finishCtx,
-				status,
-				result,
-				cursorJSON,
-				finalMessage))
+		finishErr := s.sourceInputs.FinalizeDingTalkRun(finishCtx, status, result, cursorJSON, finalMessage)
+		if code := dingTalkScheduleErrorCode(finishErr); code != "" && status == types.SyncLogStatusSuccess {
+			runErr = errors.Join(runErr, finishErr, asynq.SkipRetry)
+			finishErr = s.sourceInputs.FinalizeDingTalkRun(finishCtx, types.SyncLogStatusFailed, result, nil, code)
+		}
+		runErr = errors.Join(runErr, finishErr)
 	}()
+
+	if payload.Trigger == "schedule" {
+		fresh, authErr := s.sourceInputs.RestoreDingTalkScheduledActor(ctx)
+		if authErr != nil {
+			close(done)
+			return authErr
+		}
+		ctx = fresh
+		finishScope = fresh
+	}
+	go heartbeat(ctx)
 
 	knowledge, ok := s.knowledgeService.(*knowledgeService)
 	if !ok || knowledge.knowledgeInputs != s.sourceInputs {
@@ -343,6 +372,9 @@ func (s *DataSourceService) processDingTalkSync(
 				}
 			}
 			if !recovered && err != nil {
+				if dingTalkScheduleErrorCode(err) != "" {
+					return err
+				}
 				dingTalkSyncFailure(result, item.Title, "dingtalk_import_failed", err)
 				importDone++
 				progress.reportImport(result.Total,
@@ -355,6 +387,9 @@ func (s *DataSourceService) processDingTalkSync(
 			}
 		}
 		if err != nil {
+			if dingTalkScheduleErrorCode(err) != "" {
+				return err
+			}
 			dingTalkSyncFailure(result, item.Title, "dingtalk_import_failed", err)
 			importDone++
 			progress.reportImport(result.Total,
@@ -389,6 +424,9 @@ func (s *DataSourceService) processDingTalkSync(
 				retireErr = s.sourceInputs.RetireDingTalkDocument(ctx, item.ExternalID, true)
 			}
 			if err := retireErr; err != nil {
+				if dingTalkScheduleErrorCode(err) != "" {
+					return err
+				}
 				dingTalkSyncFailure(result, item.Title, "dingtalk_retire_failed", err)
 				result.DeletionFailed++
 			} else if required {
@@ -405,6 +443,9 @@ func (s *DataSourceService) processDingTalkSync(
 		return err
 	}
 	if err := s.consumeDingTalkWork(ctx, knowledge, kb, selected); err != nil {
+		if dingTalkScheduleErrorCode(err) != "" {
+			return err
+		}
 		dingTalkSyncFailure(result, "", "dingtalk_processing_handoff_failed", err)
 	}
 	if result.Failed > 0 {

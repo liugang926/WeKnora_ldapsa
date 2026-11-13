@@ -68,6 +68,9 @@ func (r *DataSourceRepository) Create(ctx context.Context, ds *types.DataSource)
 			UpdateColumn("sync_deletions", syncDeletions).Error; err != nil {
 			return err
 		}
+		if err := saveDingTalkScheduleAuthorization(ctx, tx, ds, r.nameAuthorityFactory); err != nil {
+			return err
+		}
 		return admitDataSourceNameInput(ctx, tx, ds, r.nameAuthorityFactory)
 	})
 	ds.SyncDeletions = syncDeletions
@@ -387,8 +390,17 @@ func (r *DataSourceRepository) Update(ctx context.Context, ds *types.DataSource)
 			UpdateColumn("sync_deletions", ds.SyncDeletions).Error; err != nil {
 			return err
 		}
+		if ctx.Value(dingTalkScheduleEditKey{}) == true && ds.Type == types.ConnectorTypeDingTalk &&
+			ds.SyncSchedule == "" {
+			if err := tx.Model(ds).UpdateColumn("sync_schedule", "").Error; err != nil {
+				return err
+			}
+		}
 		var actual types.DataSource
 		if err := tx.Where("id = ?", ds.ID).Take(&actual).Error; err != nil {
+			return err
+		}
+		if err := saveDingTalkScheduleAuthorization(ctx, tx, &actual, r.nameAuthorityFactory); err != nil {
 			return err
 		}
 		return admitDataSourceNameInput(ctx, tx, &actual, r.nameAuthorityFactory)
@@ -599,6 +611,20 @@ func NewSyncLogRepository(db *gorm.DB) interfaces.SyncLogRepository {
 func (r *SyncLogRepository) Create(ctx context.Context, log *types.SyncLog) error {
 	if log == nil {
 		return errors.New("sync log is nil")
+	}
+	if log.RecoveryVersion == 0 && log.RecoveryTrigger == "schedule" {
+		return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			grant, err := findDingTalkScheduleAuthorization(tx, log.DataSourceID, log.TenantID)
+			if err != nil {
+				return err
+			}
+			if err := tx.Create(log).Error; err != nil || grant.GrantID == "" {
+				return err
+			}
+			log.DingTalkScheduleGrant = grant.GrantID
+			return tx.Table("sync_logs").Where("id = ?", log.ID).
+				UpdateColumn("dingtalk_schedule_grant", grant.GrantID).Error
+		})
 	}
 	if err := r.db.WithContext(ctx).Create(log).Error; err != nil {
 		if strings.Contains(err.Error(), "nextcloud_source_sync_busy") {

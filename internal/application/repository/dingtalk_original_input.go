@@ -136,7 +136,7 @@ func checkDingTalkRun(tx *gorm.DB, f dingTalkFetch) error {
 	if run.Status != types.SyncLogStatusRunning {
 		return ErrKnowledgeInputChanged
 	}
-	return nil
+	return checkDingTalkScheduledActor(tx, f, &run)
 }
 
 // BindDingTalkOriginalArtifact consumes only a genuine, untouched connector

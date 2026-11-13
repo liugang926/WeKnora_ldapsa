@@ -146,7 +146,7 @@ func (h *DataSourceHandler) CreateDataSource(c *gin.Context) {
 	req.TenantID = tenantID
 	ctx = repository.WithIndependentDataSourceNameInput(ctx, req.Name)
 
-	ds, err := h.service.CreateDataSource(ctx, &req)
+	ds, err := h.service.CreateDataSource(repository.WithDingTalkScheduleEdit(ctx), &req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": apperrors.PublicMessage(err)})
 		return
@@ -259,7 +259,7 @@ func (h *DataSourceHandler) UpdateDataSource(c *gin.Context) {
 	if req.Name != "" {
 		ctx = repository.WithIndependentDataSourceNameInput(ctx, req.Name)
 	}
-	ds, err := h.service.UpdateDataSource(ctx, &req)
+	ds, err := h.service.UpdateDataSource(repository.WithDingTalkScheduleEdit(ctx), &req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": apperrors.PublicMessage(err)})
 		return
@@ -553,7 +553,7 @@ func (h *DataSourceHandler) ResumeDataSource(c *gin.Context) {
 		return
 	}
 
-	if err := h.service.ResumeDataSource(ctx, id); err != nil {
+	if err := h.service.ResumeDataSource(repository.WithDingTalkScheduleEdit(ctx), id); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": apperrors.PublicMessage(err)})
 		return
 	}
