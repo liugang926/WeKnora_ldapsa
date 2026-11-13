@@ -634,7 +634,8 @@ func (h *Handler) handleAgentEventsForSSE(
 			// Send any new events
 			streamCompleted := false
 			titleReceived := false
-			for index, evt := range events {
+			for index := 0; index < len(events); index++ {
+				evt := events[index]
 				// A batch can contain several answer frames. Recheck before
 				// each later source-bearing frame so a grant withdrawn while
 				// the batch is being sent stops further output.
@@ -643,6 +644,14 @@ func (h *Handler) handleAgentEventsForSSE(
 						stopLiveStreamForPublication(ctx, c, eventBus, sessionID, assistantMessageID, requestID, err)
 						return
 					}
+				}
+				// The original batch has passed its publication check. Group only
+				// available plain deltas for this physical write. Public resource
+				// rewriting maintains its own per-chunk holdback and metadata.
+				if !resourceRewriter.Enabled() {
+					var consumed int
+					evt, consumed = nextLiveFrame(events[index:])
+					index += consumed - 1
 				}
 				// Check for stop event
 				if evt.Type == types.ResponseType(event.EventStop) {
