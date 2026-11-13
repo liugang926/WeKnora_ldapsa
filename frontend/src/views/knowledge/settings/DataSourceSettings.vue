@@ -11,6 +11,7 @@ import {
   type DataSource,
 } from '@/api/datasource'
 import { humanizeCron, relativeTime } from '@/utils/cronHumanize'
+import { dataSourceError } from './syncRunError'
 import DataSourceEditorDialog from './DataSourceEditorDialog.vue'
 import DataSourceSyncLogs from './DataSourceSyncLogs.vue'
 import NextcloudFailedCandidates from './NextcloudFailedCandidates.vue'
@@ -339,9 +340,9 @@ onBeforeUnmount(stopPolling)
                 >{{ pill.text }}</span>
               </template>
             </p>
-            <div v-if="ds.error_message" class="ds-card__error">
+            <div v-if="dataSourceError(ds, t)" class="ds-card__error">
               <t-icon name="error-circle-filled" size="14px" />
-              <span>{{ ds.error_message }}</span>
+              <span>{{ dataSourceError(ds, t) }}</span>
             </div>
           </div>
         </div>

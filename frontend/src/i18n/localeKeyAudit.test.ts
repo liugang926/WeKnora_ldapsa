@@ -299,6 +299,7 @@ test('DingTalk configuration and sync failures remain localized after pruning', 
     'prereqBarText_dingtalk', 'prereqOpenConsole_dingtalk',
     ...[1, 2, 3].flatMap(step => [`prereqStep${step}Brief_dingtalk`, `prereqStep${step}Desc_dingtalk`]),
     'syncError.dingtalk_document_failed', 'syncError.dingtalk_resource_failed',
+    'syncError.dingtalk_schedule_authorization_required', 'syncError.dingtalk_schedule_authorization_revoked',
   ].map(key => `datasource.${key}`)
   for (const key of keys) {
     assert.ok(referencedKeys.has(key), `pruning would remove ${key}`)
