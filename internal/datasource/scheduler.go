@@ -201,6 +201,10 @@ func (s *Scheduler) triggerSync(dataSourceID string, tenantID uint64) {
 		Status:       types.SyncLogStatusRunning,
 		StartedAt:    time.Now().UTC(),
 	}
+	if ds.Type == types.ConnectorTypeDingTalk {
+		syncLog.RecoveryTrigger = "schedule"
+		syncLog.QueueTaskID = syncLog.ScheduledMinuteTaskID()
+	}
 	if ds.Type == types.ConnectorTypeNextcloud {
 		syncLog.RecoveryVersion = 1
 		syncLog.RecoveryTrigger = "schedule"
@@ -229,8 +233,7 @@ func (s *Scheduler) triggerSync(dataSourceID string, tenantID uint64) {
 	// the queue identity to that durable log so a lost reply can be inspected.
 	taskID := NextcloudSyncTaskID(syncLog.ID)
 	if ds.Type != types.ConnectorTypeNextcloud {
-		taskID = fmt.Sprintf("dssync:%s:%s", dataSourceID, time.Now().UTC().Truncate(time.Minute).Format(
-			"200601021504"))
+		taskID = syncLog.ScheduledMinuteTaskID()
 	}
 
 	info, err := s.taskEnqueuer.Enqueue(task,

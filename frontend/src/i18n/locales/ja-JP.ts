@@ -6699,6 +6699,7 @@ export default {
     guideStep2_notion: '右上の「···」メニューをクリックし、「Connect to」または「Add connections」を選択します',
     guideStep3_notion: '作成したIntegrationアプリを検索して選択し、戻って「再試行」をクリックします',
     permissionDocLink: 'FeishuのWiki権限ドキュメントを見る',
+    authorizeDingTalkSchedule: 'このスケジュールを承認',
     syncScheduleLabel: '同期スケジュール',
     conflictLabel: '競合時の処理',
     conflict: {
@@ -6896,6 +6897,8 @@ export default {
     hoursAgo: '{n}時間前',
     daysAgo: '{n}日前',
     syncError: {
+      dingtalk_schedule_authorization_required: 'DingTalk の定期同期には承認が必要です。このデータソースを編集できるユーザーに同期スケジュールで「このスケジュールを承認」を選んで保存してもらってください。',
+      dingtalk_schedule_authorization_revoked: 'DingTalk の定期同期の承認が無効になりました。このデータソースを編集できるユーザーに同期スケジュールで「このスケジュールを承認」を選んで保存してもらってください。',
       dingtalk_document_failed: 'DingTalkドキュメントを読み取れません。アクセス権限を確認して同期を再試行してください。',
       dingtalk_resource_failed: 'DingTalkリソースを利用できません。アクセス権限と選択したリソースを確認して再試行してください。',
       deletion_lookup_failed: '削除前の項目の照会に失敗しました。サーバログを確認してください',

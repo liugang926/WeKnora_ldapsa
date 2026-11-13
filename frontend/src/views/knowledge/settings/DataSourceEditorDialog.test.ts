@@ -18,7 +18,7 @@ const compiled = ts.transpileModule(script, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText
 
-async function fixture({ configured = true, create = false } = {}) {
+async function fixture({ configured = true, create = false, type = 'gitlab' } = {}) {
   const calls: Array<{ method: string; args: any[] }> = []
   let storedToken = configured ? 'expired-token' : ''
   const api = {
@@ -29,6 +29,17 @@ async function fixture({ configured = true, create = false } = {}) {
     async validateConnection(id: string) {
       calls.push({ method: 'validateConnection', args: [id] })
       if (storedToken !== 'rotated-token') throw new Error('gitlab API /user: status 401')
+    },
+    async createDataSource(data: any) {
+      calls.push({ method: 'createDataSource', args: [JSON.parse(JSON.stringify(data))] })
+      return { id: 'draft' }
+    },
+    async listResources(id: string) {
+      calls.push({ method: 'listResources', args: [id] })
+      return []
+    },
+    async deleteDataSource(id: string) {
+      calls.push({ method: 'deleteDataSource', args: [id] })
     },
     async updateDataSource(id: string, data: any) {
       calls.push({ method: 'updateDataSource', args: [id, JSON.parse(JSON.stringify(data))] })
@@ -42,7 +53,7 @@ async function fixture({ configured = true, create = false } = {}) {
   const props = reactive({
     visible: false, kbId: 'kb-one',
     dataSource: create ? null : {
-      id: 'source-one', name: 'GitLab', type: 'gitlab',
+      id: 'source-one', name: type, type,
       credentials: { credentials: { configured } },
       config: { resource_ids: [], settings: { projects: [{ project_id: '123', paths: [] }] } },
       sync_schedule: '0 0 */6 * * *', sync_mode: 'incremental',
@@ -155,5 +166,45 @@ test('new GitLab data sources continue to test credentials without persistence',
     await f.vm.testConnection()
     assert.equal(f.vm.testResult, 'success')
     assert.deepEqual(f.calls.map(call => call.method), ['validateCredentials'])
+  } finally { f.close() }
+})
+
+test('DingTalk connection testing and browsing leave the saved schedule untouched until submit', async () => {
+  const f = await fixture({ type: 'dingtalk' })
+  try {
+    f.vm.form.sync_schedule = ''
+    await f.vm.testConnection()
+    await f.vm.loadResources()
+    assert.deepEqual(f.calls.map(call => call.method), ['validateConnection', 'listResources'])
+    await f.vm.handleSubmit()
+    const put = f.calls.find(call => call.method === 'updateDataSource')!
+    assert.equal(put.args[1].save_schedule, true)
+    assert.equal(put.args[1].sync_schedule, '')
+  } finally { f.close() }
+})
+
+test('saving only a DingTalk name preserves status and authorization; opting in reauthorizes the same cron', async () => {
+  for (const authorize of [false, true]) {
+    const f = await fixture({ type: 'dingtalk' })
+    try {
+      f.vm.form.name = 'Renamed'
+      f.vm.authorizeSchedule = authorize
+      await f.vm.handleSubmit()
+      const put = f.calls.find(call => call.method === 'updateDataSource')!
+      assert.equal(put.args[1].status, undefined)
+      assert.equal(put.args[1].save_schedule, authorize || undefined)
+      assert.equal(put.args[1].sync_schedule, authorize ? '0 0 */6 * * *' : undefined)
+    } finally { f.close() }
+  }
+})
+
+test('browsing during DingTalk creation only creates a paused draft', async () => {
+  const f = await fixture({ create: true })
+  try {
+    f.vm.selectType(f.vm.connectorDefs.find((def: any) => def.type === 'dingtalk'))
+    await f.vm.loadResources()
+    assert.deepEqual(f.calls.map(call => call.method), ['createDataSource', 'listResources'])
+    assert.equal(f.calls[0].args[0].status, 'paused')
+    assert.equal(f.calls[0].args[0].save_schedule, undefined)
   } finally { f.close() }
 })

@@ -1018,6 +1018,15 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 		return nil
 	}
 
+	if ds.Type == types.ConnectorTypeDingTalk &&
+		(payload.Trigger == "schedule" || syncLog.RecoveryTrigger == "schedule") {
+		if payload.Trigger != "schedule" || payload.ForceFull || payload.Initiator != (types.TaskInitiator{}) ||
+			syncLog.TenantID != ds.TenantID || syncLog.DataSourceID != ds.ID || kb == nil ||
+			kb.TenantID != ds.TenantID || kb.ID != ds.KnowledgeBaseID {
+			return fmt.Errorf("%w: DingTalk scheduled sync binding changed", asynq.SkipRetry)
+		}
+		return s.processDingTalkSync(ctx, ds, kb, payload)
+	}
 	automaticSource, automaticErr := s.authorizeNextcloudAutomaticSync(ctx, ds, payload)
 	if automaticErr != nil {
 		failureCode := nextcloudAutomaticAuthorizationFailureCode(automaticErr)

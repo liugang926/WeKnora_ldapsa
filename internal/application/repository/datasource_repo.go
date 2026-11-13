@@ -68,6 +68,9 @@ func (r *DataSourceRepository) Create(ctx context.Context, ds *types.DataSource)
 			UpdateColumn("sync_deletions", syncDeletions).Error; err != nil {
 			return err
 		}
+		if err := saveDingTalkScheduleAuthorization(ctx, tx, ds, r.nameAuthorityFactory); err != nil {
+			return err
+		}
 		return admitDataSourceNameInput(ctx, tx, ds, r.nameAuthorityFactory)
 	})
 	ds.SyncDeletions = syncDeletions
@@ -360,6 +363,16 @@ func (r *DataSourceRepository) Update(ctx context.Context, ds *types.DataSource)
 		if previous.TenantID != ds.TenantID || previous.KnowledgeBaseID != ds.KnowledgeBaseID {
 			return errors.New("data source owner cannot change")
 		}
+		if previous.Type == types.ConnectorTypeDingTalk && ctx.Value(dingTalkScheduleResumeKey{}) == true {
+			if previous.Status != types.DataSourceStatusPaused {
+				*ds = previous
+				return nil
+			}
+			// Resume the locked configuration, even if an editor changed it after the HTTP lookup.
+			*ds = previous
+			ds.Status = types.DataSourceStatusActive
+			ctx = WithDingTalkScheduleEdit(ctx)
+		}
 		if previous.Type != ds.Type &&
 			(previous.Type == types.ConnectorTypeNextcloud || ds.Type == types.ConnectorTypeNextcloud) {
 			return apperrors.NewProtocolError(errors.New(
@@ -387,11 +400,35 @@ func (r *DataSourceRepository) Update(ctx context.Context, ds *types.DataSource)
 			UpdateColumn("sync_deletions", ds.SyncDeletions).Error; err != nil {
 			return err
 		}
+		if IsDingTalkScheduleEdit(ctx) && ds.Type == types.ConnectorTypeDingTalk &&
+			ds.SyncSchedule == "" {
+			if err := tx.Model(ds).UpdateColumn("sync_schedule", "").Error; err != nil {
+				return err
+			}
+		}
 		var actual types.DataSource
 		if err := tx.Where("id = ?", ds.ID).Take(&actual).Error; err != nil {
 			return err
 		}
-		return admitDataSourceNameInput(ctx, tx, &actual, r.nameAuthorityFactory)
+		if previous.Type == types.ConnectorTypeDingTalk && !IsDingTalkScheduleEdit(ctx) &&
+			(previous.SyncSchedule != actual.SyncSchedule || actual.Status == types.DataSourceStatusPaused) {
+			// A subsequent generic update restoring the old cron/status must not revive its grant.
+			if err := tx.Where("data_source_id = ?", actual.ID).
+				Delete(&dingTalkScheduleAuthorization{}).Error; err != nil {
+				return err
+			}
+		}
+		if err := saveDingTalkScheduleAuthorization(ctx, tx, &actual, r.nameAuthorityFactory); err != nil {
+			return err
+		}
+		if err := admitDataSourceNameInput(ctx, tx, &actual, r.nameAuthorityFactory); err != nil {
+			return err
+		}
+		if actual.Type == types.ConnectorTypeDingTalk {
+			// Re-register the persisted schedule after a partial PUT.
+			*ds = actual
+		}
+		return nil
 	})
 }
 
@@ -599,6 +636,20 @@ func NewSyncLogRepository(db *gorm.DB) interfaces.SyncLogRepository {
 func (r *SyncLogRepository) Create(ctx context.Context, log *types.SyncLog) error {
 	if log == nil {
 		return errors.New("sync log is nil")
+	}
+	if log.RecoveryVersion == 0 && log.RecoveryTrigger == "schedule" {
+		return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			grant, err := findDingTalkScheduleAuthorization(tx, log.DataSourceID, log.TenantID)
+			if err != nil {
+				return err
+			}
+			if err := tx.Create(log).Error; err != nil || grant.GrantID == "" {
+				return err
+			}
+			log.DingTalkScheduleGrant = grant.GrantID
+			return tx.Table("sync_logs").Where("id = ?", log.ID).
+				UpdateColumn("dingtalk_schedule_grant", grant.GrantID).Error
+		})
 	}
 	if err := r.db.WithContext(ctx).Create(log).Error; err != nil {
 		if strings.Contains(err.Error(), "nextcloud_source_sync_busy") {

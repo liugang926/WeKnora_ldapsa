@@ -984,6 +984,7 @@ export default {
     guideStep2_notion: '오른쪽 상단의 \'···\' 메뉴를 클릭하고 \'Connect to\' 또는 \'Add connections\'를 선택합니다',
     guideStep3_notion: 'Integration 앱을 검색하여 선택한 후, 돌아와서 다시 시도를 클릭하세요',
     permissionDocLink: '페이슈 위키 권한 설정 문서 보기',
+    authorizeDingTalkSchedule: '이 일정 승인',
     syncScheduleLabel: '동기화 주기',
     conflictLabel: '충돌 전략',
     syncDeletions: '삭제 동기화 (소스에서 삭제 시 지식베이스에서도 삭제)',
@@ -1190,6 +1191,8 @@ export default {
       loadNotFoundHint: "folder_token이 존재하지 않거나 삭제되었습니다. 페이슈 드라이브 폴더 URL에서 복사한 토큰이 맞는지 확인하세요.",
     },
     syncError: {
+      dingtalk_schedule_authorization_required: 'DingTalk 예약 동기화에 승인이 필요합니다. 이 데이터 소스를 편집할 수 있는 사용자에게 동기화 주기에서 “이 일정 승인”을 선택하고 저장하도록 요청하세요.',
+      dingtalk_schedule_authorization_revoked: 'DingTalk 예약 동기화 승인이 더 이상 유효하지 않습니다. 이 데이터 소스를 편집할 수 있는 사용자에게 동기화 주기에서 “이 일정 승인”을 선택하고 저장하도록 요청하세요.',
       dingtalk_document_failed: 'DingTalk 문서를 읽을 수 없습니다. 접근 권한을 확인하고 동기화를 다시 시도하세요.',
       dingtalk_resource_failed: 'DingTalk 리소스를 사용할 수 없습니다. 접근 권한과 선택한 리소스를 확인한 후 다시 시도하세요.',
       deletion_lookup_failed: '삭제 전 항목 조회에 실패했습니다. 서버 로그를 확인하세요',

@@ -1024,6 +1024,7 @@ export default {
     guideStep2_notion: '点击右上角的「···」菜单，选择「Connect to」或「Add connections」',
     guideStep3_notion: '搜索并选择你的集成应用（Integration），然后回到这里点重新加载',
     permissionDocLink: '查看飞书知识库权限配置文档',
+    authorizeDingTalkSchedule: '授权此定时同步',
     syncScheduleLabel: '同步频率',
     conflictLabel: '冲突策略',
     syncDeletions: '同步删除（源端删除时同步删除知识库中的条目）',
@@ -1230,6 +1231,8 @@ export default {
       loadNotFoundHint: "folder_token 不存在或已删除，请确认从飞书云盘文件夹 URL 复制的 token 正确。",
     },
     syncError: {
+      dingtalk_schedule_authorization_required: '钉钉定时同步尚未授权。请让有权编辑此数据源的用户在「同步频率」下勾选「授权此定时同步」并保存。',
+      dingtalk_schedule_authorization_revoked: '钉钉定时同步授权已失效。请让有权编辑此数据源的用户在「同步频率」下勾选「授权此定时同步」并保存。',
       dingtalk_document_failed: '无法读取钉钉文档，请检查访问权限后重试同步。',
       dingtalk_resource_failed: '钉钉资源不可用，请检查访问权限和已选资源后重试。',
       deletion_lookup_failed: '删除前查找文档失败，请查看服务器日志',

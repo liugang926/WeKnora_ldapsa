@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/datasource"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -315,5 +316,59 @@ func TestDataSource_GetSyncLogs_NegativeLimitRejected(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for negative limit, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+type dingTalkEditorService struct {
+	stubDataSourceService
+	savedSchedule bool
+	schedule      string
+	calls         int
+}
+
+func (s *dingTalkEditorService) UpdateDataSource(ctx context.Context, ds *types.DataSource) (*types.DataSource, error) {
+	s.calls++
+	s.savedSchedule = repository.IsDingTalkScheduleEdit(ctx)
+	s.schedule = ds.SyncSchedule
+	return ds, nil
+}
+
+func TestDingTalkScheduleUpdateRequiresExplicitSave(t *testing.T) {
+	const cron = "0 30 4 * * *"
+	for _, tc := range []struct {
+		name, body string
+		wantStatus int
+		wantSave   bool
+		wantCron   string
+	}{
+		{"ordinary update", `{"name":"renamed"}`, http.StatusOK, false, ""},
+		{"round trip", `{"type":"dingtalk","sync_schedule":"0 30 4 * * *"}`, http.StatusOK, false, cron},
+		{"save same schedule", `{"sync_schedule":"0 30 4 * * *","save_schedule":true}`, http.StatusOK, true, cron},
+		{"explicitly disable", `{"sync_schedule":"","save_schedule":true}`, http.StatusOK, true, ""},
+		{"missing schedule", `{"name":"rename","save_schedule":true}`, http.StatusBadRequest, false, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service := &dingTalkEditorService{}
+			service.getDataSource = func(context.Context, string) (*types.DataSource, error) {
+				return &types.DataSource{ID: "ds", Type: types.ConnectorTypeDingTalk, KnowledgeBaseID: "kb"}, nil
+			}
+			kbs := &stubKBServiceForDS{getByID: func(context.Context, string) (*types.KnowledgeBase, error) {
+				return &types.KnowledgeBase{ID: "kb", TenantID: 1}, nil
+			}}
+			h := NewDataSourceHandler(service, kbs)
+			router := newDataSourceTestRouter(h)
+			router.PUT("/datasource/:id", h.UpdateDataSource)
+			request := httptest.NewRequest(http.MethodPut, "/datasource/ds", strings.NewReader(tc.body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, withDSCtx(request, 1))
+			if response.Code != tc.wantStatus || service.savedSchedule != tc.wantSave ||
+				service.schedule != tc.wantCron {
+				t.Fatalf("status=%d, explicit save=%t, cron=%q", response.Code, service.savedSchedule, service.schedule)
+			}
+			if tc.wantStatus != http.StatusOK && service.calls != 0 {
+				t.Fatal("invalid save reached the update service")
+			}
+		})
 	}
 }

@@ -190,12 +190,13 @@ type SyncLog struct {
 
 	// Versioned manual/cron queue intent is written with the running log before
 	// enqueue. Version zero belongs to old rows and must never be recovered.
-	RecoveryVersion    int        `json:"-" gorm:"column:recovery_version"`
-	RecoveryTrigger    string     `json:"-" gorm:"column:recovery_trigger"`
-	QueueTaskID        string     `json:"queue_task_id,omitempty" gorm:"column:queue_task_id"`
-	WorkerStartedAt    *time.Time `json:"-" gorm:"column:worker_started_at"`
-	WorkerActive       bool       `json:"-" gorm:"column:worker_active"`
-	WorkerAttemptToken string     `json:"-" gorm:"column:worker_attempt_token"`
+	DingTalkScheduleGrant string     `json:"-" gorm:"column:dingtalk_schedule_grant;->"`
+	RecoveryVersion       int        `json:"-" gorm:"column:recovery_version"`
+	RecoveryTrigger       string     `json:"-" gorm:"column:recovery_trigger"`
+	QueueTaskID           string     `json:"queue_task_id,omitempty" gorm:"column:queue_task_id"`
+	WorkerStartedAt       *time.Time `json:"-" gorm:"column:worker_started_at"`
+	WorkerActive          bool       `json:"-" gorm:"column:worker_active"`
+	WorkerAttemptToken    string     `json:"-" gorm:"column:worker_attempt_token"`
 
 	// Detailed sync result (JSON-encoded)
 	Result JSON `json:"result" gorm:"type:jsonb"`
@@ -210,6 +211,11 @@ type SyncLog struct {
 // TableName specifies the table name for SyncLog
 func (s *SyncLog) TableName() string {
 	return "sync_logs"
+}
+
+// ScheduledMinuteTaskID identifies a cron window for connectors using minute-based queue deduplication.
+func (s *SyncLog) ScheduledMinuteTaskID() string {
+	return "dssync:" + s.DataSourceID + ":" + s.StartedAt.UTC().Format("200601021504")
 }
 
 // BeforeCreate hook to generate UUID

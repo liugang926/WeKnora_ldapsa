@@ -496,6 +496,7 @@ const DAILY_CUSTOM = '__daily_custom__'
 const dailyCustomTime = ref('01:00')
 // Keep the explicit choice: the 24-hour preset and custom 02:00 share a cron.
 const scheduleSelection = ref('0 0 */6 * * *')
+const authorizeSchedule = ref(false)
 
 function dailyCustomCron(time: string): string {
   const [h, m] = (time || '01:00').split(':').map((x) => parseInt(x, 10) || 0)
@@ -752,6 +753,7 @@ watch(visible, async (v) => {
     }
     return
   }
+  authorizeSchedule.value = false
   step.value = isEdit.value ? 1 : 0
   testResult.value = ''
   testErrorMsg.value = ''
@@ -907,10 +909,12 @@ async function testConnection() {
     // connection when keeping its credentials; test replacements directly
     // without persisting them until the user saves the data source.
     if (isEdit.value && tempDsId.value && !needsConnectionTest()) {
-      await updateDataSource(tempDsId.value, {
-        ...form.value,
-        knowledge_base_id: props.kbId,
-      } as any)
+      if (form.value.type !== 'dingtalk') {
+        await updateDataSource(tempDsId.value, {
+          ...form.value,
+          knowledge_base_id: props.kbId,
+        } as any)
+      }
       await validateConnection(tempDsId.value)
     } else {
       const creds = { ...form.value.config.credentials }
@@ -1204,11 +1208,18 @@ async function handleSubmit() {
         submitting.value = false
         return
       }
+      const dingTalkEdit = isEdit.value && form.value.type === 'dingtalk'
+      const saveSchedule = form.value.type === 'dingtalk' && (
+        !isEdit.value || authorizeSchedule.value || form.value.sync_schedule !== props.dataSource?.sync_schedule
+      )
       await updateDataSource(tempDsId.value, {
         ...form.value,
+        // Omit untouched fields so an unrelated edit also preserves a concurrent pause or schedule change.
+        sync_schedule: dingTalkEdit && !saveSchedule ? undefined : form.value.sync_schedule,
+        ...(saveSchedule && { save_schedule: true }),
         config: buildConfigPayload(),
         knowledge_base_id: props.kbId,
-        status: 'active',
+        status: dingTalkEdit ? undefined : 'active',
       } as any)
     } else {
       const res = await createDataSource({
@@ -1887,6 +1898,10 @@ const drawerConfirmText = computed(() => {
           style="margin-left: 8px; width: 130px"
           @change="onDailyTimeChange"
         />
+        <t-checkbox
+          v-if="isEdit && form.type === 'dingtalk' && dataSource?.status !== 'paused' && form.sync_schedule"
+          v-model="authorizeSchedule"
+        >{{ t('datasource.authorizeDingTalkSchedule') }}</t-checkbox>
       </section>
 
       <section class="setting-drawer__section">

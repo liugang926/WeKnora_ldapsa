@@ -294,6 +294,11 @@ func (s *KnowledgeInputProvenanceStore) FinalizeDingTalkRun(
 				true).Update("active",
 				false))
 		}
+		if status == types.SyncLogStatusSuccess {
+			if err := checkDingTalkScheduledActor(tx, f, &existing); err != nil {
+				return err
+			}
+		}
 		now := time.Now().UTC()
 		values := map[string]any{
 			"status":        status,
@@ -320,7 +325,9 @@ func (s *KnowledgeInputProvenanceStore) FinalizeDingTalkRun(
 				sourceStatus = types.DataSourceStatusError
 			}
 			values = map[string]any{"last_sync_at": now, "last_sync_result": encoded, "status": sourceStatus}
-			if status == types.SyncLogStatusSuccess {
+			if isDingTalkScheduleMessage(message) {
+				values["error_message"] = message
+			} else if status == types.SyncLogStatusSuccess || isDingTalkScheduleMessage(ds.ErrorMessage) {
 				values["error_message"] = ""
 			}
 			if status == types.SyncLogStatusSuccess && cursor != nil {
