@@ -6896,6 +6896,8 @@ export default {
     hoursAgo: '{n}h ago',
     daysAgo: '{n}d ago',
     syncError: {
+      dingtalk_schedule_authorization_required: 'Scheduled DingTalk sync requires authorization. Ask a user who can edit this data source to save its schedule again.',
+      dingtalk_schedule_authorization_revoked: 'Authorization for scheduled DingTalk sync is no longer valid. Ask a user who can edit this data source to save its schedule again.',
       dingtalk_document_failed: 'DingTalk document could not be read; check access and retry the sync.',
       dingtalk_resource_failed: 'DingTalk resource is unavailable; check access and the saved selection, then retry.',
       deletion_lookup_failed: 'Failed to look up the item before deletion; see server logs',

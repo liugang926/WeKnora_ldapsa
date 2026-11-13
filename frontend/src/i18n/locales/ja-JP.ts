@@ -6896,6 +6896,8 @@ export default {
     hoursAgo: '{n}時間前',
     daysAgo: '{n}日前',
     syncError: {
+      dingtalk_schedule_authorization_required: 'DingTalk の定期同期には承認が必要です。このデータソースを編集できるユーザーにスケジュールを再保存してもらってください。',
+      dingtalk_schedule_authorization_revoked: 'DingTalk の定期同期の承認が無効になりました。このデータソースを編集できるユーザーにスケジュールを再保存してもらってください。',
       dingtalk_document_failed: 'DingTalkドキュメントを読み取れません。アクセス権限を確認して同期を再試行してください。',
       dingtalk_resource_failed: 'DingTalkリソースを利用できません。アクセス権限と選択したリソースを確認して再試行してください。',
       deletion_lookup_failed: '削除前の項目の照会に失敗しました。サーバログを確認してください',

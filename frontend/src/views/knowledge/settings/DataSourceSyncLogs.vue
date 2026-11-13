@@ -2,6 +2,7 @@
 import { ref, watch, computed, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getSyncLogs, type SyncLog, type SyncItemError } from '@/api/datasource'
+import { syncRunError } from './syncRunError'
 
 const props = defineProps<{
   dataSourceId: string
@@ -330,7 +331,7 @@ const groupedLogs = computed(() => {
                   {{ t('datasource.logDetail.docsFailedSummary', { n: log.items_failed }) }}
                 </div>
                 <div v-else-if="log.error_message" class="tl-error">
-                  {{ log.error_message }}
+                  {{ syncRunError(log.error_message, t) }}
                 </div>
 
                 <!-- Per-item failures: which documents failed and why.

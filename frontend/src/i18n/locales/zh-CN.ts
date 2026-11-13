@@ -1230,6 +1230,8 @@ export default {
       loadNotFoundHint: "folder_token 不存在或已删除，请确认从飞书云盘文件夹 URL 复制的 token 正确。",
     },
     syncError: {
+      dingtalk_schedule_authorization_required: '钉钉定时同步尚未授权。请让有权编辑此数据源的用户重新保存定时设置。',
+      dingtalk_schedule_authorization_revoked: '钉钉定时同步授权已失效。请让有权编辑此数据源的用户重新保存定时设置。',
       dingtalk_document_failed: '无法读取钉钉文档，请检查访问权限后重试同步。',
       dingtalk_resource_failed: '钉钉资源不可用，请检查访问权限和已选资源后重试。',
       deletion_lookup_failed: '删除前查找文档失败，请查看服务器日志',
