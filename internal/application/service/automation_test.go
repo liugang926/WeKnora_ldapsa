@@ -434,6 +434,30 @@ func TestAutomationCarriesLastResult(t *testing.T) {
 			var savedQuery types.Message
 			require.NoError(t, db.Take(&savedQuery, "id = ?", newRun.UserMessageID).Error)
 			require.NotContains(t, savedQuery.Content, "<previous_run_result>")
+			if change == "readable" {
+				detail, err = f.svc.GetRun(ctx, newRun.ID)
+				require.NoError(t, err)
+				require.NotEmpty(t, detail.Answer)
+				require.NoError(t, db.Create(&types.ResourceAccessPolicy{
+					ID: "after-second-run", TenantID: a.TenantID, ResourceType: types.GroupResourceTypeKnowledgeBase,
+					ResourceID: "kb", Mode: types.ResourceAccessRestricted,
+				}).Error)
+				detail, err = f.svc.GetRun(ctx, newRun.ID)
+				require.NoError(t, err)
+				require.Empty(t, detail.Answer)
+				_, err = messages.GetMessage(ctx, newRun.SessionID, newRun.AssistantMessageID)
+				require.Error(t, err)
+				list, _, err = f.svc.ListRuns(ctx, a.ID, 10, 0)
+				require.NoError(t, err)
+				for _, item := range list {
+					require.Empty(t, item.Answer)
+				}
+				f.now = f.now.Add(time.Minute)
+				third, err := f.svc.RunNow(ctx, a.ID)
+				require.NoError(t, err)
+				require.Equal(t, types.AutomationRunSucceeded, f.settleRun(t, third.ID).Status)
+				require.NotContains(t, f.sessions.last().req.Query, "<previous_run_result>")
+			}
 		})
 	}
 }

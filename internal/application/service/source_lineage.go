@@ -181,6 +181,9 @@ func (s *messageService) CheckMessagePublications(ctx context.Context, messages 
 		return access.ErrNextcloudPublicationDenied
 	}
 	for _, message := range messages {
+		if err := s.checkAutomationCarry(ctx, message); err != nil {
+			return err
+		}
 		if message == nil || message.SourceLineage.RequireComplete() != nil {
 			return access.ErrNextcloudPublicationDenied
 		}

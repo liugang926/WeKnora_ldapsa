@@ -518,7 +518,8 @@ func (s *sessionService) AgentQA(
 	}); ok {
 		mcpEngine.SetMCPIndependentTransportVerifier(s.agentMCPIndependentVerifier(ctx, req, agentConfig))
 	}
-	if s.groupAccess != nil {
+	carryCheck, _ := ctx.Value(automationCarryCheckKey{}).(func() error)
+	if s.groupAccess != nil || carryCheck != nil {
 		guarded, ok := engine.(interface {
 			SetRoundGuard(func(context.Context) error)
 		})
@@ -528,6 +529,11 @@ func (s *sessionService) AgentQA(
 		agent := req.CustomAgent
 		searchTargets := agentConfig.SearchTargets
 		guarded.SetRoundGuard(func(guardCtx context.Context) error {
+			if carryCheck != nil {
+				if err := carryCheck(); err != nil {
+					return err
+				}
+			}
 			if hasRawInputMaterials || resume != nil {
 				if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
 					return err

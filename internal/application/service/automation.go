@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -683,50 +682,47 @@ func (s *AutomationService) GetRun(ctx context.Context, runID string) (*types.Au
 // readRunAnswer resolves the original completed turn under the current owner and
 // source permissions. The legacy run cache carries no proof of readable inputs.
 func (s *AutomationService) readRunAnswer(ctx context.Context, a *types.Automation, run *types.AutomationRun) string {
-	if run.SessionID == "" || run.AssistantMessageID == "" || run.AutomationID != a.ID || run.TenantID != a.TenantID {
-		return ""
+	text, _ := s.readRunAnswerSource(ctx, a, run, maxAutomationCarryDepth)
+	return text
+}
+
+func (s *AutomationService) readRunAnswerSource(
+	ctx context.Context, a *types.Automation, run *types.AutomationRun, depthLimit int,
+) (string, *types.AutomationCarrySource) {
+	if s.sessions == nil || run.SessionID == "" || run.AssistantMessageID == "" ||
+		run.AutomationID != a.ID || run.TenantID != a.TenantID {
+		return "", nil
 	}
 	caller := types.CallerFromContext(ctx)
 	if caller.UserID != a.OwnerUserID || caller.TenantID != a.TenantID {
-		return ""
-	}
-	replay, ok := s.messages.(interface {
-		BeginCompletedMessageMaterialReplay(
-			context.Context, string, string,
-		) (*types.Message, func() error, func(), error)
-	})
-	if !ok || s.sessions == nil {
-		return ""
+		return "", nil
 	}
 	session, err := s.sessions.GetSession(ctx, run.SessionID)
 	if err != nil || session == nil || session.ID != run.SessionID || session.Kind != types.SessionKindAutomation ||
 		session.UserID != a.OwnerUserID || session.TenantID != a.TenantID {
-		return ""
+		return "", nil
 	}
 	if s.groups != nil && s.groups.Authorize(ctx, a.TenantID, types.GroupResourceTypeAgent,
 		types.BuiltinWeKnoraAssistantID, types.ResourceActionUse) != nil {
-		return ""
+		return "", nil
 	}
-	message, check, closeRead, err := replay.BeginCompletedMessageMaterialReplay(
-		ctx, session.ID, run.AssistantMessageID,
-	)
-	if closeRead != nil {
-		defer closeRead()
+	native, ok := s.messages.(*messageService)
+	if !ok {
+		return "", nil
 	}
-	if err != nil || message == nil || message.SessionID != session.ID || message.ID != run.AssistantMessageID ||
-		message.RequestID != run.ID || message.Role != "assistant" || !message.IsCompleted ||
-		check == nil || check() != nil {
-		return ""
+	source := &types.AutomationCarrySource{SessionID: session.ID, MessageID: run.AssistantMessageID}
+	guard, err := native.openAutomationSource(ctx, *source)
+	if err != nil {
+		return "", nil
 	}
-	// Legacy runs may have citations outside the producer's recorded selectors.
-	// Such text has no current grant for the cited document.
-	for _, ref := range message.KnowledgeReferences {
-		if ref == nil || ref.KnowledgeID == "" ||
-			!slices.Contains(message.ExecutionContext.KnowledgeIDs, ref.KnowledgeID) {
-			return ""
-		}
+	defer guard.Close()
+	message := guard.snapshot.Messages[0]
+	if message.RequestID != run.ID || native.checkAutomationParents(ctx, message, depthLimit) != nil ||
+		guard.Recheck() != nil {
+		return "", nil
 	}
-	return clipRunes(message.Content, maxStoredAnswerRunes)
+	source.AdmissionID = guard.snapshot.Proofs[0].AdmissionID
+	return clipRunes(message.Content, maxStoredAnswerRunes), source
 }
 
 // CancelRun stops one of the caller's runs.

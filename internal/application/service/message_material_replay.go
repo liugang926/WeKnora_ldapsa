@@ -25,6 +25,9 @@ func (s *messageService) BeginCompletedMessageMaterialReplay(
 	if control == nil {
 		return nil, nil, nil, access.ErrNextcloudPublicationUnavailable
 	}
+	if err := s.checkAutomationStreamControl(ctx, control); err != nil {
+		return nil, nil, nil, err
+	}
 	complete, err := s.materialStore.MessageCompletionControl(ctx, sessionID, messageID)
 	if err != nil {
 		return nil, nil, nil, err

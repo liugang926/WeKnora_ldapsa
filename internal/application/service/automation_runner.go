@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -300,7 +301,17 @@ func (s *AutomationService) runOnce(ctx context.Context, run *types.AutomationRu
 			}
 		}
 		query = automation.RenderInstruction(a.Instruction, runVars(a, run))
-		userMsg, answer, err = s.startMessages(ctx, run, session, agentConfig, query)
+		carry := &types.AutomationCarrySource{}
+		modelQuery := query
+		if a.SessionMode == types.AutomationSessionPerRun && a.CarryLastResult {
+			text, source := s.previousRunAnswer(ctx, a, run)
+			if source != nil && strings.TrimSpace(text) != "" {
+				carry = source
+				modelQuery = automation.RunQuery(a.Instruction, runVars(a, run), text)
+			}
+		}
+		userMsg, answer, err = s.startMessages(ctx, run, session, agentConfig, query, carry)
+		query = modelQuery
 		if err != nil {
 			return failed("could not record the run: " + err.Error())
 		}
@@ -327,8 +338,20 @@ func (s *AutomationService) runOnce(ctx context.Context, run *types.AutomationRu
 		AssistantAccess: a.AccessLevel, Mode: types.RunModeDeferred, Suspendable: true, Resume: resume,
 		RunNote: automation.RunNote(a.Name, run.ScheduledAt, loc),
 	}
-	if !run.Resume && a.SessionMode == types.AutomationSessionPerRun && a.CarryLastResult {
-		req.Query = s.runQuery(ctx, a, run)
+	if source := answer.ExecutionContext.AutomationCarry; source != nil && source.MessageID != "" {
+		native, ok := s.messages.(*messageService)
+		if !ok {
+			return failed("could not verify the previous result")
+		}
+		// The stream handler mutates the answer as chunks arrive. The source
+		// selected for the model must remain fixed for every round.
+		carry := &types.Message{ID: answer.ID, ExecutionContext: answer.ExecutionContext}
+		checkCtx := ctx
+		check := func() error { return native.checkAutomationCarry(checkCtx, carry) }
+		if err := check(); err != nil {
+			return failed("the previous result is no longer available")
+		}
+		ctx = context.WithValue(ctx, automationCarryCheckKey{}, check)
 	}
 	out := s.agentQA(ctx, req, session, answer)
 	if resume != nil && out.status != types.AutomationRunAwaitingApproval {
@@ -356,16 +379,16 @@ func runVars(a *types.Automation, run *types.AutomationRun) automation.RunVars {
 
 // Carry the prior turn only into model input. The new session's user message
 // must not become another durable copy of a potentially revocable answer.
-func (s *AutomationService) runQuery(ctx context.Context, a *types.Automation, run *types.AutomationRun) string {
-	last := ""
+func (s *AutomationService) previousRunAnswer(ctx context.Context, a *types.Automation, run *types.AutomationRun,
+) (string, *types.AutomationCarrySource) {
 	var prev types.AutomationRun
 	if err := s.db.WithContext(ctx).Select("id", "automation_id", "tenant_id", "session_id", "assistant_message_id").
 		Where("automation_id = ? AND tenant_id = ? AND status = ? AND id <> ?",
 			a.ID, a.TenantID, types.AutomationRunSucceeded, run.ID).
 		Order("finished_at DESC").Take(&prev).Error; err == nil {
-		last = s.readRunAnswer(ctx, a, &prev)
+		return s.readRunAnswerSource(ctx, a, &prev, maxAutomationCarryDepth-1)
 	}
-	return automation.RunQuery(a.Instruction, runVars(a, run), last)
+	return "", nil
 }
 
 // runSession is the conversation a new run writes to: a new one per run, or
@@ -415,7 +438,8 @@ func (s *AutomationService) runSession(
 }
 
 func (s *AutomationService) startMessages(
-	ctx context.Context, run *types.AutomationRun, session *types.Session, assistant *types.CustomAgent, query string,
+	ctx context.Context, run *types.AutomationRun, session *types.Session, assistant *types.CustomAgent,
+	query string, carry *types.AutomationCarrySource,
 ) (*types.Message, *types.Message, error) {
 	now := s.now()
 	execution := types.MessageExecutionContext{
@@ -429,6 +453,7 @@ func (s *AutomationService) startMessages(
 	if err != nil {
 		return nil, nil, err
 	}
+	execution.AutomationCarry = carry
 	answer, err := s.messages.CreateMessage(ctx, &types.Message{
 		SessionID: session.ID, RequestID: run.ID, Role: "assistant", CreatedAt: now, Channel: types.ChannelWeb,
 		ExecutionContext: execution,
@@ -608,6 +633,9 @@ func (s *AutomationService) agentQA(
 	}
 	missing := !completed
 	mu.Unlock()
+	if check, ok := ctx.Value(automationCarryCheckKey{}).(func() error); ok && check() != nil {
+		return failed("the previous result is no longer available")
+	}
 	if finishStream != nil && missing {
 		if err != nil {
 			_ = bus.Emit(context.WithoutCancel(ctx), event.Event{

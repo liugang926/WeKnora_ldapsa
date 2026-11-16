@@ -578,10 +578,19 @@ type Message struct {
 	DeletedAt gorm.DeletedAt `json:"deleted_at"            gorm:"index"`
 }
 
+// AutomationCarrySource identifies the exact completed message used by a scheduled turn.
+// An empty source on an automation answer records that no earlier result was consumed.
+type AutomationCarrySource struct {
+	SessionID   string `json:"session_id,omitempty"`
+	MessageID   string `json:"message_id,omitempty"`
+	AdmissionID string `json:"admission_id,omitempty"`
+}
+
 // MessageExecutionContext is a message-level snapshot of the non-secret
 // request state used by derived experiences such as follow-up suggestions.
 type MessageExecutionContext struct {
-	AgentConfigHash string `json:"agent_config_hash,omitempty"`
+	AutomationCarry *AutomationCarrySource `json:"automation_carry,omitempty"`
+	AgentConfigHash string                 `json:"agent_config_hash,omitempty"`
 	// ExplicitInputMaterials is true only when this turn contains explicit
 	// images or file attachments. Knowledge bases, mentioned documents and
 	// question_origin are WeKnora retrieval context, not Nextcloud material.
