@@ -1280,7 +1280,9 @@ func (s *ImageMultimodalService) imageReader() knowledgeImageReader {
 // imageURL is passed explicitly (instead of read from payload.ImageURL) because
 // a batched payload carries several images and only the first one is mirrored
 // onto the legacy single-image fields.
-func (s *ImageMultimodalService) readImageBytes(ctx context.Context, payload types.ImageMultimodalPayload) ([]byte, error) {
+func (s *ImageMultimodalService) readImageBytes(
+	ctx context.Context, payload types.ImageMultimodalPayload,
+) ([]byte, error) {
 	if isStoredImageURL(payload.ImageURL) {
 		fileSvc := s.resolveFileServiceForPayload(ctx, payload)
 		if fileSvc == nil {

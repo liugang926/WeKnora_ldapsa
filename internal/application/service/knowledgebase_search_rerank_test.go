@@ -171,7 +171,7 @@ func TestRerankCandidates_degradesToRetrievalOrder(t *testing.T) {
 func TestRerankProviderErrorIsPrivateInBothSearchResults(t *testing.T) {
 	const providerBody = "private-provider-diagnostic-718"
 	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)
 		http.Error(w, providerBody, http.StatusBadRequest)
 	}))

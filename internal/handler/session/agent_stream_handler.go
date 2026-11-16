@@ -193,7 +193,8 @@ func (h *AgentStreamHandler) subscribeWithLineage(kind event.EventType, handler 
 		if evt.SourceLineage == nil && kind == event.EventAgentComplete {
 			if data, ok := evt.Data.(event.AgentCompleteData); ok &&
 				data.MessageID == h.assistantMessageID && data.FinalAnswer == "" &&
-				len(data.KnowledgeRefs) == 0 && data.AgentSteps == nil && data.Usage == nil && data.Suspended == nil && len(data.Extra) == 0 &&
+				len(data.KnowledgeRefs) == 0 && data.AgentSteps == nil && data.Usage == nil &&
+				data.Suspended == nil && len(data.Extra) == 0 &&
 				data.TotalSteps == 0 && data.TotalDurationMs == 0 &&
 				(data.SessionID == "" ||
 					data.SessionID == h.sessionID) && (data.RequestID == "" || data.RequestID == h.requestID) {
@@ -250,8 +251,13 @@ func (h *AgentStreamHandler) handleProgress(ctx context.Context, evt event.Event
 	h.supersedeAnswerSegments(func(seg *answerSegment) bool { return seg.id == evt.ID })
 	h.mu.Unlock()
 	return h.streamManager.AppendEvent(ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
-		SourceLineage: eventSourceLineage(ctx, evt), ID: evt.ID, Type: types.ResponseTypeProgress, Content: data.Content, Done: true, Timestamp: time.Now(),
-		Data: map[string]interface{}{"event_id": evt.ID, "iteration": data.Iteration},
+		SourceLineage: eventSourceLineage(ctx, evt),
+		ID:            evt.ID,
+		Type:          types.ResponseTypeProgress,
+		Content:       data.Content,
+		Done:          true,
+		Timestamp:     time.Now(),
+		Data:          map[string]interface{}{"event_id": evt.ID, "iteration": data.Iteration},
 	})
 }
 

@@ -69,20 +69,27 @@ func (p *PluginMerge) resolveCapturedParents(ctx context.Context, results []*typ
 		if result == nil {
 			continue
 		}
-		if result.ChunkType == types.ChunkTypeSummary {
-			// A generated summary's parent records its original text input; it
-			// is not a parent_text expansion request. Revalidate the captured
-			// summary itself under its existing proof and source lease, without
-			// borrowing parent text or certifying a changed cached body/relation.
-			rows := p.hydrateMergeInput(ctx, result, []string{result.ID})
-			if len(rows) != 1 || rows[0].ChunkType != types.ChunkTypeSummary ||
-				rows[0].Content != result.Content || rows[0].ParentChunkID != result.ParentChunkID ||
+		retainBody := result.ChunkType == types.ChunkTypeSummary || types.IsImageChildChunkType(result.ChunkType)
+		protected := result.SourceLineage != nil && len(result.SourceLineage.Sources) > 0
+		if !protected && result.ParentChunkID == "" && !retainBody {
+			continue
+		}
+		// A protected hit cannot evade checking its stored relation by clearing
+		// the parent ID or by presenting itself as a different kind of chunk.
+		rows := p.hydrateMergeInput(ctx, result, []string{result.ID})
+		if len(rows) != 1 || rows[0].ID != result.ID || rows[0].ChunkType != result.ChunkType ||
+			rows[0].ParentChunkID != result.ParentChunkID {
+			unknownMergeInput(ctx, result)
+			continue
+		}
+		if retainBody {
+			// Summary and image hits retain their own bodies. Confirm the captured
+			// row before using its declared type to skip parent expansion.
+			if rows[0].Content != result.Content ||
 				rows[0].ContentRevision != result.ContentRevision || rows[0].ChunkIndex != result.ChunkIndex ||
 				rows[0].StartAt != result.StartAt || rows[0].EndAt != result.EndAt ||
-				rows[0].ImageInfo != result.ImageInfo || !bytes.Equal(
-				rows[0].Metadata,
-				result.ChunkMetadata,
-			) || result.ContentRewritten {
+				rows[0].ImageInfo != result.ImageInfo || !bytes.Equal(rows[0].Metadata, result.ChunkMetadata) ||
+				result.ContentRewritten {
 				unknownMergeInput(ctx, result)
 			}
 			continue
@@ -90,19 +97,11 @@ func (p *PluginMerge) resolveCapturedParents(ctx context.Context, results []*typ
 		if result.ParentChunkID == "" {
 			continue
 		}
-		// The narrow text closure does not borrow OCR/caption/image children
-		// through the generic helper without their own real capture receipts.
-		if result.ChunkType == types.ChunkTypeImageVector || result.ChunkType == types.ChunkTypeImageOCR ||
-			result.ChunkType == types.ChunkTypeImageCaption {
-			// Keep the independently captured image hit; expanding its parent
-			// would silently attribute unrelated parent text to the image.
-			continue
-		}
 		if result.ChunkType != types.ChunkTypeText {
 			unknownMergeInput(ctx, result)
 			continue
 		}
-		rows := p.hydrateMergeInput(ctx, result, []string{result.ParentChunkID})
+		rows = p.hydrateMergeInput(ctx, result, []string{result.ParentChunkID})
 		if len(rows) != 1 || rows[0].ChunkType != types.ChunkTypeParentText {
 			continue
 		}

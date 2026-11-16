@@ -17,7 +17,9 @@ func TestKnowledgeGraphModelProjectionKeepsActualGraphAttributesAndChunkHandles(
 				"display_type":    "graph_query_results",
 				"errors":          []string{"some <failure>"},
 				"relations_total": 2,
-				"relations":       []map[string]any{{"source": "unbound source", "target": "unbound target", "type": "OTHER"}},
+				"relations": []map[string]any{
+					{"source": "unbound source", "target": "unbound target", "type": "OTHER"},
+				},
 				"graph": map[string]any{
 					"nodes": []map[string]any{
 						{"name": "Graph <entity>", "attributes": []string{"model-independent actual graph fact"}},

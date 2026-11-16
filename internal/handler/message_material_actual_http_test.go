@@ -203,7 +203,8 @@ func TestMessageMaterialActualHTTPProducerReadSingleConnection(t *testing.T) {
 			c.JSON(code, gin.H{"error": c.Errors.Last().Err.Error()})
 		}
 	})
-	router.GET("/messages/:session_id/load", NewMessageHandler(messages, nil, nil, repository.NewAgentPromptRepository(db)).LoadMessages)
+	messageHandler := NewMessageHandler(messages, nil, nil, repository.NewAgentPromptRepository(db))
+	router.GET("/messages/:session_id/load", messageHandler.LoadMessages)
 	request := func() *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/messages/"+session.ID+"/load?limit=20", nil))
@@ -324,7 +325,8 @@ func TestMessageMaterialActualControlledSavedHTTPAndCurrentSourceRevoke(t *testi
 			c.JSON(code, gin.H{"error": c.Errors.Last().Err.Error()})
 		}
 	})
-	router.GET("/messages/:session_id/load", NewMessageHandler(messages, nil, nil, repository.NewAgentPromptRepository(f.db)).LoadMessages)
+	messageHandler := NewMessageHandler(messages, nil, nil, repository.NewAgentPromptRepository(f.db))
+	router.GET("/messages/:session_id/load", messageHandler.LoadMessages)
 	call := func() *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/messages/"+session.ID+"/load", nil))

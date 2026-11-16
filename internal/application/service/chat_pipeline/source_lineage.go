@@ -181,8 +181,8 @@ func emitSourceLineageEvent(ctx context.Context, bus types.EventBusInterface, ev
 		evt.SourceLineage = lineage
 	}
 	err := bus.Emit(ctx, evt)
-	if err != nil && turn != nil {
-		_ = turn.Add(types.UnknownSourceLineage())
+	if err != nil && turn != nil && ctx.Err() == nil {
+		turn.RefuseOutput()
 	}
 	return err
 }

@@ -49,7 +49,9 @@ type KnowledgeSpanRepository interface {
 	// name for (knowledgeID, attempt). Used before re-opening a subspan
 	// after asynq retry or server restart so the trace tree does not
 	// accumulate duplicate postprocess.summary / question rows.
-	CancelOpenSpansByName(ctx context.Context, knowledgeID string, attempt int, name, errorCode, reason string) (int64, error)
+	CancelOpenSpansByName(
+		ctx context.Context, knowledgeID string, attempt int, name, errorCode, reason string,
+	) (int64, error)
 	// LastActivity returns each knowledge's most recent span write, across
 	// attempts. Knowledge without spans is absent from the map.
 	LastActivity(ctx context.Context, knowledgeIDs []string) (map[string]time.Time, error)

@@ -25,7 +25,9 @@ const maxRetrievalPoolSize = 500
 // associated with the given knowledge base. Callers can pre-compute and reuse
 // the result across multiple KBs that share the same embedding model and
 // configured vector dimension to avoid redundant embedding API calls.
-func (s *knowledgeBaseService) GetQueryEmbedding(ctx context.Context, kbID string, queryText string) ([]float32, error) {
+func (s *knowledgeBaseService) GetQueryEmbedding(
+	ctx context.Context, kbID string, queryText string,
+) ([]float32, error) {
 	kb, err := s.repo.GetKnowledgeBaseByID(ctx, kbID)
 	if err != nil {
 		return nil, err
@@ -96,7 +98,9 @@ func validateQueryEmbeddingDimension(model embedding.Embedder, actual int) error
 // same underlying model and vector space across different tenants will share
 // the same key, enabling optimal grouping without reusing a query embedding
 // across incompatible index dimensions.
-func (s *knowledgeBaseService) ResolveEmbeddingModelKeys(ctx context.Context, kbs []*types.KnowledgeBase) map[string]string {
+func (s *knowledgeBaseService) ResolveEmbeddingModelKeys(
+	ctx context.Context, kbs []*types.KnowledgeBase,
+) map[string]string {
 	type modelRef struct {
 		ModelID  string
 		TenantID uint64
@@ -156,7 +160,10 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 	// copy, so this stays local to the call.
 	params.MatchCount = normalizedMatchCount(params.MatchCount)
 
-	return s.withHybridSearchCandidates(ctx, id, params, func(ctx context.Context, chunks []*types.IndexWithScore, _ func([]*types.SearchResult) error) ([]*types.SearchResult, error) {
+	return s.withHybridSearchCandidates(ctx, id, params, func(
+		ctx context.Context, chunks []*types.IndexWithScore,
+		_ func([]*types.SearchResult) error,
+	) ([]*types.SearchResult, error) {
 		recordImageRecallDecision(ctx, "fusion.candidate_selection", "",
 			summarizeImageCandidateCut(chunks, params.MatchCount))
 
@@ -173,11 +180,13 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 
 // searchHydrationScope records the server-authorized owner of each requested
 // KB. An inconsistent or stale index hit cannot expand the caller's search.
-type searchHydrationScopeKey struct{}
-type searchHydrationScope struct {
-	owners    map[string]uint64
-	documents map[string]bool
-}
+type (
+	searchHydrationScopeKey struct{}
+	searchHydrationScope    struct {
+		owners    map[string]uint64
+		documents map[string]bool
+	}
+)
 
 // withHybridSearchCandidates runs retrieval, fusion and FAQ post-processing for
 // HybridSearch and returns the fused chunks, best first, before the
@@ -185,7 +194,9 @@ type searchHydrationScope struct {
 func (s *knowledgeBaseService) withHybridSearchCandidates(ctx context.Context,
 	id string,
 	params types.SearchParams,
-	hydrate func(context.Context, []*types.IndexWithScore, func([]*types.SearchResult) error) ([]*types.SearchResult, error),
+	hydrate func(
+		context.Context, []*types.IndexWithScore, func([]*types.SearchResult) error,
+	) ([]*types.SearchResult, error),
 ) ([]*types.SearchResult, error) {
 	// Determine the set of KB IDs to search.
 	searchKBIDs := params.KnowledgeBaseIDs
@@ -228,7 +239,10 @@ func (s *knowledgeBaseService) withHybridSearchCandidates(ctx context.Context,
 		return nil, err
 	}
 
-	scope := searchHydrationScope{owners: make(map[string]uint64, len(kbs)), documents: make(map[string]bool, len(params.KnowledgeIDs))}
+	scope := searchHydrationScope{
+		owners:    make(map[string]uint64, len(kbs)),
+		documents: make(map[string]bool, len(params.KnowledgeIDs)),
+	}
 	for _, kb := range kbs {
 		scope.owners[kb.ID] = kb.TenantID
 	}
@@ -448,7 +462,10 @@ func (s *knowledgeBaseService) withHybridSearchCandidates(ctx context.Context,
 			scope, _ := ctx.Value(ragChunkReadScopeKey{}).(access.LineageReadScope)
 			scope.Targets = append([]*types.SearchTarget(nil), scope.Targets...)
 			for _, kb := range kbs {
-				scope.Targets = append(scope.Targets, &types.SearchTarget{Type: types.SearchTargetTypeKnowledgeBase, TenantID: kb.TenantID, KnowledgeBaseID: kb.ID})
+				scope.Targets = append(scope.Targets, &types.SearchTarget{
+					Type: types.SearchTargetTypeKnowledgeBase, TenantID: kb.TenantID,
+					KnowledgeBaseID: kb.ID,
+				})
 			}
 			var inputs []*types.SourceLineage
 			for _, result := range material {

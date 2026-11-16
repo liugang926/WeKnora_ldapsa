@@ -368,7 +368,10 @@ func (s *AutomationService) runSession(
 ) (*types.Session, error) {
 	if a.SessionMode == types.AutomationSessionPersistent && a.PersistentSessionID != "" {
 		if session, err := s.sessions.GetSession(ctx, a.PersistentSessionID); err == nil && session != nil {
-			if session.ID != a.PersistentSessionID || session.UserID != a.OwnerUserID || session.TenantID != a.TenantID || session.Kind != types.SessionKindAutomation {
+			if session.ID != a.PersistentSessionID ||
+				session.UserID != a.OwnerUserID ||
+				session.TenantID != a.TenantID ||
+				session.Kind != types.SessionKindAutomation {
 				return nil, ErrResourceAccessDenied
 			}
 			return session, nil
@@ -450,26 +453,40 @@ func (s *AutomationService) resumeState(ctx context.Context, run *types.Automati
 		return nil, nil, nil, nil, stop, err
 	}
 	if prompt == nil || prompt.Status != types.AgentPromptAnswered || prompt.SessionID != run.SessionID ||
-		prompt.AssistantMessageID != run.AssistantMessageID || prompt.TenantID != run.TenantID || prompt.UserID != automationGrantUser(types.CallerFromContext(ctx).UserID) {
+		prompt.AssistantMessageID != run.AssistantMessageID ||
+		prompt.TenantID != run.TenantID ||
+		prompt.UserID != automationGrantUser(types.CallerFromContext(ctx).UserID) {
 		return nil, nil, nil, nil, stop, errors.New("the approval can no longer be resumed")
 	}
 	snapshot, err := s.broker.Suspensions().Get(ctx, prompt.AssistantMessageID)
 	if err != nil {
 		return nil, nil, nil, nil, stop, err
 	}
-	if snapshot == nil || snapshot.PromptID != prompt.ID || snapshot.TenantID != run.TenantID || snapshot.SessionID != run.SessionID || snapshot.AssistantMessageID != run.AssistantMessageID {
+	if snapshot == nil ||
+		snapshot.PromptID != prompt.ID ||
+		snapshot.TenantID != run.TenantID ||
+		snapshot.SessionID != run.SessionID ||
+		snapshot.AssistantMessageID != run.AssistantMessageID {
 		return nil, nil, nil, nil, stop, errors.New("the saved run state is missing")
 	}
 	if session, err = s.sessions.GetSession(ctx, run.SessionID); err != nil {
 		return nil, nil, nil, nil, stop, err
 	}
-	if session == nil || session.ID != run.SessionID || session.Kind != types.SessionKindAutomation || session.TenantID != run.TenantID || session.UserID != types.CallerFromContext(ctx).UserID {
+	if session == nil ||
+		session.ID != run.SessionID ||
+		session.Kind != types.SessionKindAutomation ||
+		session.TenantID != run.TenantID ||
+		session.UserID != types.CallerFromContext(ctx).UserID {
 		return nil, nil, nil, nil, stop, ErrResourceAccessDenied
 	}
 	if answer, err = s.messages.GetMessage(ctx, run.SessionID, run.AssistantMessageID); err != nil {
 		return nil, nil, nil, nil, stop, err
 	}
-	if answer == nil || answer.IsCompleted || answer.Role != "assistant" || answer.SessionID != session.ID || answer.ID != run.AssistantMessageID {
+	if answer == nil ||
+		answer.IsCompleted ||
+		answer.Role != "assistant" ||
+		answer.SessionID != session.ID ||
+		answer.ID != run.AssistantMessageID {
 		return nil, nil, nil, nil, stop, errors.New("the run's message was closed")
 	}
 	answer.RunState = ""

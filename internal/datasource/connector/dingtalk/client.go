@@ -99,7 +99,12 @@ type node struct {
 // native ALIDOC files have their own online read APIs and are absent on
 // purpose, as are media files that would be pointless to index as text.
 var binaryDocumentTypes = map[string]string{
-	"doc": "application/msword", "ppt": "application/vnd.ms-powerpoint", "xls": "application/vnd.ms-excel", "txt": "text/plain", "md": "text/markdown", "csv": "text/csv",
+	"doc":  "application/msword",
+	"ppt":  "application/vnd.ms-powerpoint",
+	"xls":  "application/vnd.ms-excel",
+	"txt":  "text/plain",
+	"md":   "text/markdown",
+	"csv":  "text/csv",
 	"docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 	"pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 	"xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

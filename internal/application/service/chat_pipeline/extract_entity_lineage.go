@@ -58,7 +58,7 @@ func (p *PluginExtractEntity) onLineageExtractEntity(
 			return turn.Check(ctx)
 		},
 	)
-	if err != nil && !(errors.Is(err, ErrModelDeclined) && graph != nil) {
+	if err != nil && (!errors.Is(err, ErrModelDeclined) || graph == nil) {
 		return fail(err)
 	}
 	if err := turn.Add(graph.SourceLineage); err != nil {

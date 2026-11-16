@@ -322,14 +322,14 @@ func (e *AgentEngine) emitCompletionEvent(
 	if state.Suspended != nil {
 		data.Suspended = state.Suspended
 	}
-	e.emitEvent(ctx, event.Event{
+	err := e.emitEvent(ctx, event.Event{
 		ID:        generateEventID("complete"),
 		Type:      event.EventAgentComplete,
 		SessionID: sessionID,
 		Data:      data,
 	})
 
-	if e.lineageFailure() != nil {
+	if err != nil || e.lineageFailure() != nil {
 		return
 	}
 	logger.Infof(ctx, "Agent execution completed in %d rounds", state.CurrentRound)

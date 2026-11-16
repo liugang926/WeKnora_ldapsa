@@ -331,8 +331,7 @@ func finalizeSubtaskDetached(
 		}
 	}
 	if err := releaseSubtaskSlot(ctx, repo, knowledgeID); err != nil {
-		logger.Errorf(ctx, "finalize subtask decrement failed source=%s knowledge=%s err=%v; "+
-			"row will be left to the housekeeping sweep", source, knowledgeID, err)
+		logger.Errorf(ctx, "subtask finalization failed source=%s knowledge=%s err=%v", source, knowledgeID, err)
 		return err
 	}
 	return nil
@@ -341,8 +340,8 @@ func finalizeSubtaskDetached(
 // subtaskSlotReleaseAttempts bounds the retry of one slot release. The
 // release is the only thing that drains the slot — the task has already
 // finished — so one transient DB error must not strand the row in
-// "finalizing". The decrement and promote commit together, so a failed
-// attempt rolled back and retrying it cannot drain twice.
+// "finalizing". Retry transaction failures here. Publication and observer
+// failures happen after that transaction and have their own recovery path.
 const (
 	subtaskSlotReleaseAttempts = 3
 	subtaskSlotReleaseBackoff  = 200 * time.Millisecond
@@ -357,8 +356,8 @@ func releaseSubtaskSlot(ctx context.Context, repo interfaces.KnowledgeRepository
 	var lastErr error
 	for attempt := 1; attempt <= subtaskSlotReleaseAttempts; attempt++ {
 		_, _, err := repo.FinalizeSubtask(dctx, knowledgeID)
-		if err == nil {
-			return nil
+		if err == nil || errors.Is(err, repository.ErrSubtaskSlotReleased) {
+			return err
 		}
 		lastErr = err
 		if attempt == subtaskSlotReleaseAttempts {

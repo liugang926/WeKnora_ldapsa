@@ -2539,14 +2539,16 @@ type (
 // A capability scoped to one synchronous item handoff. Only the real worker
 // fetch loop and its private streaming adapter issue it; an uploaded file or
 // caller-supplied channel/metadata cannot construct it.
-type fetchedConnectorKey struct{}
-type fetchedConnectorItem struct {
-	ds               *types.DataSource
-	item             *types.FetchedItem
-	tenant           uint64
-	source, kb, kind string
-	artifact         [sha256.Size]byte
-}
+type (
+	fetchedConnectorKey  struct{}
+	fetchedConnectorItem struct {
+		ds               *types.DataSource
+		item             *types.FetchedItem
+		tenant           uint64
+		source, kb, kind string
+		artifact         [sha256.Size]byte
+	}
+)
 
 // Hash the body separately so binding a large fetched file never allocates its base64 representation.
 func fetchedConnectorDigest(item *types.FetchedItem) ([sha256.Size]byte, error) {
@@ -2564,22 +2566,39 @@ func fetchedConnectorDigest(item *types.FetchedItem) ([sha256.Size]byte, error) 
 }
 
 func (p fetchedConnectorItem) matches(ds *types.DataSource, item *types.FetchedItem) bool {
-	if p.ds != ds || p.item != item || p.kind != ds.Type || p.tenant != ds.TenantID || p.kb != ds.KnowledgeBaseID || p.source != ds.ID {
+	if p.ds != ds ||
+		p.item != item ||
+		p.kind != ds.Type ||
+		p.tenant != ds.TenantID ||
+		p.kb != ds.KnowledgeBaseID ||
+		p.source != ds.ID {
 		return false
 	}
 	got, err := fetchedConnectorDigest(item)
 	return err == nil && got == p.artifact
 }
 
-func bindFetchedConnectorItem(ctx context.Context, connector datasource.Connector, ds *types.DataSource, item *types.FetchedItem) context.Context {
-	if connector == nil || ds == nil || item == nil || ds.Type == "" || connector.Type() != ds.Type || ds.Type == types.ConnectorTypeNextcloud || ds.Type == types.ConnectorTypeDingTalk {
+func bindFetchedConnectorItem(
+	ctx context.Context, connector datasource.Connector,
+	ds *types.DataSource, item *types.FetchedItem,
+) context.Context {
+	if connector == nil ||
+		ds == nil ||
+		item == nil ||
+		ds.Type == "" ||
+		connector.Type() != ds.Type ||
+		ds.Type == types.ConnectorTypeNextcloud ||
+		ds.Type == types.ConnectorTypeDingTalk {
 		return ctx
 	}
 	digest, err := fetchedConnectorDigest(item)
 	if err != nil {
 		return ctx
 	}
-	return context.WithValue(ctx, fetchedConnectorKey{}, fetchedConnectorItem{ds, item, ds.TenantID, ds.ID, ds.KnowledgeBaseID, ds.Type, digest})
+	return context.WithValue(ctx, fetchedConnectorKey{}, fetchedConnectorItem{
+		ds, item, ds.TenantID,
+		ds.ID, ds.KnowledgeBaseID, ds.Type, digest,
+	})
 }
 
 func (s *DataSourceService) ingestItem(
@@ -2638,7 +2657,9 @@ func (s *DataSourceService) ingestItem(
 	if ds.Type == types.ConnectorTypeDingTalk {
 		return false, types.ErrSourceLineageUnknown
 	}
-	metadata["datasource_id"], metadata["external_id"], metadata["source_resource_id"] = ds.ID, item.ExternalID, item.SourceResourceID
+	metadata["datasource_id"] = ds.ID
+	metadata["external_id"] = item.ExternalID
+	metadata["source_resource_id"] = item.SourceResourceID
 	if channel == types.ConnectorTypeDingTalk || channel == types.ConnectorTypeNextcloud {
 		return false, types.ErrSourceLineageUnknown
 	}

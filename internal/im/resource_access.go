@@ -85,7 +85,8 @@ func (s *Service) checkChannelResource(ctx context.Context, scope types.IMChanne
 ) error {
 	// Channel replies can echo any storage handle supplied by a model. Bind
 	// each signed URL to a live channel KB or this reply's own artifact.
-	if err := scope.Check(ctx, scope.TenantID, types.GroupResourceTypeAgent, scope.AgentID, types.ResourceActionUse); err != nil {
+	if err := scope.Check(ctx, scope.TenantID,
+		types.GroupResourceTypeAgent, scope.AgentID, types.ResourceActionUse); err != nil {
 		return err
 	}
 	bindings, ok := s.resourceCatalog.(interfaces.MessageFileBindingLookup)
@@ -109,7 +110,8 @@ func (s *Service) checkChannelResource(ctx context.Context, scope types.IMChanne
 		return nil
 	}
 	for _, kbID := range origins.KnowledgeBaseIDs {
-		if outboundKBInScope(agent, kbIDs, kbID) && scope.Check(ctx, owner, types.GroupResourceTypeKnowledgeBase, kbID, types.ResourceActionRead) == nil {
+		if outboundKBInScope(agent, kbIDs, kbID) &&
+			scope.Check(ctx, owner, types.GroupResourceTypeKnowledgeBase, kbID, types.ResourceActionRead) == nil {
 			return nil
 		}
 	}

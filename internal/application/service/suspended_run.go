@@ -29,7 +29,10 @@ type SuspendedRunService struct {
 	materialService *messageService
 	durableBroker   bool
 	db              *gorm.DB
-	authorize       func(context.Context, *types.Session, *types.AgentPrompt, *types.Message, *agent.RunSnapshot) (context.Context, error)
+	authorize       func(
+		context.Context, *types.Session, *types.AgentPrompt,
+		*types.Message, *agent.RunSnapshot,
+	) (context.Context, error)
 }
 
 // NewSuspendedRunService builds the service.
@@ -48,7 +51,11 @@ func NewAuthorizedSuspendedRunService(broker *hitl.Broker, repo interfaces.Messa
 	s.db = db
 	s.durableBroker = true
 	s.materialService, _ = messages.(*messageService)
-	s.authorize = func(ctx context.Context, session *types.Session, prompt *types.AgentPrompt, msg *types.Message, snap *agent.RunSnapshot) (context.Context, error) {
+	s.authorize = func(
+		ctx context.Context, session *types.Session,
+		prompt *types.AgentPrompt, msg *types.Message,
+		snap *agent.RunSnapshot,
+	) (context.Context, error) {
 		service, ok := messages.(*messageService)
 		if !ok || service == nil || groups == nil || users == nil || snap.SourceLineage.RequireComplete() != nil {
 			return nil, ErrResourceAccessDenied
@@ -78,7 +85,10 @@ func NewAuthorizedSuspendedRunService(broker *hitl.Broker, repo interfaces.Messa
 		if req.AgentID == "" || msg.AgentID != "" && msg.AgentID != req.AgentID {
 			return nil, ErrResourceAccessDenied
 		}
-		ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: user.ID, ActingVia: req.ActingVia})
+		ctx = types.WithPrincipal(ctx, types.Principal{
+			Type: types.PrincipalWebUser,
+			ID:   user.ID, ActingVia: req.ActingVia,
+		})
 		// Shared agents keep their source workspace and their current share grant.
 		agentTenant := req.AgentTenantID
 		if agentTenant == 0 {
@@ -89,17 +99,30 @@ func NewAuthorizedSuspendedRunService(broker *hitl.Broker, repo interfaces.Messa
 		}
 		candidate := *msg
 		candidate.AgentID, candidate.AgentTenantID = req.AgentID, agentTenant
-		candidate.ExecutionContext.KnowledgeBaseIDs = append(append([]string(nil), msg.ExecutionContext.KnowledgeBaseIDs...), req.KnowledgeBaseIDs...)
-		candidate.ExecutionContext.KnowledgeIDs = append(append([]string(nil), msg.ExecutionContext.KnowledgeIDs...), req.KnowledgeIDs...)
-		candidate.ExecutionContext.TagScopes = append(append([]types.TagScope(nil), msg.ExecutionContext.TagScopes...), req.TagScopes...)
+		candidate.ExecutionContext.KnowledgeBaseIDs = append(
+			append([]string(nil), msg.ExecutionContext.KnowledgeBaseIDs...),
+			req.KnowledgeBaseIDs...,
+		)
+		candidate.ExecutionContext.KnowledgeIDs = append(
+			append([]string(nil), msg.ExecutionContext.KnowledgeIDs...),
+			req.KnowledgeIDs...,
+		)
+		candidate.ExecutionContext.TagScopes = append(
+			append([]types.TagScope(nil), msg.ExecutionContext.TagScopes...),
+			req.TagScopes...,
+		)
 		for _, ref := range snap.KnowledgeRefs {
 			if ref == nil || ref.KnowledgeBaseID == "" {
 				return nil, ErrResourceAccessDenied
 			}
-			candidate.ExecutionContext.KnowledgeBaseIDs = append(candidate.ExecutionContext.KnowledgeBaseIDs, ref.KnowledgeBaseID)
+			candidate.ExecutionContext.KnowledgeBaseIDs = append(
+				candidate.ExecutionContext.KnowledgeBaseIDs, ref.KnowledgeBaseID,
+			)
 		}
 		for _, source := range snap.SourceLineage.Sources {
-			candidate.ExecutionContext.KnowledgeBaseIDs = append(candidate.ExecutionContext.KnowledgeBaseIDs, source.KnowledgeBaseID)
+			candidate.ExecutionContext.KnowledgeBaseIDs = append(
+				candidate.ExecutionContext.KnowledgeBaseIDs, source.KnowledgeBaseID,
+			)
 		}
 		scope, err := service.messageSourceLineageScope(ctx, &candidate)
 		if err != nil {
@@ -112,7 +135,10 @@ func NewAuthorizedSuspendedRunService(broker *hitl.Broker, repo interfaces.Messa
 		if err := guard.CheckWorkspaceRead(ctx, scope); err != nil {
 			return nil, err
 		}
-		if !msg.ExecutionContext.ExplicitInputMaterials && snap.WeKnoraACL && len(snap.SourceLineage.Sources) == 0 && len(snap.ImageURLs) == 0 {
+		if !msg.ExecutionContext.ExplicitInputMaterials &&
+			snap.WeKnoraACL &&
+			len(snap.SourceLineage.Sources) == 0 &&
+			len(snap.ImageURLs) == 0 {
 			return ctx, nil
 		}
 		if req.UserMessageID == "" || service.materialStore == nil {
@@ -124,7 +150,10 @@ func NewAuthorizedSuspendedRunService(broker *hitl.Broker, repo interfaces.Messa
 				ids = append(ids, id)
 			}
 		}
-		originals, err := service.admittedMessages(ctx, types.MessageMaterialReadRequest{TenantID: prompt.TenantID, SessionID: prompt.SessionID, MessageIDs: ids, IncludeOriginalUserFields: true})
+		originals, err := service.admittedMessages(ctx, types.MessageMaterialReadRequest{
+			TenantID: prompt.TenantID, SessionID: prompt.SessionID,
+			MessageIDs: ids, IncludeOriginalUserFields: true,
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -143,7 +172,9 @@ func NewAuthorizedSuspendedRunService(broker *hitl.Broker, repo interfaces.Messa
 					return nil, ErrResourceAccessDenied
 				}
 				for _, image := range snap.ImageURLs {
-					if !slices.ContainsFunc(m.Images, func(stored types.MessageImage) bool { return stored.URL == image }) {
+					if !slices.ContainsFunc(m.Images, func(stored types.MessageImage) bool {
+						return stored.URL == image
+					}) {
 						return nil, ErrResourceAccessDenied
 					}
 				}
@@ -175,7 +206,7 @@ func (s *SuspendedRunService) SupersedeSession(ctx context.Context, sessionID st
 func (s *SuspendedRunService) MarkAwaitingInput(
 	ctx context.Context, prompt *types.AgentPrompt, state *types.AgentRunSuspension,
 ) error {
-	return s.update(ctx, prompt, state, false, func(msg *types.Message, snap *agent.RunSnapshot, storedReason string) {
+	return s.update(ctx, prompt, state, false, func(msg *types.Message, snap *agent.RunSnapshot, _ string) {
 		if snap != nil {
 			msg.AgentSteps = agenttools.SanitizeAgentStepsForStorage(snap.DisplaySteps())
 		}
@@ -184,9 +215,9 @@ func (s *SuspendedRunService) MarkAwaitingInput(
 }
 
 // Close completes a run that will never resume. The blocked call and the
-// calls after it are recorded as failed with reason.
+// calls after it are recorded as failed using the persisted close reason.
 func (s *SuspendedRunService) Close(
-	ctx context.Context, prompt *types.AgentPrompt, state *types.AgentRunSuspension, reason string,
+	ctx context.Context, prompt *types.AgentPrompt, state *types.AgentRunSuspension, _ string,
 ) error {
 	return s.update(ctx, prompt, state, true, func(msg *types.Message, snap *agent.RunSnapshot, storedReason string) {
 		if snap != nil {
@@ -213,7 +244,18 @@ func (s *SuspendedRunService) update(
 	if err != nil {
 		return err
 	}
-	if row == nil || saved == nil || row.ID != prompt.ID || row.UserID != prompt.UserID || row.TenantID != prompt.TenantID || row.SessionID != prompt.SessionID || row.AssistantMessageID != prompt.AssistantMessageID || saved.PromptID != row.ID || saved.TenantID != row.TenantID || saved.SessionID != row.SessionID || saved.AssistantMessageID != row.AssistantMessageID || !bytes.Equal(saved.Snapshot, state.Snapshot) {
+	if row == nil ||
+		saved == nil ||
+		row.ID != prompt.ID ||
+		row.UserID != prompt.UserID ||
+		row.TenantID != prompt.TenantID ||
+		row.SessionID != prompt.SessionID ||
+		row.AssistantMessageID != prompt.AssistantMessageID ||
+		saved.PromptID != row.ID ||
+		saved.TenantID != row.TenantID ||
+		saved.SessionID != row.SessionID ||
+		saved.AssistantMessageID != row.AssistantMessageID ||
+		!bytes.Equal(saved.Snapshot, state.Snapshot) {
 		return ErrResourceAccessDenied
 	}
 	if closeRun {
@@ -234,7 +276,10 @@ func (s *SuspendedRunService) update(
 	if err != nil || msg == nil || msg.IsCompleted {
 		return err
 	}
-	if msg.ID != row.AssistantMessageID || msg.SessionID != row.SessionID || msg.Role != "assistant" || row.RequestID != "" && msg.RequestID != row.RequestID {
+	if msg.ID != row.AssistantMessageID ||
+		msg.SessionID != row.SessionID ||
+		msg.Role != "assistant" ||
+		row.RequestID != "" && msg.RequestID != row.RequestID {
 		return ErrResourceAccessDenied
 	}
 	ctx = WithMessageMaterialOutputBoundary(ctx)
@@ -245,11 +290,17 @@ func (s *SuspendedRunService) update(
 	allowed := err == nil && row.UserID != "" && row.TenantID != 0 && s.db != nil && s.authorize != nil
 	var owner types.Session
 	if allowed {
-		err = s.db.WithContext(ctx).Select("id", "tenant_id", "user_id", "owner_auth_source", "kind").Where("id = ? AND tenant_id = ?", row.SessionID, row.TenantID).Take(&owner).Error
+		err = s.db.WithContext(ctx).
+			Select("id", "tenant_id", "user_id", "owner_auth_source", "kind").
+			Where("id = ? AND tenant_id = ?", row.SessionID, row.TenantID).
+			Take(&owner).Error
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
-		allowed = err == nil && owner.UserID != "" && (owner.OwnerAuthSource == "" || owner.OwnerAuthSource == types.AuthSourceWeb || owner.Kind == types.SessionKindAutomation) && (types.Principal{Type: types.PrincipalWebUser, ID: owner.UserID}).StorageID() == row.UserID
+		ownerPrincipal := types.Principal{Type: types.PrincipalWebUser, ID: owner.UserID}
+		allowed = err == nil && owner.UserID != "" &&
+			(owner.OwnerAuthSource == "" || owner.OwnerAuthSource == types.AuthSourceWeb ||
+				owner.Kind == types.SessionKindAutomation) && ownerPrincipal.StorageID() == row.UserID
 		if allowed {
 			actor, checkErr := s.authorize(ctx, &owner, row, msg, snap)
 			allowed = checkErr == nil && actor != nil && CheckMessageMaterialOutputBoundary(actor) == nil
@@ -278,15 +329,30 @@ func (s *SuspendedRunService) update(
 		msg.SourceLineage = lineage
 	}
 	pending := func(db *gorm.DB) *gorm.DB {
-		update := db.Model(&types.Message{}).Where("id = ? AND session_id = ? AND role = ? AND updated_at = ? AND is_completed = ?", msg.ID, row.SessionID, "assistant", originalTime, false)
+		update := db.Model(&types.Message{}).
+			Where(
+				"id = ? AND session_id = ? AND role = ? AND updated_at = ? AND is_completed = ?",
+				msg.ID, row.SessionID, "assistant", originalTime, false,
+			)
 		if allowed {
-			update = update.Where("EXISTS (?)", s.db.Model(&types.Session{}).Select("1").Where("id = ? AND tenant_id = ? AND user_id = ? AND owner_auth_source = ?", row.SessionID, row.TenantID, owner.UserID, owner.OwnerAuthSource))
+			update = update.Where("EXISTS (?)",
+				s.db.Model(&types.Session{}).
+					Select("1").
+					Where("id = ? AND tenant_id = ? AND user_id = ? AND owner_auth_source = ?",
+						row.SessionID, row.TenantID, owner.UserID, owner.OwnerAuthSource,
+					))
 		}
 		if s.durableBroker {
-			update = update.Where("EXISTS (?)", s.db.Model(&types.AgentPrompt{}).Select("1").
-				Where("id = ? AND tenant_id = ? AND user_id = ? AND session_id = ? AND assistant_message_id = ? AND status = ?", row.ID, row.TenantID, row.UserID, row.SessionID, row.AssistantMessageID, row.Status)).
-				Where("EXISTS (?)", s.db.Model(&types.AgentRunSuspension{}).Select("1").
-					Where("assistant_message_id = ? AND prompt_id = ? AND tenant_id = ? AND session_id = ? AND updated_at = ?", saved.AssistantMessageID, saved.PromptID, saved.TenantID, saved.SessionID, saved.UpdatedAt))
+			prompt := s.db.Model(&types.AgentPrompt{}).Select("1").Where(
+				"id = ? AND tenant_id = ? AND user_id = ? AND session_id = ? "+
+					"AND assistant_message_id = ? AND status = ?",
+				row.ID, row.TenantID, row.UserID, row.SessionID, row.AssistantMessageID, row.Status,
+			)
+			suspension := s.db.Model(&types.AgentRunSuspension{}).Select("1").Where(
+				"assistant_message_id = ? AND prompt_id = ? AND tenant_id = ? AND session_id = ? AND updated_at = ?",
+				saved.AssistantMessageID, saved.PromptID, saved.TenantID, saved.SessionID, saved.UpdatedAt,
+			)
+			update = update.Where("EXISTS (?)", prompt).Where("EXISTS (?)", suspension)
 		}
 
 		return update
@@ -327,7 +393,10 @@ func (s *SuspendedRunService) update(
 		}
 		return err
 	}
-	result := pending(s.db.WithContext(ctx)).Updates(map[string]interface{}{"updated_at": msg.UpdatedAt, "is_completed": msg.IsCompleted, "run_state": msg.RunState})
+	result := pending(s.db.WithContext(ctx)).Updates(map[string]interface{}{
+		"updated_at": msg.UpdatedAt, "is_completed": msg.IsCompleted,
+		"run_state": msg.RunState,
+	})
 	if result.Error != nil {
 		return result.Error
 	}

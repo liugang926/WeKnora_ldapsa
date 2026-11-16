@@ -2,12 +2,17 @@ package session
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Tencent/WeKnora/internal/agent"
+	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/event"
+	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -96,44 +101,103 @@ func TestAgentStreamHandlerForwardsOperationDataChange(t *testing.T) {
 	require.Equal(t, marker, streams.events[0].Data["data_change"])
 }
 
+// A rejected page button makes the engine reclassify the first round's text
+// as progress, then ask the model for the final answer in the next round.
+type progressChatModel struct {
+	rounds [][]types.StreamResponse
+}
+
+func (*progressChatModel) GetModelID() string   { return "progress-fixture" }
+func (*progressChatModel) GetModelName() string { return "progress-fixture" }
+func (*progressChatModel) Chat(context.Context, []chat.Message, *chat.ChatOptions) (*types.ChatResponse, error) {
+	return nil, errors.New("unexpected non-streaming call")
+}
+
+func (m *progressChatModel) ChatStream(
+	context.Context, []chat.Message, *chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
+	if len(m.rounds) == 0 {
+		return nil, errors.New("no more scripted rounds")
+	}
+	round := m.rounds[0]
+	m.rounds = m.rounds[1:]
+	stream := make(chan types.StreamResponse, len(round))
+	for _, chunk := range round {
+		stream <- chunk
+	}
+	close(stream)
+	return stream, nil
+}
+
 func TestAgentStreamHandlerProgressIsSeparateFromReasoningAndFinalAnswer(t *testing.T) {
+	const progress, thinking, final = "Opening the page.", "Check the page name.", "The page does not exist."
+	ctx := context.WithValue(t.Context(), types.UserIDContextKey, "session-owner")
 	streams := &capturingStreamManager{}
 	bus := event.NewEventBus()
-	h := NewAgentStreamHandler(
-		context.Background(),
-		"s",
-		"m",
-		"r",
-		1,
-		time.Now(),
-		&types.Message{},
-		streams,
-		bus,
-		nil,
-		nil,
-		nil,
-	)
+	message := &types.Message{}
+	h := NewAgentStreamHandler(ctx, "s", "m", "r", 1, time.Now(), message, streams, bus, nil, nil, nil)
 	h.Subscribe()
-	require.NoError(
-		t,
-		bus.Emit(
-			t.Context(),
-			event.Event{
-				ID:   "progress-1",
-				Type: event.EventAgentProgress,
-				Data: event.AgentProgressData{Content: "Two tasks finished; one awaits approval.", Iteration: 3},
+
+	model := &progressChatModel{rounds: [][]types.StreamResponse{
+		{
+			{ResponseType: types.ResponseTypeThinking, Content: thinking},
+			{
+				ResponseType: types.ResponseTypeAnswer, Content: progress, Done: true, FinishReason: "tool_calls",
+				ToolCalls: []types.LLMToolCall{{
+					ID: "page", Type: "function",
+					Function: types.FunctionCall{Name: agenttools.ToolOpenPage, Arguments: `{"page":"invalid"}`},
+				}},
 			},
-		),
-	)
-	require.Len(t, streams.events, 1)
-	e := streams.events[0]
-	require.Equal(t, types.ResponseTypeProgress, e.Type)
-	require.Equal(t, "progress-1", e.Data["event_id"])
-	require.Equal(t, 3, e.Data["iteration"])
-	require.True(t, e.Done)
-	require.Empty(t, h.finalAnswer)
-	require.Empty(t, h.answerSegments)
-	require.Empty(t, h.eventStartTimes)
+		},
+		{{ResponseType: types.ResponseTypeAnswer, Content: final, Done: true, FinishReason: "stop"}},
+	}}
+	registry := agenttools.NewToolRegistry()
+	registry.RegisterTool(agenttools.NewOpenPageTool(agenttools.OperationsRuntime{}))
+	engine := agent.NewAgentEngine(&types.AgentConfig{MaxIterations: 2}, model, registry, bus, nil, nil, "s", "")
+	require.NotNil(t, engine)
+	engine.SetWeKnoraACLSourceLineageVerifier(func(ctx context.Context) error {
+		if userID, _ := types.UserIDFromContext(ctx); userID != "session-owner" {
+			return agent.ErrAgentSourceLineageDenied
+		}
+		return nil
+	})
+	_, err := engine.Execute(t.Context(), "s", "m", "Open the page.", nil)
+	require.ErrorIs(t, err, agent.ErrAgentSourceLineageDenied)
+	require.Empty(t, streams.events)
+	state, err := engine.Execute(ctx, "s", "m", "Open the page.", nil)
+	require.NoError(t, err)
+	require.Len(t, state.RoundSteps, 2)
+	require.Equal(t, final, state.FinalAnswer)
+	require.Equal(t, final, h.finalAnswer)
+	var updates []interfaces.StreamEvent
+	var reasoning strings.Builder
+	for _, frame := range streams.events {
+		switch frame.Type {
+		case types.ResponseTypeProgress:
+			updates = append(updates, frame)
+		case types.ResponseTypeThinking:
+			reasoning.WriteString(frame.Content)
+		}
+	}
+	require.Equal(t, thinking, reasoning.String())
+	require.Len(t, updates, 1)
+	update := updates[0]
+	require.Equal(t, progress, update.Content)
+	require.True(t, update.Done)
+	require.NotEmpty(t, state.RoundSteps[0].ProgressEventID)
+	require.Equal(t, state.RoundSteps[0].ProgressEventID, update.Data["event_id"])
+	require.Equal(t, state.RoundSteps[0].Iteration, update.Data["iteration"])
+	require.NoError(t, update.SourceLineage.RequireComplete())
+
+	// A valid prefix never authorizes another producer's unaccounted bytes.
+	count := len(streams.events)
+	err = bus.Emit(ctx, event.Event{
+		Type: event.EventAgentProgress,
+		Data: event.AgentProgressData{Content: "unaccounted progress"},
+	})
+	require.ErrorIs(t, err, types.ErrSourceLineageUnknown)
+	require.Len(t, streams.events, count)
+	require.Equal(t, final, h.finalAnswer)
 }
 
 func TestPageButtonKeepsTheAnswerBeforeIt(t *testing.T) {

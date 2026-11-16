@@ -12,20 +12,25 @@ import (
 
 // Both gallery transports use the same authorized data set for rows and
 // totals. Re-evaluate it at Write, after Gin has serialized the response.
-func (h *KnowledgeHandler) writeImageGallery(c *gin.Context, ctx context.Context, kb string, tenant uint64, page *types.Pagination, filter *types.ImageListFilter) {
+func (h *KnowledgeHandler) writeImageGallery(
+	ctx context.Context, c *gin.Context, kb string, tenant uint64,
+	page *types.Pagination, filter *types.ImageListFilter,
+) {
 	h.constrainGalleryFilter(ctx, kb, filter)
 	filter.AuthorizeSource = func(ctx context.Context, doc *types.Knowledge) (bool, error) {
 		err := h.checkCurrentNextcloudKBAccess(ctx, c, doc, types.OrgRoleViewer)
 		if err == nil {
 			err = h.checkSourcePublication(ctx, doc)
 		}
-		if app, ok := errors.IsAppError(err); ok && (app.HTTPCode == http.StatusForbidden || app.HTTPCode == http.StatusNotFound) {
+		if app, ok := errors.IsAppError(err); ok &&
+			(app.HTTPCode == http.StatusForbidden || app.HTTPCode == http.StatusNotFound) {
 			return false, nil
 		}
 		return err == nil, err
 	}
 	load := func() (*types.PageResult, error) {
-		if err := h.checkCurrentNextcloudKBAccess(ctx, c, &types.Knowledge{TenantID: tenant, KnowledgeBaseID: kb}, types.OrgRoleViewer); err != nil {
+		target := &types.Knowledge{TenantID: tenant, KnowledgeBaseID: kb}
+		if err := h.checkCurrentNextcloudKBAccess(ctx, c, target, types.OrgRoleViewer); err != nil {
 			return nil, err
 		}
 		result, err := h.chunkService.ListImagesByKnowledgeBaseID(ctx, kb, page, filter)
@@ -51,5 +56,11 @@ func (h *KnowledgeHandler) writeImageGallery(c *gin.Context, ctx context.Context
 		return nil
 	}}
 	defer func() { c.Writer = prior }()
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": result.Data, "total": result.Total, "page": result.Page, "page_size": result.PageSize})
+	c.JSON(http.StatusOK, gin.H{
+		"success":   true,
+		"data":      result.Data,
+		"total":     result.Total,
+		"page":      result.Page,
+		"page_size": result.PageSize,
+	})
 }

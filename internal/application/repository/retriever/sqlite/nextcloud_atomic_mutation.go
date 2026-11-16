@@ -46,7 +46,9 @@ func (r *sqliteRepository) mutateRowsInTx(
 	}
 	if len(rows) == 0 && updates != nil {
 		for column := range updates {
-			logger.GetLogger(ctx).Warnf("[SQLite] update of lite_embeddings.%s matched 0 rows for chunk %v", column, arg)
+			logger.GetLogger(ctx).Warnf(
+				"[SQLite] update of lite_embeddings.%s matched 0 rows for chunk %v", column, arg,
+			)
 		}
 	}
 	for _, row := range rows {
@@ -108,7 +110,9 @@ func (r *sqliteRepository) copyRowsAtomic(
 					if e == nil {
 						return nil
 					}
-					wrapped := fmt.Errorf("[SQLite] copy source %s (chunk %s -> %s): %w", src.SourceID, source, target, e)
+					wrapped := fmt.Errorf(
+						"[SQLite] copy source %s (chunk %s -> %s): %w", src.SourceID, source, target, e,
+					)
 					if guarded {
 						return wrapped
 					}

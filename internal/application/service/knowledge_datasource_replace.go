@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
@@ -40,9 +41,7 @@ func (s *knowledgeService) createAdmittedKnowledgeForReplacement(ctx context.Con
 	if s.knowledgeInputWriter == nil && s.knowledgeInputs == nil {
 		return ctx, s.persistKnowledgeForCreation(ctx, knowledge, replacement)
 	}
-	writer, ok := s.knowledgeInputWriter.(interface {
-		ReplaceKnowledgeWithInput(context.Context, *types.Knowledge, *types.Knowledge, []string, any) (*types.KnowledgeBuildInputProof, error)
-	})
+	writer, ok := s.knowledgeInputWriter.(repository.KnowledgeReplacementWriter)
 	if !ok || s.knowledgeInputs == nil {
 		return ctx, types.ErrSourceLineageUnknown
 	}
@@ -51,22 +50,28 @@ func (s *knowledgeService) createAdmittedKnowledgeForReplacement(ctx context.Con
 		return ctx, err
 	}
 	knowledge.Metadata = metadata
-	proof, err := writer.ReplaceKnowledgeWithInput(ctx, replacement.previous, knowledge, replacement.tagIDs, artifact)
+	proof, err := repository.ReplaceKnowledgeWithConfirmedInput(
+		ctx, writer, replacement.previous, knowledge, replacement.tagIDs, artifact,
+	)
 	if err != nil {
+		if errors.Is(err, repository.ErrKnowledgeReplacementUnconfirmed) {
+			replacement.keepFile = true
+			return ctx, err
+		}
 		readCtx := context.WithoutCancel(ctx)
-		if old, readErr := s.repo.GetKnowledgeByID(readCtx, knowledge.TenantID, replacement.previous.ID); readErr == nil && old != nil {
-			return ctx, err
+		if old, readErr := s.repo.GetKnowledgeByID(
+			readCtx, knowledge.TenantID, replacement.previous.ID,
+		); readErr == nil && old != nil {
+			if _, newErr := s.repo.GetKnowledgeByID(readCtx, knowledge.TenantID, knowledge.ID); errors.Is(
+				newErr, repository.ErrKnowledgeNotFound,
+			) {
+				return ctx, err
+			}
 		}
-		// An acknowledgement can be lost after commit. Keep the bytes until
-		// the original receipt of this exact new row establishes the outcome.
+		// Discard the staged file only on a confirmed rollback: the previous
+		// row is live and there is no new row which might reference it.
 		replacement.keepFile = true
-		snapshot, readErr := s.knowledgeInputs.CaptureKnowledgeBuildInputs(readCtx, types.KnowledgeBuildInputCaptureRequest{
-			TenantID: knowledge.TenantID, KnowledgeBaseID: knowledge.KnowledgeBaseID, KnowledgeID: knowledge.ID,
-		})
-		if readErr != nil || snapshot == nil || snapshot.Proof == nil || repository.KnowledgeInputArtifactMatches(snapshot.Proof, artifact) != nil {
-			return ctx, err
-		}
-		proof = snapshot.Proof
+		return ctx, err
 	}
 	if proof == nil {
 		replacement.keepFile = true

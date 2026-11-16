@@ -33,21 +33,39 @@ func TestAgentResumeUsesOwnedStoredSnapshotAndResolvedPrompt(t *testing.T) {
 	svc := &sessionService{sessionRepo: repo, promptBroker: broker}
 	principal := types.Principal{Type: types.PrincipalWebUser, ID: session.UserID}
 	broker.RegisterKind("question", func(_, _ json.RawMessage) error { return nil })
-	prompt := &types.AgentPrompt{ID: "p", SessionID: "s", UserID: principal.StorageID(), TenantID: 4, AssistantMessageID: "answer", Kind: "question", Status: types.AgentPromptSuspended}
+	prompt := &types.AgentPrompt{
+		ID: "p", SessionID: "s", UserID: principal.StorageID(),
+		TenantID: 4, AssistantMessageID: "answer",
+		Kind: "question", Status: types.AgentPromptSuspended,
+	}
 	require.NoError(t, broker.Store().Create(ctx, prompt))
-	resolved, err := broker.Resolve(ctx, hitl.ResolveRequest{SessionID: "s", TenantID: 4, UserID: principal.StorageID(), PromptID: prompt.ID, Response: json.RawMessage(`{"decision":"denied"}`)})
+	resolved, err := broker.Resolve(ctx, hitl.ResolveRequest{
+		SessionID: "s", TenantID: 4,
+		UserID: principal.StorageID(), PromptID: prompt.ID,
+		Response: json.RawMessage(`{"decision":"denied"}`),
+	})
 	require.NoError(t, err)
 	require.True(t, resolved.Resume)
 	prompt = resolved.Prompt
-	original, err := json.Marshal(types.ResumableAgentRequest{AgentID: "agent", AgentTenantID: 4, KnowledgeBaseIDs: []string{"kb"}})
+	original, err := json.Marshal(types.ResumableAgentRequest{
+		AgentID: "agent", AgentTenantID: 4,
+		KnowledgeBaseIDs: []string{"kb"},
+	})
 	require.NoError(t, err)
 	lineage, err := types.NewCompleteSourceLineage()
 	require.NoError(t, err)
-	snap := agent.RunSnapshot{Version: agent.RunSnapshotVersion, WeKnoraACL: true, SourceLineage: lineage, Request: original}
+	snap := agent.RunSnapshot{
+		Version: agent.RunSnapshotVersion, WeKnoraACL: true,
+		SourceLineage: lineage, Request: original,
+	}
 	state := &types.AgentRunSuspension{AssistantMessageID: "answer", SessionID: "s", TenantID: 4, PromptID: "p"}
 	candidate := *prompt
 	candidate.Response = types.JSON(`{"decision":"allowed"}`)
-	req := &types.QARequest{Session: session, AssistantMessageID: "answer", CustomAgent: &types.CustomAgent{ID: "agent", TenantID: 4}, KnowledgeBaseIDs: []string{"kb"}, Resume: &types.AgentResume{Prompt: &candidate}}
+	req := &types.QARequest{
+		Session: session, AssistantMessageID: "answer",
+		CustomAgent: &types.CustomAgent{ID: "agent", TenantID: 4}, KnowledgeBaseIDs: []string{"kb"},
+		Resume: &types.AgentResume{Prompt: &candidate},
+	}
 	save := func() {
 		state.Snapshot, err = json.Marshal(snap)
 		require.NoError(t, err)
@@ -128,12 +146,22 @@ func TestAgentResumeRequiresCurrentParentLeaseAndStoredWait(t *testing.T) {
 	b, err := coord.Runtime.AcquireParent(ctx, scope)
 	require.NoError(t, err)
 	session := &types.Session{ID: scope.SessionID, TenantID: scope.TenantID, UserID: scope.UserID}
-	original, err := json.Marshal(types.ResumableAgentRequest{AgentID: agents.agent.ID, AgentTenantID: agents.agent.TenantID})
+	original, err := json.Marshal(types.ResumableAgentRequest{
+		AgentID:       agents.agent.ID,
+		AgentTenantID: agents.agent.TenantID,
+	})
 	require.NoError(t, err)
-	snapshot, err := json.Marshal(agent.RunSnapshot{Version: agent.RunSnapshotVersion, CollaborationWait: true, BetweenRounds: true, Request: original})
+	snapshot, err := json.Marshal(agent.RunSnapshot{
+		Version: agent.RunSnapshotVersion, CollaborationWait: true,
+		BetweenRounds: true, Request: original,
+	})
 	require.NoError(t, err)
 	require.NoError(t, b.SaveWait(ctx, snapshot, time.Now()))
-	req := &types.QARequest{Session: session, AssistantMessageID: "answer", CustomAgent: agents.agent, Resume: &types.AgentResume{Snapshot: snapshot}}
+	req := &types.QARequest{
+		Session: session, AssistantMessageID: "answer",
+		CustomAgent: agents.agent,
+		Resume:      &types.AgentResume{Snapshot: snapshot},
+	}
 	svc := &sessionService{sessionRepo: &resumeOwnerStore{row: session}}
 	_, _, err = svc.loadResume(ctx, req)
 	require.Error(t, err)
@@ -153,15 +181,26 @@ func TestAgentResumeRequiresCurrentParentLeaseAndStoredWait(t *testing.T) {
 
 func TestAgentResumeSteeringReadsOriginalMessagesFromSameTurn(t *testing.T) {
 	messages, _, _, ctx, session, answer := steerMaterialActualFixture(t, false)
-	steer, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: answer.RequestID, Role: "user", Content: "follow the staging version", IsCompleted: true})
+	steer, err := messages.CreateMessage(ctx, &types.Message{
+		SessionID: session.ID, RequestID: answer.RequestID,
+		Role:    "user",
+		Content: "follow the staging version", IsCompleted: true,
+	})
 	require.NoError(t, err)
-	other, err := messages.CreateMessage(ctx, &types.Message{SessionID: session.ID, RequestID: "another-turn", Role: "user", Content: "another question", IsCompleted: true})
+	other, err := messages.CreateMessage(ctx, &types.Message{
+		SessionID: session.ID, RequestID: "another-turn",
+		Role:    "user",
+		Content: "another question", IsCompleted: true,
+	})
 	require.NoError(t, err)
 	ctx = WithMessageMaterialOutputBoundary(ctx)
 	defer CloseMessageMaterialOutputBoundary(ctx)
 	lineage, err := types.NewCompleteSourceLineage()
 	require.NoError(t, err)
-	snap := &agent.RunSnapshot{SourceLineage: lineage, PendingRound: agent.PendingRound{Step: types.AgentStep{UserMessagesBefore: []string{steer.ID}}}}
+	snap := &agent.RunSnapshot{
+		SourceLineage: lineage,
+		PendingRound:  agent.PendingRound{Step: types.AgentStep{UserMessagesBefore: []string{steer.ID}}},
+	}
 	svc := &sessionService{lineageVerifier: messages}
 	hydrated, err := svc.restoreResumeSteering(ctx, session, answer.ID, snap)
 	require.NoError(t, err)

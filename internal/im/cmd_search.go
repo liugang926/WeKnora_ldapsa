@@ -153,7 +153,8 @@ func (c *SearchCommand) Execute(ctx context.Context, cmdCtx *CommandContext, arg
 	if scope, ok := types.IMChannelScopeFromContext(ctx); ok {
 		sourceKBs := map[string]bool{}
 		for _, hit := range shown {
-			if err := scope.Check(ctx, scope.KnowledgeBases[hit.KnowledgeBaseID], types.GroupResourceTypeKnowledgeBase, hit.KnowledgeBaseID, types.ResourceActionRead); err != nil {
+			if err := scope.Check(ctx, scope.KnowledgeBases[hit.KnowledgeBaseID],
+				types.GroupResourceTypeKnowledgeBase, hit.KnowledgeBaseID, types.ResourceActionRead); err != nil {
 				return nil, err
 			}
 			sourceKBs[hit.KnowledgeBaseID] = true
@@ -165,7 +166,8 @@ func (c *SearchCommand) Execute(ctx context.Context, cmdCtx *CommandContext, arg
 			}
 			for _, source := range lineage.Sources {
 				sourceKBs[source.KnowledgeBaseID] = true
-				if err := scope.Check(ctx, source.TenantID, types.GroupResourceTypeKnowledgeBase, source.KnowledgeBaseID, types.ResourceActionRead); err != nil {
+				if err := scope.Check(ctx, source.TenantID, types.GroupResourceTypeKnowledgeBase,
+					source.KnowledgeBaseID, types.ResourceActionRead); err != nil {
 					return nil, err
 				}
 			}

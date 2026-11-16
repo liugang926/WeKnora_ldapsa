@@ -463,7 +463,8 @@ func TestSeatbeltAllowsTmpAndDeniesVarFolders(t *testing.T) {
 
 	tmpOut := filepath.Join("/tmp", "weknora-seatbelt-out-"+t.Name())
 	t.Cleanup(func() { _ = os.Remove(tmpOut) })
-	status, out = runSandboxedArgv(t, backend, p, append(noProfile, `echo from-sandbox > `+tmpOut+` && cat `+tmpOut), env)
+	writeAndRead := `echo from-sandbox > ` + tmpOut + ` && cat ` + tmpOut
+	status, out = runSandboxedArgv(t, backend, p, append(noProfile, writeAndRead), env)
 	require.Equal(t, 0, status.Code, out)
 	require.Contains(t, out, "from-sandbox")
 

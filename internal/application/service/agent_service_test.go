@@ -955,7 +955,8 @@ func TestSwitchManagedToolsIgnoreTheAllowlist(t *testing.T) {
 	chatModel := &fakeAgentChatModel{}
 	config := &types.AgentConfig{AllowedTools: allowed}
 
-	engine, err := (&agentService{ragChunkSnapshotReader: repository.NewRAGChunkSnapshotReader(nil, nil)}).CreateAgentEngine(ctx, config, chatModel, nil, nil, "sess-1", "msg-1")
+	svc := &agentService{ragChunkSnapshotReader: repository.NewRAGChunkSnapshotReader(nil, nil)}
+	engine, err := svc.CreateAgentEngine(ctx, config, chatModel, nil, nil, "sess-1", "msg-1")
 	require.NoError(t, err)
 	engine.(*agent.AgentEngine).SetWeKnoraACLSourceLineageVerifier(func(ctx context.Context) error { return ctx.Err() })
 	_, err = engine.Execute(ctx, "sess-1", "msg-1", "hello", nil)

@@ -70,31 +70,44 @@ func (s *KnowledgeInputProvenanceStore) ReplaceKnowledgeWithInput(
 	if !ok || len(data) == 0 {
 		return nil, ErrKnowledgeInputChanged
 	}
+	attempt := matchingKnowledgeReplacementAttempt(ctx, before, after)
 	var proof *types.KnowledgeBuildInputProof
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		sourceType, err := registeredOrdinaryReplacementType(tx, after)
+		if err != nil {
+			return err
+		}
 		if err := checkOrdinaryReplacementSource(tx, before, after); err != nil {
 			return err
 		}
 		if err := retireKnowledgeForReplacement(tx, before); err != nil {
 			return err
 		}
-		var err error
 		proof, err = s.createKnowledgeWithInputInTx(ctx, tx, after, data, origin)
-		if err != nil || len(tagIDs) == 0 {
+		if err != nil {
 			return err
 		}
-		ids := normalizedKnowledgeDisplayTagIDs(tagIDs)
-		var scoped []string
-		if err := tx.Model(&types.KnowledgeTag{}).Clauses(clause.Locking{Strength: "SHARE"}).
-			Where("id IN ? AND tenant_id = ? AND knowledge_base_id = ?", ids, after.TenantID, after.KnowledgeBaseID).
-			Pluck("id", &scoped).Error; err != nil {
-			return err
+		if len(tagIDs) > 0 {
+			ids := normalizedKnowledgeDisplayTagIDs(tagIDs)
+			var scoped []string
+			if err := tx.Model(&types.KnowledgeTag{}).Clauses(clause.Locking{Strength: "SHARE"}).
+				Where("id IN ? AND tenant_id = ? AND knowledge_base_id = ?",
+					ids, after.TenantID, after.KnowledgeBaseID).
+				Pluck("id", &scoped).Error; err != nil {
+				return err
+			}
+			if len(scoped) != len(ids) {
+				return ErrKnowledgeInputChanged
+			}
+			repo := &knowledgeRepository{db: tx, displayAuthorityFactory: s.displayAuthorityFactory}
+			if err := repo.SetKnowledgeTags(WithKnowledgeBuildInputProof(ctx, s, proof), after.ID, ids); err != nil {
+				return err
+			}
 		}
-		if len(scoped) != len(ids) {
-			return ErrKnowledgeInputChanged
+		if attempt != nil {
+			attempt.store, attempt.sourceType, attempt.proof = s, sourceType, cloneKnowledgeInputProof(proof)
 		}
-		repo := &knowledgeRepository{db: tx, displayAuthorityFactory: s.displayAuthorityFactory}
-		return repo.SetKnowledgeTags(WithKnowledgeBuildInputProof(ctx, s, proof), after.ID, ids)
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -102,22 +115,27 @@ func (s *KnowledgeInputProvenanceStore) ReplaceKnowledgeWithInput(
 	return proof, nil
 }
 
-func checkOrdinaryReplacementSource(tx *gorm.DB, before, after *types.Knowledge) error {
+func registeredOrdinaryReplacementType(tx *gorm.DB, after *types.Knowledge) (string, error) {
 	meta := after.GetMetadata()
 	if meta["datasource_id"] == "" || meta["external_id"] == "" ||
 		after.Channel == types.ConnectorTypeNextcloud || after.Channel == types.ConnectorTypeDingTalk {
-		return ErrKnowledgeInputChanged
+		return "", ErrKnowledgeInputChanged
 	}
 	var source types.DataSource
 	if err := tx.Select("type").Clauses(clause.Locking{Strength: "SHARE"}).
 		Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?",
 			meta["datasource_id"], after.TenantID, after.KnowledgeBaseID).
 		Take(&source).Error; err != nil {
-		return err
+		return "", err
 	}
 	if source.Type == "" || source.Type == types.ConnectorTypeDingTalk || source.Type == types.ConnectorTypeNextcloud {
-		return ErrKnowledgeInputChanged
+		return "", ErrKnowledgeInputChanged
 	}
+	return source.Type, nil
+}
+
+func checkOrdinaryReplacementSource(tx *gorm.DB, before, after *types.Knowledge) error {
+	meta := after.GetMetadata()
 	var current types.Knowledge
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", before.ID, before.TenantID, before.KnowledgeBaseID).
@@ -125,7 +143,8 @@ func checkOrdinaryReplacementSource(tx *gorm.DB, before, after *types.Knowledge)
 		return err
 	}
 	stored := current.GetMetadata()
-	if current.Channel == types.ConnectorTypeDingTalk || stored["datasource_id"] != meta["datasource_id"] ||
+	if current.Channel != before.Channel || current.Channel == types.ConnectorTypeDingTalk ||
+		stored["datasource_id"] != meta["datasource_id"] ||
 		stored["external_id"] != meta["external_id"] {
 		return ErrKnowledgeInputChanged
 	}

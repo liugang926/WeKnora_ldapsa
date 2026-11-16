@@ -138,7 +138,8 @@ func TestFAQImportActualHTTPCurrentKeyAndKBReadWithdraw(t *testing.T) {
 					},
 				)
 			}
-			w = serveAuthenticatedFAQRead(ctx, t, db, h, "/faq/import/progress/"+task.TaskID)
+			readProgress := newAuthenticatedFAQProgressReader(ctx, t, db, h, "/faq/import/progress/"+task.TaskID)
+			w = readProgress()
 			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 			require.Contains(t, w.Body.String(), "current read protected question")
 			switch change {
@@ -173,7 +174,7 @@ func TestFAQImportActualHTTPCurrentKeyAndKBReadWithdraw(t *testing.T) {
 						Error,
 				)
 			}
-			w = serveAuthenticatedFAQRead(ctx, t, db, h, "/faq/import/progress/"+task.TaskID)
+			w = readProgress()
 			if change == "key-kb-scope" || change == "kb-policy" {
 				require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 			}
@@ -240,9 +241,13 @@ func TestFAQImportActualHTTPCurrentActorAndMissingLegacyReceiptReject(t *testing
 	var task types.FAQImportPayload
 	require.NoError(t, json.Unmarshal(queue.tasks[0].Payload(), &task))
 	require.NoError(t, h.knowledgeService.ProcessFAQImport(context.Background(), queue.tasks[0]))
+	readProgress := newAuthenticatedFAQProgressReader(ctx, t, db, h, "/faq/import/progress/"+task.TaskID)
+	w = readProgress()
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), "protected progress question")
 	require.NoError(t, db.Model(&types.User{}).Where("id='user'").Update("is_active", false).Error)
-	w = serveAuthenticatedFAQRead(ctx, t, db, h, "/faq/import/progress/"+task.TaskID)
-	require.NotEqual(t, http.StatusOK, w.Code, w.Body.String())
+	w = readProgress()
+	require.Equal(t, http.StatusUnauthorized, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), "protected progress question")
 	require.NoError(t, db.Model(&types.User{}).Where("id='user'").Update("is_active", true).Error)
 	// A current metadata object has no right to create its missing original

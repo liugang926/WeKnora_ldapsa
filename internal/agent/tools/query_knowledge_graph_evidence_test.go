@@ -483,7 +483,8 @@ func TestQueryKnowledgeGraph_ValidationFailuresExcludeGraphAndPreserveText(t *te
 				{ID: "text", KnowledgeID: "doc", KnowledgeBaseID: "kb-1", Content: "Text fallback"},
 			}
 			if documentService == nil {
-				result, err := tool.Execute(t.Context(), json.RawMessage(`{"knowledge_base_ids":["kb-1"],"query":"Acme"}`))
+				args := json.RawMessage(`{"knowledge_base_ids":["kb-1"],"query":"Acme"}`)
+				result, err := tool.Execute(t.Context(), args)
 				require.Error(t, err)
 				require.NotContains(t, fmt.Sprint(result), "Text fallback")
 				return

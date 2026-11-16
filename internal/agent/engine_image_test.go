@@ -101,7 +101,7 @@ func TestDescribeImages_WithDescriber(t *testing.T) {
 
 func TestDescribeImages_VLMFailure(t *testing.T) {
 	engine := &AgentEngine{
-		imageDescriber: func(ctx context.Context, imgBytes []byte, prompt string) (string, error) {
+		imageDescriber: func(context.Context, []byte, string) (string, error) {
 			return "", errors.New("VLM service unavailable")
 		},
 	}
@@ -118,7 +118,7 @@ func TestDescribeImages_VLMFailure(t *testing.T) {
 
 func TestDescribeImages_InvalidDataURI(t *testing.T) {
 	engine := &AgentEngine{
-		imageDescriber: func(ctx context.Context, imgBytes []byte, prompt string) (string, error) {
+		imageDescriber: func(context.Context, []byte, string) (string, error) {
 			t.Fatal("imageDescriber should not be called for invalid data URI")
 			return "", nil
 		},
@@ -134,7 +134,7 @@ func TestDescribeImages_InvalidDataURI(t *testing.T) {
 func TestDescribeImages_ContextCancelled(t *testing.T) {
 	var callCount atomic.Int32
 	engine := &AgentEngine{
-		imageDescriber: func(ctx context.Context, imgBytes []byte, prompt string) (string, error) {
+		imageDescriber: func(context.Context, []byte, string) (string, error) {
 			callCount.Add(1)
 			return "desc", nil
 		},
@@ -171,7 +171,7 @@ func TestDescribeImages_NilDescriber(t *testing.T) {
 
 func TestDescribeImages_MixedSuccessStaysAligned(t *testing.T) {
 	engine := &AgentEngine{
-		imageDescriber: func(ctx context.Context, imgBytes []byte, prompt string) (string, error) {
+		imageDescriber: func(_ context.Context, imgBytes []byte, _ string) (string, error) {
 			if string(imgBytes) == "2" {
 				return "", errors.New("fail on second")
 			}

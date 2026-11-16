@@ -4,15 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/datasource"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/hibiken/asynq"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -34,10 +34,12 @@ func (datasourceReplacementTenant) AdjustStorageUsed(context.Context, uint64, in
 }
 
 type datasourceReplacementQueue struct {
-	t      *testing.T
-	repo   interfaces.KnowledgeRepository
-	oldID  string
-	queued int
+	t       *testing.T
+	repo    interfaces.KnowledgeRepository
+	oldID   string
+	inputs  *repository.KnowledgeInputProvenanceStore
+	fetched []byte
+	queued  int
 }
 
 func (q *datasourceReplacementQueue) Enqueue(task *asynq.Task, _ ...asynq.Option) (*asynq.TaskInfo, error) {
@@ -50,32 +52,114 @@ func (q *datasourceReplacementQueue) Enqueue(task *asynq.Task, _ ...asynq.Option
 		require.NoError(q.t, err, "replacement must commit before a worker can start")
 		require.Equal(q.t, "ds-1", created.GetMetadata()["datasource_id"])
 		require.Equal(q.t, "doc-1", created.GetMetadata()["external_id"])
+		if created.Type == "file" {
+			require.NotNil(q.t, payload.OriginalInput)
+			request := types.KnowledgeBuildInputCaptureRequest{
+				TenantID: created.TenantID, KnowledgeBaseID: created.KnowledgeBaseID, KnowledgeID: created.ID,
+				Expected: payload.OriginalInput,
+			}
+			snapshot, err := q.inputs.CaptureKnowledgeBuildInputs(context.Background(), request)
+			require.NoError(q.t, err)
+			require.NoError(q.t, repository.KnowledgeInputArtifactMatches(snapshot.Proof, q.fetched))
+		}
 		q.queued++
 	}
 	return &asynq.TaskInfo{ID: "task-1", Queue: types.QueueDefault}, nil
 }
 
+type replacementFetchConnector struct {
+	conflictSkipConnector
+	item types.FetchedItem
+}
+
+func (c replacementFetchConnector) FetchAll(
+	context.Context, *types.DataSourceConfig, []string,
+) ([]types.FetchedItem, error) {
+	return []types.FetchedItem{c.item}, nil
+}
+
+type replacementSyncHarness struct {
+	*replaceFileHarness
+	source *types.DataSource
+	queue  *datasourceReplacementQueue
+}
+
+func (h *replacementSyncHarness) sync(t *testing.T, item *types.FetchedItem) (*types.SyncLog, error) {
+	t.Helper()
+	registry := datasource.NewConnectorRegistry()
+	require.NoError(t, registry.Register(replacementFetchConnector{item: *item}))
+	h.queue.fetched = item.Content
+	log := &types.SyncLog{
+		ID: "replace-sync", DataSourceID: h.source.ID, TenantID: h.source.TenantID,
+		Status: types.SyncLogStatusRunning, StartedAt: time.Now().UTC(),
+	}
+	logs := &processSyncSyncLogRepo{logs: map[string]*types.SyncLog{log.ID: log}}
+	svc := &DataSourceService{
+		dsRepo:      newKBDeleteDSRepo(h.source.KnowledgeBaseID, h.source),
+		syncLogRepo: logs, connectorRegistry: registry, knowledgeService: h.svc,
+		kbService: h.svc.kbService, tagService: &processSyncTagService{},
+		tenantRepo: &processSyncTenantRepo{tenant: h.ctx.Value(types.TenantInfoContextKey).(*types.Tenant)},
+	}
+	task := enrichmentTask(t, types.TypeDataSourceSync, types.DataSourceSyncPayload{
+		DataSourceID: h.source.ID, TenantID: h.source.TenantID, SyncLogID: log.ID,
+		ForceFull: true, Trigger: "manual", Initiator: types.TaskInitiatorFromContext(h.ctx),
+	})
+	err := svc.ProcessSync(context.Background(), task)
+	return logs.logs[log.ID], err
+}
+
 func datasourceReplacementFixture(t *testing.T) (
-	*replaceFileHarness, *gorm.DB, *datasourceReplacementChunks, *datasourceReplacementQueue,
+	*replacementSyncHarness, *gorm.DB, *datasourceReplacementChunks, *datasourceReplacementQueue,
 ) {
 	t.Helper()
 	h := newReplaceFileHarness(t)
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "datasource.db")), &gorm.Config{})
+	f := newEnrichmentTestFixture(t, false)
+	inputs, db := f.store, f.db
+	caller := types.CallerFromContext(f.ctx)
+	h.ctx = context.WithValue(f.ctx, types.UserIDContextKey, caller.UserID)
+	h.ctx = context.WithValue(h.ctx, types.TenantInfoContextKey, &types.Tenant{ID: caller.TenantID})
+	require.NotEmpty(t, types.TaskInitiatorFromContext(h.ctx).UserID)
+	h.svc.groupAccess = NewGroupAccessService(repository.NewGroupAccessRepository(db))
+	require.NoError(t, db.AutoMigrate(&types.DataSource{}))
+	cfg, err := (&types.DataSourceConfig{Type: conflictSkipConnectorType}).ToJSON()
 	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
-	require.NoError(t, db.AutoMigrate(&types.Knowledge{}, &types.KnowledgeTag{}, &types.KnowledgeTagRelation{}))
-	repo := repository.NewKnowledgeRepository(db)
+	ds := &types.DataSource{
+		ID: "ds-1", TenantID: 7, KnowledgeBaseID: "kb", Type: conflictSkipConnectorType,
+		Config: cfg, SyncMode: types.SyncModeFull, Status: types.DataSourceStatusActive,
+	}
+	require.NoError(t, db.Create(ds).Error)
+	h.original.KnowledgeBaseID, h.original.Channel = ds.KnowledgeBaseID, ds.Type
 	h.original.Metadata = types.JSON(`{"datasource_id":"ds-1","external_id":"doc-1"}`)
-	require.NoError(t, repo.CreateKnowledge(h.ctx, &h.original))
-	h.svc.repo = repo
+	_, err = inputs.CreateKnowledgeWithInput(
+		repository.WithIndependentKnowledgeInput(h.ctx), &h.original, []byte(replaceFileOldContent),
+	)
+	require.NoError(t, err)
+	h.svc.repo = repository.NewKnowledgeRepository(db)
+	var kb types.KnowledgeBase
+	require.NoError(t, db.First(&kb, "id = ?", ds.KnowledgeBaseID).Error)
+	h.svc.kbService = &processSyncKBService{kb: &kb}
+	h.svc.knowledgeInputs, h.svc.knowledgeInputWriter = inputs, inputs
 	chunks := &datasourceReplacementChunks{}
 	h.svc.chunkRepo = chunks
 	h.svc.tenantRepo = datasourceReplacementTenant{}
-	queue := &datasourceReplacementQueue{t: t, repo: repo, oldID: h.original.ID}
+	queue := &datasourceReplacementQueue{t: t, repo: h.svc.repo, oldID: h.original.ID, inputs: inputs}
 	h.svc.task = queue
-	return h, db, chunks, queue
+	return &replacementSyncHarness{h, ds, queue}, db, chunks, queue
+}
+
+func TestDataSourceReplacementRejectsUnfetchedItem(t *testing.T) {
+	h, _, chunks, queue := datasourceReplacementFixture(t)
+	svc := &DataSourceService{knowledgeService: h.svc}
+	_, err := svc.ingestItem(h.ctx, h.source, &types.FetchedItem{
+		ExternalID: "doc-1", Content: []byte("new content"), FileName: "doc.md",
+	}, nil)
+	require.ErrorIs(t, err, types.ErrSourceLineageUnknown)
+	require.Zero(t, queue.queued)
+	require.Zero(t, chunks.deleted)
+	require.Zero(t, h.store.saved)
+	require.Empty(t, h.store.deleted)
+	_, err = h.svc.repo.GetKnowledgeByID(h.ctx, 7, h.original.ID)
+	require.NoError(t, err)
 }
 
 func TestDataSourceReplacementPreservesOldResourcesOnFailure(t *testing.T) {
@@ -94,10 +178,25 @@ func TestDataSourceReplacementPreservesOldResourcesOnFailure(t *testing.T) {
 				require.NoError(t, db.Exec(`CREATE TRIGGER fail_replacement BEFORE INSERT ON knowledges
 					BEGIN SELECT RAISE(FAIL, 'forced insert failure'); END`).Error)
 			}
-			ds := &DataSourceService{knowledgeService: h.svc}
-			_, err := ds.ingestItem(h.ctx,
-				&types.DataSource{ID: "ds-1", TenantID: 7, KnowledgeBaseID: "kb-1"}, item, nil)
-			require.Error(t, err)
+			log, runErr := h.sync(t, item)
+			switch stage {
+			case "validation":
+				var result types.SyncResult
+				require.NoError(t, json.Unmarshal(log.Result, &result))
+				require.Len(t, result.Errors, 1)
+				require.Equal(t, "unsupported_file_type", result.Errors[0].Code)
+			case "storage":
+				require.ErrorIs(t, runErr, h.store.saveErr)
+			case "json", "insert":
+				var ingestErr *dataSourceIngestError
+				require.ErrorAs(t, runErr, &ingestErr)
+				if stage == "json" {
+					require.ErrorContains(t, ingestErr.Unwrap(), "JSON 文件内容无效")
+				} else {
+					require.ErrorContains(t, ingestErr.Unwrap(), "forced insert failure")
+				}
+			}
+			require.Equal(t, 1, log.ItemsFailed, log.ErrorMessage)
 			old, err := h.svc.repo.GetKnowledgeByID(h.ctx, 7, h.original.ID)
 			require.NoError(t, err)
 			require.Equal(t, h.original.FilePath, old.FilePath)
@@ -130,15 +229,13 @@ func TestDataSourceReplacementCommitsBeforeEnqueueAndCleanup(t *testing.T) {
 			case "file_url":
 				item.URL = "https://example.com/doc.md"
 			}
-			ds := &DataSourceService{knowledgeService: h.svc}
-			updated, err := ds.ingestItem(h.ctx,
-				&types.DataSource{ID: "ds-1", TenantID: 7, KnowledgeBaseID: "kb-1"}, item, nil)
+			log, err := h.sync(t, item)
 			require.NoError(t, err)
-			require.True(t, updated)
+			require.Equal(t, 1, log.ItemsUpdated, log.ErrorMessage)
 			require.Equal(t, 1, queue.queued)
 			require.Equal(t, 1, chunks.deleted)
 			require.Contains(t, h.store.deleted, h.original.FilePath)
-			created, err := h.svc.repo.FindByDataSourceExternalID(h.ctx, 7, "kb-1", "ds-1", "doc-1")
+			created, err := h.svc.repo.FindByDataSourceExternalID(h.ctx, 7, h.source.KnowledgeBaseID, "ds-1", "doc-1")
 			require.NoError(t, err)
 			require.NotNil(t, created)
 			require.Equal(t, kind, created.Type)
@@ -150,56 +247,61 @@ func TestDataSourceReplacementCommitsBeforeEnqueueAndCleanup(t *testing.T) {
 func TestDataSourceReplacementCleanupFailureKeepsCommittedReplacement(t *testing.T) {
 	h, db, chunks, queue := datasourceReplacementFixture(t)
 	chunks.err = errors.New("index cleanup unavailable")
-	ds := &DataSourceService{knowledgeService: h.svc}
-	_, err := ds.ingestItem(h.ctx, &types.DataSource{ID: "ds-1", TenantID: 7, KnowledgeBaseID: "kb-1"},
-		&types.FetchedItem{ExternalID: "doc-1", Content: []byte("new content"), FileName: "doc.md"}, nil)
+	_, err := h.sync(t, &types.FetchedItem{
+		ExternalID: "doc-1", Content: []byte("new content"), FileName: "doc.md",
+	})
 	require.NoError(t, err)
 	require.Equal(t, 1, queue.queued)
 	require.NotContains(t, h.store.deleted, h.original.FilePath)
 	var retired types.Knowledge
 	require.NoError(t, db.Unscoped().First(&retired, "id = ?", h.original.ID).Error)
 	require.True(t, retired.DeletedAt.Valid)
-	created, err := h.svc.repo.FindByDataSourceExternalID(h.ctx, 7, "kb-1", "ds-1", "doc-1")
+	created, err := h.svc.repo.FindByDataSourceExternalID(h.ctx, 7, h.source.KnowledgeBaseID, "ds-1", "doc-1")
 	require.NoError(t, err)
 	require.NotNil(t, created)
 }
 
-type uncertainReplacementRepo struct {
-	interfaces.KnowledgeRepository
+type uncertainReplacementInputs struct {
+	*repository.KnowledgeInputProvenanceStore
 	committed bool
-	failReads bool
+	ackErr    error
 }
 
-func (r *uncertainReplacementRepo) ReplaceKnowledge(
-	ctx context.Context, before, after *types.Knowledge, tags []string,
-) error {
-	if err := r.KnowledgeRepository.ReplaceKnowledge(ctx, before, after, tags); err != nil {
-		return err
+func (r *uncertainReplacementInputs) ReplaceKnowledgeWithInput(
+	ctx context.Context, before, after *types.Knowledge, tags []string, artifact any,
+) (*types.KnowledgeBuildInputProof, error) {
+	_, err := r.KnowledgeInputProvenanceStore.ReplaceKnowledgeWithInput(ctx, before, after, tags, artifact)
+	if err != nil {
+		return nil, err
 	}
 	r.committed = true
-	return errors.New("commit acknowledgement lost")
-}
-
-func (r *uncertainReplacementRepo) GetKnowledgeByID(
-	ctx context.Context, tenant uint64, id string,
-) (*types.Knowledge, error) {
-	if r.committed && r.failReads {
-		return nil, errors.New("database unavailable")
-	}
-	return r.KnowledgeRepository.GetKnowledgeByID(ctx, tenant, id)
+	return nil, r.ackErr
 }
 
 func TestDataSourceReplacementRetainsFileOnUncertainCommit(t *testing.T) {
 	for _, failReads := range []bool{false, true} {
 		t.Run(map[bool]string{false: "commit confirmed", true: "reads unavailable"}[failReads], func(t *testing.T) {
-			h, _, chunks, queue := datasourceReplacementFixture(t)
-			h.svc.repo = &uncertainReplacementRepo{KnowledgeRepository: h.svc.repo, failReads: failReads}
-			ds := &DataSourceService{knowledgeService: h.svc}
-			_, err := ds.ingestItem(h.ctx, &types.DataSource{ID: "ds-1", TenantID: 7, KnowledgeBaseID: "kb-1"},
-				&types.FetchedItem{ExternalID: "doc-1", Content: []byte("new content"), FileName: "doc.md"}, nil)
+			h, db, chunks, queue := datasourceReplacementFixture(t)
+			inputs := &uncertainReplacementInputs{
+				KnowledgeInputProvenanceStore: queue.inputs,
+				ackErr:                        errors.New("commit acknowledgement lost"),
+			}
+			h.svc.knowledgeInputWriter = inputs
+			if failReads {
+				err := db.Callback().Query().Before("gorm:query").Register("test:lost_reads", func(tx *gorm.DB) {
+					if inputs.committed {
+						_ = tx.AddError(errors.New("database unavailable"))
+					}
+				})
+				require.NoError(t, err)
+			}
+			_, err := h.sync(t, &types.FetchedItem{
+				ExternalID: "doc-1", Content: []byte("new content"), FileName: "doc.md",
+			})
+			require.True(t, inputs.committed)
 			require.NotContains(t, h.store.deleted, "new/file.md", "a committed row may reference this file")
 			if failReads {
-				require.ErrorContains(t, err, "commit acknowledgement lost")
+				require.ErrorIs(t, err, inputs.ackErr)
 				require.Zero(t, queue.queued)
 				require.Zero(t, chunks.deleted)
 			} else {

@@ -398,9 +398,9 @@ func (t *QueryKnowledgeGraphTool) Execute(ctx context.Context, args json.RawMess
 				if row == nil || row.KnowledgeID == "" || (row.KnowledgeBaseID != "" && row.KnowledgeBaseID != id) {
 					continue
 				}
-				copy := *row
-				copy.KnowledgeBaseID = id
-				scopedText = append(scopedText, &copy)
+				scopedRow := *row
+				scopedRow.KnowledgeBaseID = id
+				scopedText = append(scopedText, &scopedRow)
 			}
 			textResults = scopedText
 			if t.scopeEnforced {
@@ -662,7 +662,8 @@ func (t *QueryKnowledgeGraphTool) Execute(ctx context.Context, args json.RawMess
 		"display_type":       "graph_query_results",
 	}
 	truncation.addToData(data)
-	if err := t.finishGraphRead(ctx, readTargets, guard, append(slices.Clone(allResults), relationEvidence...)); err != nil {
+	evidence := append(slices.Clone(allResults), relationEvidence...)
+	if err := t.finishGraphRead(ctx, readTargets, guard, evidence); err != nil {
 		return &types.ToolResult{Success: false, Error: apperrors.PublicMessage(err)}, err
 	}
 
@@ -938,7 +939,9 @@ func (t *QueryKnowledgeGraphTool) graphEvidenceResults(
 
 // knowledgeTitles returns the titles of the knowledge IDs that still exist.
 // Missing document services fail closed rather than accepting unchecked chunks.
-func (t *QueryKnowledgeGraphTool) graphDocuments(ctx context.Context, ids []string) (map[string]*types.Knowledge, error) {
+func (t *QueryKnowledgeGraphTool) graphDocuments(
+	ctx context.Context, ids []string,
+) (map[string]*types.Knowledge, error) {
 	titles := make(map[string]*types.Knowledge, len(ids))
 	ids = dedupNonEmptyStrings(ids)
 	if len(ids) == 0 {

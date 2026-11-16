@@ -154,7 +154,8 @@ func (t *SearchKnowledgeTool) hydrateActualSearchInputs(
 		// Parser-owned metadata and image references may be rendered in WeKnora ACL
 		// mode after the exact source row has been loaded. Never forward an index
 		// row's MatchedImages, CitationSources, or provider-supplied URLs.
-		if turn := types.RAGSourceLineageFromContext(ctx); !turn.RequiresCompleteProducerLineage() && access.UseWeKnoraReadAuthority() {
+		turn := types.RAGSourceLineageFromContext(ctx)
+		if !turn.RequiresCompleteProducerLineage() && access.UseWeKnoraReadAuthority() {
 			actual.ParentChunkID = c.ParentChunkID
 			actual.ChunkMetadata = c.Metadata
 			actual.ImageInfo = c.ImageInfo

@@ -127,7 +127,11 @@ func performKnowledgeSearch(t *testing.T, svc *stubSearchSessionService, body st
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(middleware.ErrorHandler())
-	h := &Handler{sessionService: svc, fileService: &stubResourceFileService{}}
+	h := &Handler{
+		sessionService:         svc,
+		searchKnowledgeService: &stubSearchKnowledgeService{},
+		fileService:            &stubResourceFileService{},
+	}
 	r.POST("/knowledge-search", h.SearchKnowledge)
 	req := httptest.NewRequest(http.MethodPost, "/knowledge-search", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")

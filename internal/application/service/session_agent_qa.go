@@ -100,7 +100,10 @@ func (s *sessionService) AgentQA(
 		}
 	}
 	receipt, _ := ctx.Value(agentImageUploadKey{}).(*AgentImageUploadReceipt)
-	if len(req.ImageURLs) > 0 && (req.Resume != nil || req.UserMessageID == "" || !receipt.Matches(ctx, req.Session, req.ImageURLs)) ||
+	if len(req.ImageURLs) > 0 &&
+		(req.Resume != nil ||
+			req.UserMessageID == "" ||
+			!receipt.Matches(ctx, req.Session, req.ImageURLs)) ||
 		req.ImageDescription != "" || req.QuotedContext != "" || len(req.Attachments) > 0 {
 		return access.ErrNextcloudPublicationDenied
 	}
@@ -253,7 +256,10 @@ func (s *sessionService) AgentQA(
 					req.CustomAgent.ID)
 			}
 		} else if rerankModelID == "" {
-			logger.Warnf(ctx, "No rerank model configured for custom agent %s, but knowledge_search tool is enabled", req.CustomAgent.ID)
+			logger.Warnf(ctx,
+				"No rerank model configured for custom agent %s, but knowledge_search tool is enabled",
+				req.CustomAgent.ID,
+			)
 			return errors.New("rerank model is not configured: please set rerank_model_id on the agent")
 		}
 

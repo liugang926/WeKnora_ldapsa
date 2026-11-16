@@ -95,7 +95,6 @@ type AutomationService struct {
 	running map[string]context.CancelFunc
 }
 
-// NewAutomationService builds the service. Bind it before Start.
 // NewAuthorizedAutomationService applies the workspace group policy to scheduled runs.
 func NewAuthorizedAutomationService(
 	db *gorm.DB,
@@ -114,6 +113,7 @@ func NewAuthorizedAutomationService(
 	return s
 }
 
+// NewAutomationService builds the service. Bind it before Start.
 func NewAutomationService(
 	db *gorm.DB,
 	agents interfaces.CustomAgentService,
@@ -410,7 +410,11 @@ func (s *AutomationService) runnableAssistant(ctx context.Context) (*types.Custo
 		return nil, errors.New("the WeKnora assistant is unavailable in this workspace")
 	}
 	if s.groups != nil {
-		if err := s.groups.Authorize(ctx, types.CallerFromContext(ctx).TenantID, types.GroupResourceTypeAgent, assistant.ID, types.ResourceActionUse); err != nil {
+		if err := s.groups.Authorize(
+			ctx, types.CallerFromContext(ctx).TenantID,
+			types.GroupResourceTypeAgent,
+			assistant.ID, types.ResourceActionUse,
+		); err != nil {
 			return nil, err
 		}
 	}

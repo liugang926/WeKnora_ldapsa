@@ -213,7 +213,9 @@ type evaluationSelectionKB struct {
 	created *types.KnowledgeBase
 }
 
-func (k *evaluationSelectionKB) CreateKnowledgeBase(_ context.Context, kb *types.KnowledgeBase) (*types.KnowledgeBase, error) {
+func (k *evaluationSelectionKB) CreateKnowledgeBase(
+	_ context.Context, kb *types.KnowledgeBase,
+) (*types.KnowledgeBase, error) {
 	k.created = kb
 	return nil, errors.New("captured evaluation configuration")
 }

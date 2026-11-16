@@ -23,12 +23,21 @@ func newSuspendedRunFixture(t *testing.T) (*SuspendedRunService, *hitl.Broker, *
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	require.NoError(t, db.AutoMigrate(&types.Session{}, &types.Message{}, &types.MessageArtifactRecord{}, &types.AgentPrompt{}, &types.AgentRunSuspension{}))
-	broker := hitl.NewBroker(repository.NewAgentPromptRepository(db), nil, hitl.WithSuspensionStore(repository.NewAgentRunSuspensionRepository(db)))
+	require.NoError(t, db.AutoMigrate(
+		&types.Session{}, &types.Message{}, &types.MessageArtifactRecord{},
+		&types.AgentPrompt{}, &types.AgentRunSuspension{},
+	))
+	broker := hitl.NewBroker(
+		repository.NewAgentPromptRepository(db), nil,
+		hitl.WithSuspensionStore(repository.NewAgentRunSuspensionRepository(db)),
+	)
 	runs := NewSuspendedRunService(broker, repository.NewMessageRepository(db))
 	runs.db = db
 	runs.durableBroker = true
-	runs.authorize = func(ctx context.Context, _ *types.Session, _ *types.AgentPrompt, _ *types.Message, _ *agent.RunSnapshot) (context.Context, error) {
+	runs.authorize = func(
+		ctx context.Context, _ *types.Session, _ *types.AgentPrompt,
+		_ *types.Message, _ *agent.RunSnapshot,
+	) (context.Context, error) {
 		return ctx, nil
 	}
 	return runs, broker, db
@@ -41,7 +50,11 @@ func seedSuspendedRun(
 ) string {
 	t.Helper()
 	ctx := context.Background()
-	require.NoError(t, db.Session(&gorm.Session{SkipHooks: true}).FirstOrCreate(&types.Session{ID: sessionID, TenantID: 1, UserID: "u"}, "id = ?", sessionID).Error)
+	require.NoError(t, db.Session(&gorm.Session{SkipHooks: true}).
+		FirstOrCreate(
+			&types.Session{
+				ID: sessionID, TenantID: 1, UserID: "u",
+			}, "id = ?", sessionID).Error)
 	snap := agent.RunSnapshot{
 		WeKnoraACL: true, SourceLineage: sourceIndependentPromptLineage(),
 		Version:        agent.RunSnapshotVersion,
@@ -67,8 +80,10 @@ func seedSuspendedRun(
 	require.NoError(t, db.Create(msg).Error)
 	messageID := msg.ID
 	require.NoError(t, broker.Store().Create(ctx, &types.AgentPrompt{
-		ID: promptID, UserID: automationGrantUser("u"), TenantID: 1, SessionID: sessionID, AssistantMessageID: messageID,
-		Kind: types.AgentPromptKindToolApproval, ToolCallID: "call-b",
+		ID: promptID, UserID: automationGrantUser("u"),
+		TenantID: 1, SessionID: sessionID,
+		AssistantMessageID: messageID,
+		Kind:               types.AgentPromptKindToolApproval, ToolCallID: "call-b",
 		Status: types.AgentPromptSuspended, Suspendable: true, ExpiresAt: expires,
 	}))
 	require.NoError(t, broker.Suspensions().Save(ctx, &types.AgentRunSuspension{
@@ -151,6 +166,7 @@ func TestSuspendedRunDoesNotPublishMaterialAfterOwnerChange(t *testing.T) {
 	require.Empty(t, msg.AgentSteps)
 	require.Empty(t, msg.KnowledgeReferences)
 }
+
 func TestSuspendedRunRejectsSubstitutedSnapshot(t *testing.T) {
 	ctx := context.Background()
 	runs, broker, db := newSuspendedRunFixture(t)

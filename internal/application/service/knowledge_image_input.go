@@ -34,7 +34,10 @@ func imageProducerControls(p types.ImageMultimodalPayload) any {
 		Actions        types.ImageActionsConfig
 		SourceLocators types.SourceLocators
 		Vector         *bool
-	}{legacy, p.ImagePipelineID, p.ImagePipelineParams, p.ImageAttrsEnabled, p.ImageActions, p.SourceLocators, p.ImageVectorEnabled}
+	}{
+		legacy, p.ImagePipelineID, p.ImagePipelineParams,
+		p.ImageAttrsEnabled, p.ImageActions, p.SourceLocators, p.ImageVectorEnabled,
+	}
 }
 
 func hasImagePipelineControls(p types.ImageMultimodalPayload) bool {

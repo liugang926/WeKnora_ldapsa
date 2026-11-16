@@ -3,8 +3,9 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"slices"
+
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 
 	"github.com/Tencent/WeKnora/internal/application/readlease"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -142,7 +143,10 @@ func (s *knowledgeBaseService) processSearchResults(ctx context.Context,
 				continue
 			}
 			p := chunkMap[child.ParentChunkID]
-			if p != nil && p.KnowledgeID == child.KnowledgeID && p.KnowledgeBaseID == child.KnowledgeBaseID && p.TenantID == child.TenantID {
+			if p != nil &&
+				p.KnowledgeID == child.KnowledgeID &&
+				p.KnowledgeBaseID == child.KnowledgeBaseID &&
+				p.TenantID == child.TenantID {
 				byKnowledge[p.KnowledgeID] = append(byKnowledge[p.KnowledgeID], child.ID)
 			}
 		}
@@ -156,11 +160,17 @@ func (s *knowledgeBaseService) processSearchResults(ctx context.Context,
 		var verified []*types.Chunk
 		for _, child := range rows {
 			p := chunkMap[child.ParentChunkID]
-			if !requested[child.ParentChunkID] || p == nil || p.KnowledgeID != child.KnowledgeID || p.KnowledgeBaseID != child.KnowledgeBaseID || p.TenantID != child.TenantID {
+			if !requested[child.ParentChunkID] ||
+				p == nil ||
+				p.KnowledgeID != child.KnowledgeID ||
+				p.KnowledgeBaseID != child.KnowledgeBaseID ||
+				p.TenantID != child.TenantID {
 				continue
 			}
 			chunkMap[child.ID] = child
-			receiptByKnowledge[child.KnowledgeID], err = types.UnionSourceLineage(receiptByKnowledge[child.KnowledgeID], childLineages[child.ID])
+			receiptByKnowledge[child.KnowledgeID], err = types.UnionSourceLineage(
+				receiptByKnowledge[child.KnowledgeID], childLineages[child.ID],
+			)
 			if err != nil && s.ragChunkSnapshots != nil {
 				return nil, err
 			}

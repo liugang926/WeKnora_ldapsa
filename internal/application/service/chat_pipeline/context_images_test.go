@@ -68,7 +68,10 @@ func capturedContextImageKB(t *testing.T, cm *types.ChatManage) *verifiedImageKB
 	data, err := base.ReadChunkImage(t.Context(), r)
 	require.NoError(t, err)
 	base.reads = nil
-	info, _ := json.Marshal([]types.ImageInfo{{URL: "resource://chart", SHA256: fmt.Sprintf("%x", sha256.Sum256(data))}})
+	info, _ := json.Marshal([]types.ImageInfo{{
+		URL:    "resource://chart",
+		SHA256: fmt.Sprintf("%x", sha256.Sum256(data)),
+	}})
 	row := &types.Chunk{
 		ID: r.ID, KnowledgeID: r.KnowledgeID, KnowledgeBaseID: r.KnowledgeBaseID,
 		ImageInfo: string(info), IsEnabled: true,

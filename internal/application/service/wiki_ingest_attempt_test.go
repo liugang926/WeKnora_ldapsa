@@ -50,7 +50,10 @@ func TestFinalizeWikiSubtaskSkipsSupersededAttempt(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, _, f := newWikiEnqueueTestService(t, "k-1", &wikiEnqueueFailurePendingRepo{}, &wikiEnqueueFailureTaskQueue{}, true)
+			_, _, f := newWikiEnqueueTestService(
+				t, "k-1", &wikiEnqueueFailurePendingRepo{},
+				&wikiEnqueueFailureTaskQueue{}, true,
+			)
 			svc := &wikiIngestService{knowledgeRepo: f.s.repo, knowledgeSvc: f.s, spanTracker: newAttemptTracker(2)}
 			const initialSlots = 2
 			changed, err := f.s.repo.SetFinalizing(f.build, f.k.ID, initialSlots)

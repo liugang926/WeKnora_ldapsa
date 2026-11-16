@@ -124,7 +124,9 @@ func (r *sessionRepository) GetIMPlatform(
 }
 
 // GetByTenantID retrieves normal sessions for a tenant
-func (r *sessionRepository) GetByTenantID(ctx context.Context, tenantID uint64, userID string) ([]*types.Session, error) {
+func (r *sessionRepository) GetByTenantID(
+	ctx context.Context, tenantID uint64, userID string,
+) ([]*types.Session, error) {
 	var sessions []*types.Session
 	err := applySessionUserScope(
 		r.db.WithContext(ctx).Where("tenant_id = ? AND kind = ''", tenantID),

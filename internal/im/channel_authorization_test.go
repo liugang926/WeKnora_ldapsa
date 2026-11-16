@@ -142,7 +142,9 @@ func TestIMSearchUsesExactChannelScopeIncludingShares(t *testing.T) {
 }
 
 func TestIMSearchRechecksAccessBeforePublishing(t *testing.T) {
-	capture := &imSearchCapture{results: []*types.SearchResult{{KnowledgeBaseID: "own", Content: "ordinary search result"}}}
+	capture := &imSearchCapture{results: []*types.SearchResult{
+		{KnowledgeBaseID: "own", Content: "ordinary search result"},
+	}}
 	command := newSearchCommand(capture, nil)
 	base := withIMIdentity(context.Background(), &IMChannel{TenantID: 42, ID: "channel"},
 		&IncomingMessage{Platform: PlatformDingtalk, UserID: "sender"})

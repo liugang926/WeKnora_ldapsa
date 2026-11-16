@@ -555,15 +555,6 @@ func (r *runContext) think(ctx context.Context, prompt, key string) (string, err
 	return reply, err
 }
 
-func (r *runContext) fieldByKey(key string) (types.ImageFieldDef, bool) {
-	for _, field := range r.declared {
-		if field.Key == key {
-			return field, true
-		}
-	}
-	return types.ImageFieldDef{}, false
-}
-
 // execute runs one action by id.
 //
 // An action this build does not implement is a programming error, not a state a
@@ -893,7 +884,10 @@ func runOCRAction(ctx context.Context, r *runContext) error {
 		r.out[keyOCRPrompt] = "vector_pdf"
 	}
 	if r.vlmCfg.EnableImageClassification {
-		reply, err := r.think(types.WithLLMCallMetadata(ctx, "image_classification", ""), vlmImageClassifyPrompt, r.ocrThinkingKey)
+		reply, err := r.think(
+			types.WithLLMCallMetadata(ctx, "image_classification", ""),
+			vlmImageClassifyPrompt, r.ocrThinkingKey,
+		)
 		if err != nil {
 			if checkErr := requireActualKnowledgeBuildInput(ctx); checkErr != nil {
 				return checkErr

@@ -158,6 +158,7 @@ type graphScopeKnowledgeService struct {
 func (*graphScopeKnowledgeService) GetKnowledgeByIDOnly(_ context.Context, id string) (*types.Knowledge, error) {
 	return &types.Knowledge{ID: id, Title: id, KnowledgeBaseID: "kb-1"}, nil
 }
+
 func (*graphScopeKnowledgeService) GetKnowledgeBatchWithSharedAccess(
 	_ context.Context, _ uint64, ids []string,
 ) ([]*types.Knowledge, error) {

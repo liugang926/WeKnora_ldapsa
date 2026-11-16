@@ -170,7 +170,8 @@ func TestCheckAndFinalizeAllImagesReturnsEnqueueErrorAndKeepsCounter(t *testing.
 	svc.taskEnqueuer = enqueuer
 	retry := types.WithTaskRetryMetadata(context.Background(), 1, 3)
 	require.NoError(t, svc.Handle(retry, imageMultimodalTask(t, liteImagePayload(knowledgeID, 1))))
-	assert.Len(t, postProcessPayloads(t, enqueuer.enqueued), 1, "the retry hands off without running the image model again")
+	assert.Len(t, postProcessPayloads(t, enqueuer.enqueued), 1,
+		"the retry hands off without running the image model again")
 	_, ok = liteCounter(knowledgeID)
 	assert.False(t, ok)
 }

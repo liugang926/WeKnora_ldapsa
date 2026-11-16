@@ -466,7 +466,8 @@ func runAutoCompletionPublicationOutage(t *testing.T, pg bool) {
 					break
 				}
 			}
-			require.Error(t, lastErr, "actual signed publication transport returns HTTP503 after completion commits")
+			require.ErrorIs(t, lastErr, repository.ErrSubtaskSlotReleased)
+			require.ErrorContains(t, lastErr, "503", "the worker must report the signed publication failure")
 			require.NoError(t, m.f.db.Where("id=?", row.ID).Take(row).Error)
 			require.Equal(t, types.ParseStatusCompleted, row.ParseStatus)
 			require.Empty(

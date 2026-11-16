@@ -347,15 +347,23 @@ func TestResourceCatalogReuseByContentHashSkipsTemporaryResources(t *testing.T) 
 func TestResourceCatalogContentReuseRequiresOrdinarySourceOnBothSides(t *testing.T) {
 	catalog, _ := newResourceCatalogForTest(t)
 	ctx := context.Background()
-	for _, provenance := range []string{types.ResourceProvenanceOrdinary, types.ResourceProvenanceNextcloud, types.ResourceProvenanceUnknown} {
+	for _, provenance := range []string{
+		types.ResourceProvenanceOrdinary, types.ResourceProvenanceNextcloud,
+		types.ResourceProvenanceUnknown,
+	} {
 		_, err := catalog.Register(ctx, 7, "local://7/"+provenance+".png", interfaces.ResourceRegistration{
 			Kind: "image", ContentHash: provenance, SourceProvenance: provenance,
 		})
 		require.NoError(t, err)
-		for _, caller := range []string{types.ResourceProvenanceOrdinary, types.ResourceProvenanceNextcloud, types.ResourceProvenanceUnknown} {
+		for _, caller := range []string{
+			types.ResourceProvenanceOrdinary, types.ResourceProvenanceNextcloud,
+			types.ResourceProvenanceUnknown,
+		} {
 			_, reused, err := catalog.ReuseByContentHash(types.WithResourceProvenance(ctx, caller), 7, provenance)
 			require.NoError(t, err)
-			require.Equal(t, caller == types.ResourceProvenanceOrdinary && provenance == types.ResourceProvenanceOrdinary, reused)
+			require.Equal(t,
+				caller == types.ResourceProvenanceOrdinary &&
+					provenance == types.ResourceProvenanceOrdinary, reused)
 		}
 	}
 }
@@ -363,7 +371,9 @@ func TestResourceCatalogContentReuseRequiresOrdinarySourceOnBothSides(t *testing
 func TestImageReuseRemainsOnSelectedStorageBackend(t *testing.T) {
 	catalog, _ := newResourceCatalogForTest(t)
 	ctx := context.Background()
-	ref, err := catalog.Register(ctx, 7, "storage://a/local://7/image.png", interfaces.ResourceRegistration{ContentHash: "hash"})
+	ref, err := catalog.Register(
+		ctx, 7, "storage://a/local://7/image.png",
+		interfaces.ResourceRegistration{ContentHash: "hash"})
 	require.NoError(t, err)
 	c := catalog.(*resourceCatalog)
 	for _, id := range []string{"a", "b", ""} {

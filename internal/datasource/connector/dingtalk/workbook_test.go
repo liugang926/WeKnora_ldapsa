@@ -35,10 +35,12 @@ func TestWorkbookSyncReadsCellsAndRetriesFailedRevision(t *testing.T) {
 				`"extension":"axls","modifiedTimestamp":2},` +
 				`{"nodeId":"ai","type":"FILE","category":"ALIDOC","extension":"able"}]}`
 		case sheets:
-			data = `{"value":[{"id":"s1","name":"预算"},{"id":"s2","name":"进度"},{"id":"s3","name":"明细3"},{"id":"s4","name":"明细4"},{"id":"s5","name":"明细5"},{"id":"s6","name":"明细6"}]}`
+			data = `{"value":[{"id":"s1","name":"预算"},{"id":"s2","name":"进度"},{"id":"s3","name":"明细3"},` +
+				`{"id":"s4","name":"明细4"},{"id":"s5","name":"明细5"},{"id":"s6","name":"明细6"}]}`
 		case sheets + "/s1", sheets + "/s2", sheets + "/s3", sheets + "/s4", sheets + "/s5", sheets + "/s6":
 			data = `{"lastNonEmptyRow":0,"lastNonEmptyColumn":1}`
-		case sheets + "/s3/ranges/A1:B1", sheets + "/s4/ranges/A1:B1", sheets + "/s5/ranges/A1:B1", sheets + "/s6/ranges/A1:B1":
+		case sheets + "/s3/ranges/A1:B1", sheets + "/s4/ranges/A1:B1",
+			sheets + "/s5/ranges/A1:B1", sheets + "/s6/ranges/A1:B1":
 			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, sheets+"/s"), "/ranges/A1:B1")
 			data = fmt.Sprintf(`{"displayValues":[["明细%s","值%s"]]}`, id, id)
 		case sheets + "/s1/ranges/A1:B1":

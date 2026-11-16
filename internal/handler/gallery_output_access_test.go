@@ -22,7 +22,9 @@ type galleryAfterRead struct {
 	after func()
 }
 
-func (s *galleryAfterRead) ListImagesByKnowledgeBaseID(ctx context.Context, kb string, p *types.Pagination, f *types.ImageListFilter) (*types.PageResult, error) {
+func (s *galleryAfterRead) ListImagesByKnowledgeBaseID(
+	ctx context.Context, kb string, p *types.Pagination, f *types.ImageListFilter,
+) (*types.PageResult, error) {
 	page, err := s.ChunkService.ListImagesByKnowledgeBaseID(ctx, kb, p, f)
 	if err == nil && s.after != nil {
 		s.after()
@@ -43,9 +45,14 @@ func TestGalleryGETAndPOSTRecheckWorkspaceAccessAtWrite(t *testing.T) {
 	// Existing workspace-owned rows predate original-input receipts.
 	doc := &types.Knowledge{ID: "doc", TenantID: 1, KnowledgeBaseID: "kb-1", Title: "source title"}
 	require.NoError(t, db.Create(doc).Error)
-	chunk := &types.Chunk{ID: "image", TenantID: 1, KnowledgeBaseID: "kb-1", KnowledgeID: "doc", ImageInfo: `[{"url":"gallery-url","ocr_text":"gallery-ocr"}]`}
+	chunk := &types.Chunk{
+		ID: "image", TenantID: 1, KnowledgeBaseID: "kb-1", KnowledgeID: "doc",
+		ImageInfo: `[{"url":"gallery-url","ocr_text":"gallery-ocr"}]`,
+	}
 	require.NoError(t, db.Create(chunk).Error)
-	chunks := &galleryAfterRead{ChunkService: service.NewChunkService(repository.NewChunkRepository(db), repository.NewKnowledgeRepository(db), nil, nil, nil, nil, nil, nil)}
+	chunks := &galleryAfterRead{ChunkService: service.NewChunkService(
+		repository.NewChunkRepository(db), repository.NewKnowledgeRepository(db), nil, nil, nil, nil, nil, nil,
+	)}
 	groups := &dataSourceGroupAccessStub{allowed: true}
 	h := &KnowledgeHandler{kbService: &galleryTestKBService{}, chunkService: chunks, groupAccess: groups}
 	router := gin.New()

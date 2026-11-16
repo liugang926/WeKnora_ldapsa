@@ -1971,7 +1971,8 @@ func (s *Service) executeQARequest(req *qaRequest) {
 	// sessionID + messageID needed to poll StreamManager).
 
 	if scope, ok := types.IMChannelScopeFromContext(ctx); ok {
-		if err := scope.Check(ctx, scope.TenantID, types.GroupResourceTypeAgent, scope.AgentID, types.ResourceActionUse); err != nil {
+		if err := scope.Check(ctx, scope.TenantID,
+			types.GroupResourceTypeAgent, scope.AgentID, types.ResourceActionUse); err != nil {
 			logger.Warnf(ctx, "[IM] Queued request no longer has channel access: %v", err)
 			return
 		}
@@ -2233,7 +2234,9 @@ func (s *Service) handleCommand(
 }
 
 // sendStreamReply sends a complete content string via the streaming interface.
-func (s *Service) sendStreamReply(ctx context.Context, msg *IncomingMessage, streamer StreamSender, result *CommandResult) error {
+func (s *Service) sendStreamReply(
+	ctx context.Context, msg *IncomingMessage, streamer StreamSender, result *CommandResult,
+) error {
 	streamID, err := streamer.StartStream(ctx, msg)
 	if err != nil {
 		return fmt.Errorf("start stream: %w", err)

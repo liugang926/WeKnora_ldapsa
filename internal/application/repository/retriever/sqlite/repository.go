@@ -4,19 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	apprepo "github.com/Tencent/WeKnora/internal/application/repository"
-	"github.com/google/uuid"
 	"strings"
 	"sync"
 	"time"
 	"unicode"
 
+	apprepo "github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/common"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -91,7 +91,8 @@ func NewSQLiteRetrieveEngineRepository(db *gorm.DB) interfaces.RetrieveEngineRep
 func enableImageChunkIndexes(db *gorm.DB) {
 	var protected string
 	if db.Migrator().HasTable("knowledges") {
-		protected = " AND NOT EXISTS (SELECT 1 FROM knowledges k WHERE k.id=lite_embeddings.knowledge_id AND k.channel IN ('nextcloud','dingtalk'))"
+		protected = " AND NOT EXISTS (SELECT 1 FROM knowledges k WHERE" +
+			" k.id=lite_embeddings.knowledge_id AND k.channel IN ('nextcloud','dingtalk'))"
 	}
 	result := db.Exec(`UPDATE lite_embeddings SET is_enabled = 1
 		WHERE is_enabled = 0 AND chunk_id IN (
@@ -316,7 +317,9 @@ func (r *sqliteRepository) Save(ctx context.Context, indexInfo *types.IndexInfo,
 // content to win; ON CONFLICT DO NOTHING kept the stale row instead, and the
 // skipped rows also shifted the RETURNING ids GORM assigns back to the slice,
 // attaching vectors and FTS entries to the wrong rows.
-func (r *sqliteRepository) BatchSave(ctx context.Context, indexInfoList []*types.IndexInfo, params map[string]any) error {
+func (r *sqliteRepository) BatchSave(
+	ctx context.Context, indexInfoList []*types.IndexInfo, params map[string]any,
+) error {
 	if r.initErr != nil {
 		return r.initErr
 	}
@@ -474,7 +477,9 @@ func (r *sqliteRepository) BatchUpdateChunkTagID(ctx context.Context, tags map[s
 	return updateSQLiteChunkColumn(ctx, r, "tag_id", tags)
 }
 
-func updateSQLiteChunkColumn[T bool | string](ctx context.Context, r *sqliteRepository, column string, values map[string]T) error {
+func updateSQLiteChunkColumn[T bool | string](
+	ctx context.Context, r *sqliteRepository, column string, values map[string]T,
+) error {
 	if r.initErr != nil {
 		return r.initErr
 	}
@@ -612,7 +617,9 @@ func (r *sqliteRepository) keywordsRetrieve(
 	}}, nil
 }
 
-func (r *sqliteRepository) vectorRetrieve(ctx context.Context, params types.RetrieveParams) ([]*types.RetrieveResult, error) {
+func (r *sqliteRepository) vectorRetrieve(
+	ctx context.Context, params types.RetrieveParams,
+) ([]*types.RetrieveResult, error) {
 	if len(params.Embedding) == 0 {
 		return nil, nil
 	}

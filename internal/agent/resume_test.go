@@ -221,7 +221,9 @@ func TestResumeChecksSnapshotBeforeAnyToolRuns(t *testing.T) {
 			if tc.legacy {
 				snap.SourceLineage = nil
 			} else {
-				f.engine.SetSourceLineageVerifier(func(context.Context, *types.SourceLineage) error { return types.ErrSourceLineageUnknown })
+				f.engine.SetSourceLineageVerifier(func(context.Context, *types.SourceLineage) error {
+					return types.ErrSourceLineageUnknown
+				})
 			}
 			data, err := json.Marshal(snap)
 			require.NoError(t, err)

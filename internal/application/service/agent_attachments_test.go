@@ -186,7 +186,11 @@ func TestSentAttachmentRemainsReadableAfterExpiryAndFork(t *testing.T) {
 	removed, err := repo.GetByID(context.Background(), 7, unused.ID)
 	require.NoError(t, err)
 	require.Nil(t, removed, "unused uploads must still expire")
-	store := &agentSessionAttachments{messages: messages, sessions: repository.NewSessionRepository(db), documents: repo, tenantID: 7, sessionID: fork.ID}
+	store := &agentSessionAttachments{
+		messages:  messages,
+		sessions:  repository.NewSessionRepository(db),
+		documents: repo, tenantID: 7, sessionID: fork.ID,
+	}
 	reader := tools.NewReadFileTool(nil).WithAttachments(attachment.NewReader(store, 0, nil))
 	args, err := json.Marshal(tools.ReadFileInput{Path: types.AttachmentPath(document.ID)})
 	require.NoError(t, err)
@@ -367,7 +371,9 @@ func TestRegisterAttachmentReaderFollowsSessionAttachments(t *testing.T) {
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
 	ctx = context.WithValue(ctx, types.UserIDContextKey, "owner")
 	require.NoError(t, db.AutoMigrate(&types.Session{}))
-	require.NoError(t, db.Session(&gorm.Session{SkipHooks: true}).Create(&types.Session{ID: "session-1", TenantID: 7, UserID: "owner"}).Error)
+	require.NoError(t, db.Session(&gorm.Session{SkipHooks: true}).
+		Create(
+			&types.Session{ID: "session-1", TenantID: 7, UserID: "owner"}).Error)
 	config := &types.AgentConfig{}
 
 	empty := tools.NewToolRegistry()

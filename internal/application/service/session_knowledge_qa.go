@@ -1152,7 +1152,8 @@ func (s *sessionService) SearchKnowledge(ctx context.Context,
 	opts *types.KnowledgeSearchOptions,
 ) (*types.RetrievalResult, error) {
 	logger.Info(ctx, "Start knowledge base search without LLM summary")
-	logger.Infof(ctx, "Knowledge base search parameters, knowledge base IDs: %v, knowledge IDs: %v, tag scopes: %d, query: %s",
+	logger.Infof(ctx,
+		"Knowledge base search parameters, knowledge base IDs: %v, knowledge IDs: %v, tag scopes: %d, query: %s",
 		knowledgeBaseIDs, knowledgeIDs, len(tagScopes), query)
 	if opts == nil {
 		opts = &types.KnowledgeSearchOptions{}

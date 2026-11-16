@@ -12,15 +12,19 @@ import (
 
 // imageGalleryScope restricts the projection before duplicate selection,
 // filtering and counting. Only distinct original dependency sets leave SQL.
-func (r *chunkRepository) imageGalleryScope(ctx context.Context, tenant uint64, kb string, q *types.ImageAssetQuery) (string, []any, error) {
+func (r *chunkRepository) imageGalleryScope(
+	ctx context.Context, tenant uint64, kb string, q *types.ImageAssetQuery,
+) (string, []any, error) {
 	db := r.db.WithContext(ctx)
-	contributors := db.Table("chunk_images").Select("knowledge_id").Where("tenant_id = ? AND knowledge_base_id = ?", tenant, kb)
+	contributors := db.Table("chunk_images").Select("knowledge_id").
+		Where("tenant_id = ? AND knowledge_base_id = ?", tenant, kb)
 	if len(q.KnowledgeIDs) > 0 {
 		contributors = contributors.Where("knowledge_id IN ?", q.KnowledgeIDs)
 	}
 	var origins []string
 	err := db.Table("knowledge_input_admissions a").
-		Joins("JOIN knowledge_input_material_receipts m ON m.row_kind = 'knowledge' AND m.row_id = a.knowledge_id AND m.admission_id = a.admission_id").
+		Joins("JOIN knowledge_input_material_receipts m ON m.row_kind = 'knowledge'"+
+			" AND m.row_id = a.knowledge_id AND m.admission_id = a.admission_id").
 		Where("a.tenant_id = ? AND a.knowledge_base_id = ? AND a.knowledge_id IN (?)", tenant, kb, contributors).
 		Distinct("a.source_lineage").Pluck("a.source_lineage", &origins).Error
 	if err != nil {
@@ -83,9 +87,12 @@ func (r *chunkRepository) imageGalleryScope(ctx context.Context, tenant uint64, 
 			SELECT 1 FROM knowledge_input_admissions prior WHERE prior.knowledge_id = k.id))
 			OR ((cr.row_id IS NULL OR cr.admission_id = a.admission_id) AND ` + visible + "))"
 	} else {
-		current = ` JOIN knowledge_input_row_versions kv ON kv.row_kind = 'knowledge' AND kv.row_id = k.id AND kv.revision = kr.row_revision
-		JOIN knowledge_input_material_receipts cr ON cr.row_kind = 'chunk' AND cr.row_id = c.id AND cr.admission_id = a.admission_id
-		JOIN knowledge_input_row_versions cv ON cv.row_kind = 'chunk' AND cv.row_id = c.id AND cv.revision = cr.row_revision `
+		current = ` JOIN knowledge_input_row_versions kv ON kv.row_kind = 'knowledge'
+		 AND kv.row_id = k.id AND kv.revision = kr.row_revision
+		JOIN knowledge_input_material_receipts cr ON cr.row_kind = 'chunk'
+		 AND cr.row_id = c.id AND cr.admission_id = a.admission_id
+		JOIN knowledge_input_row_versions cv ON cv.row_kind = 'chunk'
+		 AND cv.row_id = c.id AND cv.revision = cr.row_revision `
 	}
 	cte := "WITH visible_images AS NOT MATERIALIZED (SELECT i.*, k.title AS source_name" + joins + current +
 		" WHERE i.tenant_id = ? AND i.knowledge_base_id = ? AND " + visible +
@@ -94,11 +101,14 @@ func (r *chunkRepository) imageGalleryScope(ctx context.Context, tenant uint64, 
 		  LEFT JOIN knowledge_input_material_receipts pr ON pr.row_kind = 'chunk' AND pr.row_id = p.id
 		  LEFT JOIN knowledge_input_row_versions pv ON pv.row_kind = 'chunk' AND pv.row_id = p.id
 		  WHERE p.id = c.parent_chunk_id AND p.knowledge_id = c.knowledge_id
-		  AND p.tenant_id = c.tenant_id AND p.knowledge_base_id = c.knowledge_base_id AND p.deleted_at IS NULL AND ` + parentReceipt + "))) "
+		  AND p.tenant_id = c.tenant_id AND p.knowledge_base_id = c.knowledge_base_id AND p.deleted_at IS NULL AND ` +
+		parentReceipt + "))) "
 	return cte, []any{tenant, kb, string(encoded)}, nil
 }
 
-func (r *chunkRepository) gallerySourceVisible(ctx context.Context, source types.SourceIdentity, workspace bool, q *types.ImageAssetQuery) (bool, error) {
+func (r *chunkRepository) gallerySourceVisible(
+	ctx context.Context, source types.SourceIdentity, workspace bool, q *types.ImageAssetQuery,
+) (bool, error) {
 	var row *types.Knowledge
 	if workspace {
 		row = &types.Knowledge{}
@@ -112,7 +122,9 @@ func (r *chunkRepository) gallerySourceVisible(ctx context.Context, source types
 		}
 	} else {
 		reader := &knowledgeRepository{db: r.db}
-		current, identity, err := reader.ResolveNextcloudSourceLineage(ctx, source.TenantID, source.KnowledgeBaseID, source.KnowledgeID)
+		current, identity, err := reader.ResolveNextcloudSourceLineage(
+			ctx, source.TenantID, source.KnowledgeBaseID, source.KnowledgeID,
+		)
 		if errors.Is(err, ErrNextcloudLineageSnapshotDenied) {
 			return false, nil
 		}

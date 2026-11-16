@@ -520,12 +520,19 @@ func (s *SessionForkService) forkOnSharedMachine(
 	}
 	if material != nil {
 		sealed, ok := s.sessions.(interface {
-			CreateForkedFromMaterialWithAssignment(context.Context, *types.Session, []*types.Message, *types.MessageMaterialSnapshot, *types.SessionSandboxAssignment, *types.SandboxUserMachine) error
+			CreateForkedFromMaterialWithAssignment(
+				context.Context, *types.Session, []*types.Message,
+				*types.MessageMaterialSnapshot,
+				*types.SessionSandboxAssignment, *types.SandboxUserMachine,
+			) error
 		})
 		if !ok {
 			err = types.ErrSourceLineageUnknown
 		} else if err = material.Recheck(); err == nil {
-			err = sealed.CreateForkedFromMaterialWithAssignment(stepCtx, newSession, messages, material.snapshot, entity, machineRow)
+			err = sealed.CreateForkedFromMaterialWithAssignment(
+				stepCtx, newSession, messages,
+				material.snapshot, entity, machineRow,
+			)
 		}
 	} else {
 		err = store.CreateForkedWithAssignment(stepCtx, newSession, messages, entity, machineRow)

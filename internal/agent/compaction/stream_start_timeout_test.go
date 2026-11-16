@@ -113,7 +113,8 @@ func TestCompactionStallIncludesHTTPHeaders(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	start := time.Now()
-	_, _, err := c.streamSummary(ctx, []chat.Message{{Role: "user", Content: "summarize", SourceLineage: literalCompactionInput()}}, &chat.ChatOptions{})
+	messages := []chat.Message{{Role: "user", Content: "summarize", SourceLineage: literalCompactionInput()}}
+	_, _, err := c.streamSummary(ctx, messages, &chat.ChatOptions{})
 	t.Logf("stall_timeout=%s; elapsed=%s; error=%v", c.settings.StallTimeout, time.Since(start), err)
 	require.ErrorContains(t, err, "stalled", "the configured idle timeout must cover response headers")
 	require.NoError(t, ctx.Err(), "the parent must remain usable for retry")

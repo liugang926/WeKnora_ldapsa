@@ -1604,7 +1604,9 @@ func (s *knowledgeService) triggerManualProcessing(ctx context.Context,
 	}
 
 	if s.imageResolver != nil {
-		updatedContent, storedImages, resolveErr := s.imageResolver.ResolveRemoteImages(ctx, clean, fileSvc, knowledge.TenantID)
+		updatedContent, storedImages, resolveErr := s.imageResolver.ResolveRemoteImages(
+			ctx, clean, fileSvc, knowledge.TenantID,
+		)
 		if resolveErr != nil {
 			logger.Warnf(ctx, "Remote image resolution partially failed: %v", resolveErr)
 		}

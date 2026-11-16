@@ -54,6 +54,7 @@ func (t *suspendingTool) Execute(ctx context.Context, _ json.RawMessage) (*types
 func (t *suspendingTool) DefinitionSourceLineageFor(types.FunctionDefinition) *types.SourceLineage {
 	return independentAgentInput()
 }
+
 func (t *suspendingTool) ExecuteSourceLineage(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
 	result, err := t.Execute(ctx, args)
 	if result != nil {

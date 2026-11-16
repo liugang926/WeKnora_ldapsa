@@ -288,7 +288,9 @@ func TestTokenPairSerializesWithAccountDisable(t *testing.T) {
 		require.Error(t, tokens.CreateTokenPair(ctx, newToken("access_token"), newToken("refresh_token"), ""))
 		_, err := users.SetUserActive(ctx, "employee", "operator", true)
 		require.NoError(t, err)
-		require.Error(t, tokens.CreateTokenPair(ctx, newToken("access_token"), newToken("refresh_token"), refresh.Token))
+		require.Error(t, tokens.CreateTokenPair(
+			ctx, newToken("access_token"), newToken("refresh_token"), refresh.Token,
+		))
 		live, err := tokens.GetTokensByUserID(ctx, "employee")
 		require.NoError(t, err)
 		require.Len(t, live, 2)

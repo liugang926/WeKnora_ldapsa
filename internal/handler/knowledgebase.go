@@ -580,7 +580,10 @@ func (h *KnowledgeBaseHandler) HybridSearch(c *gin.Context) {
 			defer guardNextcloudResponseWrites(c, leases, check)()
 		} else {
 			previous := c.Writer
-			c.Writer = &knowledgeCollectionAuthorizationWriter{ResponseWriter: previous, check: func() error { return check(ctx) }}
+			c.Writer = &knowledgeCollectionAuthorizationWriter{
+				ResponseWriter: previous,
+				check:          func() error { return check(ctx) },
+			}
 			defer func() { c.Writer = previous }()
 		}
 		if err := check(leases.Context(ctx)); err != nil {

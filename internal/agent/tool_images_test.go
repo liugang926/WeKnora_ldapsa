@@ -278,7 +278,9 @@ func TestToolImagesReuseApplicationDescriptions(t *testing.T) {
 	})
 	result := &types.ToolResult{
 		Success: true, Images: []string{"data:image/png;base64,aGVsbG8="},
-		SourceLineage: independentAgentInput(), ImageDescriptions: []string{"saved observation"}, Data: map[string]interface{}{},
+		SourceLineage:     independentAgentInput(),
+		ImageDescriptions: []string{"saved observation"},
+		Data:              map[string]interface{}{},
 	}
 	engine.describeToolImages(context.Background(), result)
 	require.Equal(t, []string{"saved observation"}, result.Data["image_descriptions"])

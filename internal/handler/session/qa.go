@@ -1052,7 +1052,8 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	if generateTitle && reqCtx.session.Title == "" {
 		// Use the same model as the conversation for title generation
 		modelID := reqCtx.titleModelID()
-		logger.Infof(reqCtx.ctx, "Session has no title, starting async title generation, session ID: %s, model: %s", reqCtx.sessionID, modelID)
+		logger.Infof(reqCtx.ctx, "Session has no title, starting async title generation, session ID: %s, model: %s",
+			reqCtx.sessionID, modelID)
 		h.sessionService.GenerateTitleAsync(asyncCtx, reqCtx.session, reqCtx.query, modelID, eventBus)
 	}
 
@@ -1524,7 +1525,9 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 	}
 	if hasExplicitInputMaterials(reqCtx) {
 		urls, caption := extractImageURLsAndOCRText(reqCtx.images)
-		provenImages := mode == qaModeAgent && reqCtx.resume == nil && caption == "" && len(reqCtx.attachments) == 0 && len(reqCtx.attachmentIDs) == 0 && reqCtx.currentImageUpload.Matches(ctx, reqCtx.session, urls)
+		provenImages := mode == qaModeAgent && reqCtx.resume == nil && caption == "" &&
+			len(reqCtx.attachments) == 0 && len(reqCtx.attachmentIDs) == 0 &&
+			reqCtx.currentImageUpload.Matches(ctx, reqCtx.session, urls)
 		if !provenImages {
 			if reqCtx.c != nil && !reqCtx.skipSSE {
 				_ = reqCtx.c.Error(errors.NewForbiddenError("Input source lineage is not available"))
@@ -1858,7 +1861,8 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 				// owner so finalization cannot certify an empty completed answer.
 				if mode == qaModeAgent || stderrors.Is(serviceErr, types.ErrSourceLineageUnknown) ||
 					stderrors.Is(serviceErr, access.ErrNextcloudPublicationDenied) ||
-					stderrors.Is(serviceErr, access.ErrNextcloudPublicationUnavailable) || stderrors.Is(serviceErr, applicationservice.ErrResourceAccessDenied) {
+					stderrors.Is(serviceErr, access.ErrNextcloudPublicationUnavailable) ||
+					stderrors.Is(serviceErr, applicationservice.ErrResourceAccessDenied) {
 					applicationservice.RefuseMessageMaterialOutputBoundary(streamCtx.asyncCtx)
 				}
 				logger.ErrorWithFields(streamCtx.asyncCtx, serviceErr, nil)
@@ -2440,7 +2444,8 @@ func (h *Handler) registerQuickAnswerFailureHandler(
 		// Only a body already admitted by the stream can survive a provider failure.
 		// For failure before the first event, the fixed diagnostic is the entire body.
 		lineage, err := types.UnionSourceLineage(handler.prefixLineage)
-		if handler.prefixLineage == nil && msg.Content == "" && len(msg.AgentSteps) == 0 && len(msg.KnowledgeReferences) == 0 {
+		if handler.prefixLineage == nil && msg.Content == "" &&
+			len(msg.AgentSteps) == 0 && len(msg.KnowledgeReferences) == 0 {
 			lineage, err = types.NewCompleteSourceLineage()
 		}
 		if err != nil || lineage.RequireComplete() != nil {
@@ -2452,7 +2457,9 @@ func (h *Handler) registerQuickAnswerFailureHandler(
 			msg.Content += "\n\n"
 		}
 		msg.Content += quickAnswerFailureContent
-		handler.completionEvent = &interfaces.StreamEvent{ID: msg.ID, Type: types.ResponseTypeComplete, Done: true, Timestamp: time.Now(), SourceLineage: lineage}
+		handler.completionEvent = &interfaces.StreamEvent{
+			ID: msg.ID, Type: types.ResponseTypeComplete, Done: true, Timestamp: time.Now(), SourceLineage: lineage,
+		}
 		handler.mu.Unlock()
 		updateCtx := context.WithValue(context.WithoutCancel(ctx), types.TenantIDContextKey, sessionTenantID)
 		h.completeStreamAssistantMessage(updateCtx, streamCtx, "", "")

@@ -72,7 +72,9 @@ func (s *privacyVLMSpy) Predict(ctx context.Context, images [][]byte, prompt str
 	return s.PredictWithOptions(ctx, images, prompt, nil)
 }
 
-func (s *privacyVLMSpy) PredictWithOptions(ctx context.Context, _ [][]byte, prompt string, opts *PredictOptions) (string, error) {
+func (s *privacyVLMSpy) PredictWithOptions(
+	ctx context.Context, _ [][]byte, prompt string, opts *PredictOptions,
+) (string, error) {
 	s.opts = opts
 	s.ctx = ctx
 	s.recording = trace.SpanFromContext(ctx).IsRecording()

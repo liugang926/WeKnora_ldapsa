@@ -120,7 +120,13 @@ func (g *pgRepository) EstimateStorageSize(
 // source ID and rely on the new content winning; DO NOTHING kept the stale
 // content and vector.
 var upsertBySource = clause.OnConflict{
-	Where:   clause.Where{Exprs: []clause.Expression{clause.Expr{SQL: "embeddings.knowledge_base_id IS NOT DISTINCT FROM excluded.knowledge_base_id AND embeddings.knowledge_id IS NOT DISTINCT FROM excluded.knowledge_id AND embeddings.chunk_id IS NOT DISTINCT FROM excluded.chunk_id"}}},
+	Where: clause.Where{
+		Exprs: []clause.Expression{clause.Expr{
+			SQL: "embeddings.knowledge_base_id IS NOT DISTINCT FROM excluded.knowledge_base_id" +
+				" AND embeddings.knowledge_id IS NOT DISTINCT FROM excluded.knowledge_id" +
+				" AND embeddings.chunk_id IS NOT DISTINCT FROM excluded.chunk_id",
+		}},
+	},
 	Columns: []clause.Column{{Name: "source_id"}, {Name: "source_type"}},
 	DoUpdates: clause.AssignmentColumns([]string{
 		"chunk_id", "knowledge_id", "knowledge_base_id", "tag_id",
@@ -168,7 +174,9 @@ func (g *pgRepository) BatchSave(
 		key := sourceKey{id: row.SourceID, typ: row.SourceType}
 		if i, ok := positions[key]; ok {
 			prev := indexInfoDBList[i]
-			if prev.ChunkID != row.ChunkID || prev.KnowledgeBaseID != row.KnowledgeBaseID || prev.KnowledgeID != row.KnowledgeID {
+			if prev.ChunkID != row.ChunkID ||
+				prev.KnowledgeBaseID != row.KnowledgeBaseID ||
+				prev.KnowledgeID != row.KnowledgeID {
 				return apprepo.ErrNextcloudContentLeaseDenied
 			}
 			indexInfoDBList[i] = row

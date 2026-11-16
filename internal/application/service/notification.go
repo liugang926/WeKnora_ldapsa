@@ -55,6 +55,7 @@ type PendingNotification struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// NotificationPage contains the notification feed, pending actions and pagination state.
 type NotificationPage struct {
 	Items      []*types.Notification  `json:"items"`
 	Pending    []*PendingNotification `json:"pending"`

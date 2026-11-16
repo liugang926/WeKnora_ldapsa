@@ -1220,9 +1220,10 @@ func (s *sessionService) GenerateTitle(ctx context.Context,
 	}
 
 	// Prepare messages for title generation
-	titlePrompt := types.RenderPromptPlaceholders(s.cfg.Conversation.GenerateSessionTitlePrompt, types.PlaceholderValues{
-		"language": types.LanguageNameFromContext(ctx),
-	})
+	titlePrompt := types.RenderPromptPlaceholders(
+		s.cfg.Conversation.GenerateSessionTitlePrompt, types.PlaceholderValues{
+			"language": types.LanguageNameFromContext(ctx),
+		})
 	chatMessages := buildSessionTitleMessages(titlePrompt, message.Content)
 
 	// Call model to generate title

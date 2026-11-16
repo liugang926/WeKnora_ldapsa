@@ -62,11 +62,12 @@ func (h *Handler) ListArtifactLibrary(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success":   true,
-		"data":      result.Data,
-		"total":     result.Total,
-		"page":      result.Page,
-		"page_size": result.PageSize,
+	items, ok := result.Data.([]*types.ArtifactLibraryItem)
+	if !ok && result.Data != nil {
+		_ = c.Error(errors.NewInternalServerError("Invalid artifact library result"))
+		return
+	}
+	c.JSON(http.StatusOK, artifactLibraryResponse{
+		Success: true, Data: items, Total: result.Total, Page: result.Page, PageSize: result.PageSize,
 	})
 }

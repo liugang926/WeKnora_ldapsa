@@ -43,20 +43,25 @@ func TestResumeRestoresFirstDeferredMCPCall(t *testing.T) {
 			newRegistry := func() *tools.ToolRegistry {
 				r := tools.NewToolRegistry()
 				services := []*types.MCPService{{ID: "svc", Name: "service", TenantID: 1, Enabled: true}}
-				_, err := tools.RegisterMCPTools(ctx, r, services, mcp.NewMCPManager(nil), gate, 0, func(context.Context, uint64, string) (*types.MCPService, error) { return services[0], nil }, &tools.MCPMetadataIO{
+				lookup := func(context.Context, uint64, string) (*types.MCPService, error) { return services[0], nil }
+				metadata := &tools.MCPMetadataIO{
 					Get: func(context.Context, uint64, string) (*types.MCPMetadata, error) {
 						return &types.MCPMetadata{Tools: []*types.MCPTool{
 							{Name: "read", InputSchema: json.RawMessage(`{"type":"object"}`)},
 							{Name: "write", InputSchema: json.RawMessage(`{"type":"object"}`)},
 						}}, nil
 					},
-				})
+				}
+				_, err := tools.RegisterMCPTools(ctx, r, services, mcp.NewMCPManager(nil), gate, 0, lookup, metadata)
 				require.NoError(t, err)
 				r.PrepareMCPTools(ctx)
 				return r
 			}
 			original := newRegistry()
-			ctx = types.WithRAGSourceLineage(ctx, types.NewRAGSourceLineage(func(_ context.Context, l *types.SourceLineage) error { return l.RequireComplete() }))
+			lineage := types.NewRAGSourceLineage(func(_ context.Context, l *types.SourceLineage) error {
+				return l.RequireComplete()
+			})
+			ctx = types.WithRAGSourceLineage(ctx, lineage)
 			tools.ConfigureMCPIndependentTransportVerifier(original, func(context.Context) error { return nil })
 			described, err := original.ExecuteToolWithSourceLineage(ctx, tools.ToolDiscoverMCPTools,
 				json.RawMessage(`{"mode":"describe","server_id":"svc","tool_name":"write"}`))
@@ -83,8 +88,10 @@ func TestResumeRestoresFirstDeferredMCPCall(t *testing.T) {
 				args = string(data)
 			}
 			snap := RunSnapshot{
-				MCPSourceBindings: original.MCPSourceBindings(), SourceLineage: independentAgentInput(), MCPToolRefs: original.MCPExposureSnapshot(),
-				Version: RunSnapshotVersion, Query: "do the work",
+				MCPSourceBindings: original.MCPSourceBindings(),
+				SourceLineage:     independentAgentInput(),
+				MCPToolRefs:       original.MCPExposureSnapshot(),
+				Version:           RunSnapshotVersion, Query: "do the work",
 				PendingRound: PendingRound{Calls: []PendingCall{{ID: "call", Name: name, Arguments: args}}},
 			}
 			data, err := json.Marshal(snap)

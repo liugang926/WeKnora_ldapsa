@@ -15,7 +15,8 @@ func TestGalleryVisibilityPrecedesCopySelectionAndTotals(t *testing.T) {
 	store, db := knowledgeInputFixture(t)
 	applyChunkImagesMigration(t, db)
 	chunks := NewChunkRepository(db)
-	_, source, err := NewKnowledgeRepository(db).(*knowledgeRepository).ResolveNextcloudSourceLineage(ctx, 7, "kb", "candidate")
+	reader := NewKnowledgeRepository(db).(*knowledgeRepository)
+	_, source, err := reader.ResolveNextcloudSourceLineage(ctx, 7, "kb", "candidate")
 	require.NoError(t, err)
 	lineage, err := types.NewCompleteSourceLineage(source)
 	require.NoError(t, err)
@@ -23,15 +24,40 @@ func TestGalleryVisibilityPrecedesCopySelectionAndTotals(t *testing.T) {
 	require.NoError(t, err)
 	add := func(origin context.Context, id, title, images string, minute int) {
 		t.Helper()
-		k := &types.Knowledge{ID: id, TenantID: 7, KnowledgeBaseID: "kb", Type: "passage", Channel: "web", Title: title, CustomMetadata: types.JSON("{}"), ParseStatus: types.ParseStatusCompleted, EnableStatus: "enabled"}
+		k := &types.Knowledge{
+			ID:              id,
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			Type:            "passage",
+			Channel:         "web",
+			Title:           title,
+			CustomMetadata:  types.JSON("{}"),
+			ParseStatus:     types.ParseStatusCompleted,
+			EnableStatus:    "enabled",
+		}
 		proof, err := store.CreateKnowledgeWithInput(origin, k, []string{title})
 		require.NoError(t, err)
 		at := time.Now().UTC().Add(time.Duration(minute) * time.Minute)
-		c := &types.Chunk{ID: "chunk-" + id, TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: id, Content: title, IsEnabled: true, IndexStatus: "ready", ChunkType: types.ChunkTypeImageOCR, ImageInfo: images, CreatedAt: at, UpdatedAt: at}
+		c := &types.Chunk{
+			ID:              "chunk-" + id,
+			TenantID:        7,
+			KnowledgeBaseID: "kb",
+			KnowledgeID:     id,
+			Content:         title,
+			IsEnabled:       true,
+			IndexStatus:     "ready",
+			ChunkType:       types.ChunkTypeImageOCR,
+			ImageInfo:       images,
+			CreatedAt:       at,
+			UpdatedAt:       at,
+		}
 		require.NoError(t, chunks.CreateChunks(WithKnowledgeBuildInputProof(origin, store, proof), []*types.Chunk{c}))
 	}
 	add(WithIndependentKnowledgeInput(ctx), "ordinary", "public", `[{"url":"shared","ocr_text":"allowed"}]`, 0)
-	add(derived, "derived", "sensitive", `[{"url":"shared","ocr_text":"hidden"},{"url":"secret-only","ocr_text":"sensitive"}]`, 1)
+	add(
+		derived, "derived", "sensitive",
+		`[{"url":"shared","ocr_text":"hidden"},{"url":"secret-only","ocr_text":"sensitive"}]`, 1,
+	)
 	allowed := true
 	query := &types.ImageAssetQuery{AuthorizeSource: func(_ context.Context, k *types.Knowledge) (bool, error) {
 		require.Equal(t, source.KnowledgeID, k.ID)
@@ -66,7 +92,11 @@ func TestGalleryVisibilityPrecedesCopySelectionAndTotals(t *testing.T) {
 	require.Empty(t, rows)
 	allowed = true
 	require.NoError(t, NewNextcloudContentLeaseStore(db).RetireKnowledge(ctx, NextcloudContentScope{
-		TenantID: 7, KnowledgeBaseID: "kb", KnowledgeID: source.KnowledgeID, DataSourceID: source.DataSourceID, ExternalID: source.ExternalID,
+		TenantID:        7,
+		KnowledgeBaseID: "kb",
+		KnowledgeID:     source.KnowledgeID,
+		DataSourceID:    source.DataSourceID,
+		ExternalID:      source.ExternalID,
 	}))
 	rows, total, err = chunks.ListImageAssets(ctx, 7, "kb", query)
 	require.NoError(t, err)

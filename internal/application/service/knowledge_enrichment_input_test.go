@@ -78,7 +78,11 @@ func (m *enrichmentTestVLM) Predict(_ context.Context, _ [][]byte, _ string) (st
 	}
 	return "Actual recognized document image text for retrieval", nil
 }
-func (m *enrichmentTestVLM) PredictWithOptions(ctx context.Context, images [][]byte, prompt string, _ *vlm.PredictOptions) (string, error) {
+
+func (m *enrichmentTestVLM) PredictWithOptions(
+	ctx context.Context, images [][]byte, prompt string,
+	_ *vlm.PredictOptions,
+) (string, error) {
 	return m.Predict(ctx, images, prompt)
 }
 
@@ -608,7 +612,10 @@ func runEnrichmentOriginalRoutes(t *testing.T, pg bool) {
 		}
 		tampered := p
 		tampered.EnableOCR = !p.EnableOCR
-		require.ErrorIs(t, svc.Handle(context.Background(), enrichmentTask(t, types.TypeImageMultimodal, tampered)), repository.ErrKnowledgeInputChanged)
+		require.ErrorIs(
+			t, svc.Handle(context.Background(), enrichmentTask(t, types.TypeImageMultimodal, tampered)),
+			repository.ErrKnowledgeInputChanged,
+		)
 		require.Zero(t, f.vision.calls)
 		require.NoError(t, svc.Handle(context.Background(), enrichmentTask(t, types.TypeImageMultimodal, p)))
 		require.Equal(t, len(want), f.vision.calls)
@@ -637,7 +644,9 @@ func runEnrichmentOriginalRoutes(t *testing.T, pg bool) {
 			return // The switch matrix uses the same queue handler on both databases.
 		}
 		t.Run("legacy OCR only", func(t *testing.T) { checkImage(t, true, false, nil, types.ChunkTypeImageOCR) })
-		t.Run("legacy caption only", func(t *testing.T) { checkImage(t, false, true, nil, types.ChunkTypeImageCaption) })
+		t.Run("legacy caption only", func(t *testing.T) {
+			checkImage(t, false, true, nil, types.ChunkTypeImageCaption)
+		})
 		t.Run("legacy neither", func(t *testing.T) { checkImage(t, false, false, nil) })
 		t.Run("pipeline controls", func(t *testing.T) {
 			params := map[string]any{

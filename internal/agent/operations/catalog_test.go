@@ -623,7 +623,9 @@ func TestCatalogForFiltersByRoleAndLevel(t *testing.T) {
 func TestBuiltinViewerCanRequestKBScopedBatchEdits(t *testing.T) {
 	access := Access{Role: types.TenantRoleViewer, EnforceRole: true, Level: types.AssistantAccessConfirm}
 	catalog := Builtin().For(access)
-	readOnly := Builtin().For(Access{Role: types.TenantRoleViewer, EnforceRole: true, Level: types.AssistantAccessReadOnly})
+	readOnlyAccess := access
+	readOnlyAccess.Level = types.AssistantAccessReadOnly
+	readOnly := Builtin().For(readOnlyAccess)
 	for _, id := range []string{"knowledge.batch_reparse", "knowledge.move_to_folder", "knowledge.set_tags"} {
 		t.Run(id, func(t *testing.T) {
 			op, offered := catalog.Get(id)

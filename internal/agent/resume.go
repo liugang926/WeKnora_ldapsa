@@ -31,7 +31,8 @@ func (e *AgentEngine) Resume(
 	defer finish()
 	// Durable checkpoints come from the server. Re-authorize the whole prefix
 	// before replay, including any side effects in an interrupted tool round.
-	if !e.requireCompleteSourceLineage && (!snap.WeKnoraACL || snap.SourceLineage.RequireComplete() != nil || len(snap.SourceLineage.Sources) != 0) {
+	if !e.requireCompleteSourceLineage && (!snap.WeKnoraACL ||
+		snap.SourceLineage.RequireComplete() != nil || len(snap.SourceLineage.Sources) != 0) {
 		return nil, e.rememberLineageFailure(types.ErrSourceLineageUnknown)
 	}
 	if err := e.addLineage(snap.SourceLineage); err != nil {
@@ -115,7 +116,9 @@ func (e *AgentEngine) Resume(
 			if !ok {
 				return fmt.Errorf("missing steered message %s in run snapshot", id)
 			}
-			messages = append(messages, chat.Message{Role: "user", Content: types.SteerMessageContent(content), SourceLineage: snap.SourceLineage})
+			messages = append(messages, chat.Message{
+				Role: "user", Content: types.SteerMessageContent(content), SourceLineage: snap.SourceLineage,
+			})
 		}
 		return nil
 	}

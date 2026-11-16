@@ -161,8 +161,10 @@ func TestHybridSearchRechecksOrdinaryHitDependingOnWithdrawnSource(t *testing.T)
 	snapshots := &revocableHybridSnapshots{}
 	h := &KnowledgeBaseHandler{
 		service: &hybridOutputKBService{
-			kb:      &types.KnowledgeBase{ID: "kb-1", TenantID: 7},
-			results: []*types.SearchResult{{KnowledgeID: "ordinary", KnowledgeBaseID: "kb-1", Content: "hidden expansion", SourceLineage: lineage}},
+			kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 7},
+			results: []*types.SearchResult{{
+				KnowledgeID: "ordinary", KnowledgeBaseID: "kb-1", Content: "hidden expansion", SourceLineage: lineage,
+			}},
 		},
 		knowledgeService: &hybridOutputKnowledgeService{row: row},
 		sourceSnapshots:  snapshots, contentLeases: repository.NewNextcloudContentLeaseStore(db),

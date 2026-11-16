@@ -1591,7 +1591,7 @@ func (h *KnowledgeHandler) ListImages(c *gin.Context) {
 		}
 	}
 
-	h.writeImageGallery(c, ctx, kbID, effectiveTenantID, &pagination, filter)
+	h.writeImageGallery(ctx, c, kbID, effectiveTenantID, &pagination, filter)
 }
 
 // constrainGalleryFilter prunes a client-supplied gallery filter to the KB's
@@ -1725,7 +1725,7 @@ func (h *KnowledgeHandler) ListImagesPost(c *gin.Context) {
 		AttrRules:    body.AttrRules,
 	}
 
-	h.writeImageGallery(c, ctx, kbID, effectiveTenantID, &body.Pagination, filter)
+	h.writeImageGallery(ctx, c, kbID, effectiveTenantID, &body.Pagination, filter)
 }
 
 // galleryEligibility extracts the per-attribute usage sets that incoming
@@ -3265,7 +3265,7 @@ func (h *KnowledgeHandler) UpdateKnowledgeTagBatch(c *gin.Context) {
 		req.Updates,
 	); err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
-		c.Error(kbAccessHTTPError(err))
+		_ = c.Error(kbAccessHTTPError(err))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{

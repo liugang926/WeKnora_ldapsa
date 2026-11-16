@@ -421,7 +421,10 @@ func (s *agentService) CreateAgentEngine(
 
 	if !config.ExcludeHistoricalContext {
 		if s.collaboration != nil {
-			if err := s.collaboration.attach(ctx, engine, toolRegistry, config, sessionID, assistantMessageID); err != nil {
+			if err := s.collaboration.attach(
+				ctx, engine, toolRegistry, config,
+				sessionID, assistantMessageID,
+			); err != nil {
 				return nil, err
 			}
 		}
@@ -1943,7 +1946,10 @@ func (s *agentService) resolvePageContextInfo(
 		if tenantID := types.CallerFromContext(ctx).TenantID; tenantID != 0 {
 			agentCtx = types.WithExecutionTenant(ctx, tenantID)
 		}
-		if a, err := s.customAgentService.GetAgentByID(agentCtx, page.AgentID); err == nil && a != nil && (s.groups == nil || s.groups.Authorize(agentCtx, a.TenantID, types.GroupResourceTypeAgent, a.ID, types.ResourceActionUse) == nil) {
+		if a, err := s.customAgentService.GetAgentByID(agentCtx, page.AgentID); err == nil && a != nil &&
+			(s.groups == nil || s.groups.Authorize(
+				agentCtx, a.TenantID, types.GroupResourceTypeAgent, a.ID, types.ResourceActionUse,
+			) == nil) {
 			info.Agent = &agent.PageContextAgent{ID: a.ID, Name: a.Name}
 		}
 	}
@@ -1979,7 +1985,9 @@ func (s *agentService) resolveAssistantPageContext(
 	info.Page, info.Section = page.Page, page.Section
 	tenantID := types.CallerFromContext(ctx).TenantID
 	if page.ModelID != "" && s.modelService != nil {
-		if m, err := s.modelService.GetModelByID(ctx, page.ModelID); err == nil && m != nil && !m.DeletedAt.Valid && (m.IsBuiltin || m.TenantID == tenantID) {
+		if m, err := s.modelService.GetModelByID(ctx, page.ModelID); err == nil &&
+			m != nil && !m.DeletedAt.Valid &&
+			(m.IsBuiltin || m.TenantID == tenantID) {
 			name := m.DisplayName
 			if name == "" {
 				name = m.Name

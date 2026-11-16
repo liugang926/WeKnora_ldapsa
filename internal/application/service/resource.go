@@ -150,7 +150,10 @@ func registrationProvenance(value string) string {
 
 // ReuseImageForStorage keeps an upload pinned to the same physical backend
 // when identical image bytes are already present elsewhere in the workspace.
-func (s *resourceCatalog) ReuseImageForStorage(ctx context.Context, tenantID uint64, hash, backendID string, global bool) (string, bool, error) {
+func (s *resourceCatalog) ReuseImageForStorage(
+	ctx context.Context, tenantID uint64,
+	hash, backendID string, global bool,
+) (string, bool, error) {
 	if global {
 		backend, err := s.globalBackend(ctx, tenantID)
 		if err != nil {
@@ -178,9 +181,14 @@ func (s *resourceCatalog) ReuseByContentHash(
 	return s.reuseByContentHash(ctx, tenantID, contentHash, nil)
 }
 
-func (s *resourceCatalog) reuseByContentHash(ctx context.Context, tenantID uint64, contentHash string, backendID *string) (string, bool, error) {
+func (s *resourceCatalog) reuseByContentHash(
+	ctx context.Context, tenantID uint64, contentHash string,
+	backendID *string,
+) (string, bool, error) {
 	contentHash = strings.TrimSpace(contentHash)
-	if tenantID == 0 || contentHash == "" || registrationProvenance(types.ResourceProvenanceFromContext(ctx)) != types.ResourceProvenanceOrdinary {
+	if tenantID == 0 ||
+		contentHash == "" ||
+		registrationProvenance(types.ResourceProvenanceFromContext(ctx)) != types.ResourceProvenanceOrdinary {
 		return "", false, nil
 	}
 	existing, err := s.repo.GetActiveByContentHash(ctx, tenantID, contentHash)

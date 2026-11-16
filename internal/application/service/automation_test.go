@@ -379,7 +379,8 @@ func (f *automationFixture) suspendOnApproval(t *testing.T, grant string) {
 			Version: agent.RunSnapshotVersion, Query: req.Query, Request: resumable,
 		})
 		require.NoError(t, f.broker.Suspensions().Save(ctx, &types.AgentRunSuspension{
-			AssistantMessageID: req.AssistantMessageID, PromptID: prompt.ID, SessionID: req.Session.ID, TenantID: req.Session.TenantID,
+			AssistantMessageID: req.AssistantMessageID, PromptID: prompt.ID,
+			SessionID: req.Session.ID, TenantID: req.Session.TenantID,
 			Snapshot: snap,
 		}))
 		return complete(ctx, bus, event.AgentCompleteData{

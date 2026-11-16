@@ -22,9 +22,17 @@ type AgentImageUploadReceipt struct {
 }
 type agentImageUploadKey struct{}
 
-func NewAgentImageUploadReceipt(ctx context.Context, session *types.Session, uploaded []string) *AgentImageUploadReceipt {
+// NewAgentImageUploadReceipt binds uploaded image data URLs to the current session owner.
+func NewAgentImageUploadReceipt(
+	ctx context.Context, session *types.Session, uploaded []string,
+) *AgentImageUploadReceipt {
 	owner := types.SessionOwnerIDFromContext(ctx)
-	if session == nil || owner == "" || session.UserID != owner || session.TenantID == 0 || session.ID == "" || len(uploaded) == 0 {
+	if session == nil ||
+		owner == "" ||
+		session.UserID != owner ||
+		session.TenantID == 0 ||
+		session.ID == "" ||
+		len(uploaded) == 0 {
 		return nil
 	}
 	receipt := &AgentImageUploadReceipt{sessionID: session.ID, tenantID: session.TenantID, owner: owner}
@@ -37,16 +45,22 @@ func NewAgentImageUploadReceipt(ctx context.Context, session *types.Session, upl
 	return receipt
 }
 
+// WithAgentImageUploadReceipt carries the verified upload receipt through the current request.
 func WithAgentImageUploadReceipt(ctx context.Context, receipt *AgentImageUploadReceipt) context.Context {
 	return context.WithValue(ctx, agentImageUploadKey{}, receipt)
 }
 
+// Matches checks that the owner, session and ordered image digests match the receipt.
 func (p *AgentImageUploadReceipt) Matches(ctx context.Context, session *types.Session, urls []string) bool {
 	if p == nil {
 		return false
 	}
 	actual := NewAgentImageUploadReceipt(ctx, session, urls)
-	return actual != nil && actual.sessionID == p.sessionID && actual.owner == p.owner && actual.tenantID == p.tenantID && slices.Equal(actual.digests, p.digests)
+	return actual != nil &&
+		actual.sessionID == p.sessionID &&
+		actual.owner == p.owner &&
+		actual.tenantID == p.tenantID &&
+		slices.Equal(actual.digests, p.digests)
 }
 
 func hasAgentRawInputMaterials(req *types.QARequest) bool {
@@ -76,7 +90,10 @@ func (s *sessionService) loadResume(ctx context.Context, req *types.QARequest) (
 	if err != nil {
 		return nil, false, err
 	}
-	if session == nil || session.UserID != owner || session.ID != req.Session.ID || session.TenantID != caller.TenantID {
+	if session == nil ||
+		session.UserID != owner ||
+		session.ID != req.Session.ID ||
+		session.TenantID != caller.TenantID {
 		return nil, false, ErrResourceAccessDenied
 	}
 	resume, err := s.storedAgentResume(ctx, session, principal, req)
@@ -91,16 +108,24 @@ func (s *sessionService) loadResume(ctx context.Context, req *types.QARequest) (
 	if err := json.Unmarshal(snap.Request, &original); err != nil {
 		return nil, false, err
 	}
-	if req.CustomAgent == nil || original.AgentID != req.CustomAgent.ID || original.AgentTenantID != req.CustomAgent.TenantID ||
-		original.ActingVia != principal.ActingVia || original.UserMessageID != req.UserMessageID || (original.SharedAgentReadOnly && !req.SharedAgentReadOnly) ||
+	if req.CustomAgent == nil ||
+		original.AgentID != req.CustomAgent.ID ||
+		original.AgentTenantID != req.CustomAgent.TenantID ||
+		original.ActingVia != principal.ActingVia ||
+		original.UserMessageID != req.UserMessageID ||
+		(original.SharedAgentReadOnly && !req.SharedAgentReadOnly) ||
 		original.AssistantAccess != req.AssistantAccess ||
-		!slices.Equal(original.KnowledgeBaseIDs, req.KnowledgeBaseIDs) || !slices.Equal(original.KnowledgeIDs, req.KnowledgeIDs) ||
+		!slices.Equal(original.KnowledgeBaseIDs, req.KnowledgeBaseIDs) ||
+		!slices.Equal(original.KnowledgeIDs, req.KnowledgeIDs) ||
 		!slices.EqualFunc(original.TagScopes, req.TagScopes, func(a, b types.TagScope) bool {
 			return a.KnowledgeBaseID == b.KnowledgeBaseID && slices.Equal(a.TagIDs, b.TagIDs)
 		}) {
 		return nil, false, ErrResourceAccessDenied
 	}
-	acl := snap.WeKnoraACL && snap.SourceLineage.RequireComplete() == nil && len(snap.SourceLineage.Sources) == 0 && !hasAgentRawInputMaterials(req)
+	acl := snap.WeKnoraACL &&
+		snap.SourceLineage.RequireComplete() == nil &&
+		len(snap.SourceLineage.Sources) == 0 &&
+		!hasAgentRawInputMaterials(req)
 	hydrated, err := s.restoreResumeSteering(ctx, session, req.AssistantMessageID, snap)
 	if err != nil {
 		return nil, false, err
@@ -112,7 +137,10 @@ func (s *sessionService) loadResume(ctx context.Context, req *types.QARequest) (
 	return resume, acl, nil
 }
 
-func (s *sessionService) storedAgentResume(ctx context.Context, session *types.Session, principal types.Principal, req *types.QARequest) (*types.AgentResume, error) {
+func (s *sessionService) storedAgentResume(
+	ctx context.Context, session *types.Session,
+	principal types.Principal, req *types.QARequest,
+) (*types.AgentResume, error) {
 	if req.Resume.Prompt == nil {
 		// Only the collaboration scheduler has a live parent lease and a durable wait checkpoint.
 		b := collaboration.FromContext(ctx)
@@ -156,7 +184,10 @@ func (s *sessionService) storedAgentResume(ctx context.Context, session *types.S
 
 // Older checkpoints kept the steering message IDs but omitted their text.
 // Read only those original user fields under the ongoing turn's material guards.
-func (s *sessionService) restoreResumeSteering(ctx context.Context, session *types.Session, assistant string, snap *agent.RunSnapshot) (bool, error) {
+func (s *sessionService) restoreResumeSteering(
+	ctx context.Context, session *types.Session,
+	assistant string, snap *agent.RunSnapshot,
+) (bool, error) {
 	missing := make(map[string]bool)
 	for _, step := range append(slices.Clone(snap.CompletedSteps), snap.PendingRound.Step) {
 		for _, id := range step.UserMessagesBefore {
@@ -193,7 +224,11 @@ func (s *sessionService) restoreResumeSteering(ctx context.Context, session *typ
 		snap.UserMessages = make(map[string]string)
 	}
 	for _, row := range rows {
-		if row == nil || !missing[row.ID] || row.SessionID != session.ID || row.RequestID != requestID || row.Role != "user" {
+		if row == nil ||
+			!missing[row.ID] ||
+			row.SessionID != session.ID ||
+			row.RequestID != requestID ||
+			row.Role != "user" {
 			return false, ErrResourceAccessDenied
 		}
 		snap.SourceLineage, err = types.UnionSourceLineage(snap.SourceLineage, row.SourceLineage)

@@ -120,7 +120,10 @@ func (s *knowledgeBaseService) HybridSearchWithRerank(ctx context.Context,
 	// rerank.top_k=200 the pool used to stop at the 50-hit floor.
 	params.MatchCount = max(params.MatchCount, topK)
 	diag.Outcome = types.RerankOutcomeNoCandidates
-	out.Results, err = s.withHybridSearchCandidates(ctx, id, params, func(ctx context.Context, chunks []*types.IndexWithScore, authorize func([]*types.SearchResult) error) ([]*types.SearchResult, error) {
+	out.Results, err = s.withHybridSearchCandidates(ctx, id, params, func(
+		ctx context.Context, chunks []*types.IndexWithScore,
+		authorize func([]*types.SearchResult) error,
+	) ([]*types.SearchResult, error) {
 		pool := chunks[:min(len(chunks), max(topK, types.DefaultRetrievalTopK))]
 		candidates, err := s.processSearchResults(ctx, pool, true)
 		if err != nil {

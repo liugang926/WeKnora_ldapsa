@@ -1577,7 +1577,9 @@ func (s *wikiPageService) SearchPagesAcross(
 		return nil, err
 	}
 	for _, page := range pages {
-		if page == nil || kbByID[page.KnowledgeBaseID] == nil || page.TenantID != kbByID[page.KnowledgeBaseID].TenantID {
+		if page == nil ||
+			kbByID[page.KnowledgeBaseID] == nil ||
+			page.TenantID != kbByID[page.KnowledgeBaseID].TenantID {
 			return nil, apperrors.NewForbiddenError("invalid wiki search result scope")
 		}
 	}

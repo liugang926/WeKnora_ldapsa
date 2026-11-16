@@ -90,7 +90,7 @@ func (s *privacyEmbeddingSpy) BatchEmbedWithPool(
 
 func (*privacyEmbeddingSpy) AcceptsImages() bool      { return true }
 func (*privacyEmbeddingSpy) ImageLimits() ImageLimits { return ImageLimits{} }
-func (s *privacyEmbeddingSpy) BatchEmbedImages(ctx context.Context, images []Image) ([][]float32, error) {
+func (s *privacyEmbeddingSpy) BatchEmbedImages(ctx context.Context, _ []Image) ([][]float32, error) {
 	s.ctx = ctx
 	s.recording = trace.SpanFromContext(ctx).IsRecording()
 	return [][]float32{{1}}, nil

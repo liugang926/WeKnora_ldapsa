@@ -2,14 +2,12 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
-	"github.com/hibiken/asynq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -39,7 +37,8 @@ func (r *flakyFinalizeRepo) FinalizeSubtask(context.Context, string) (int, bool,
 func TestFinalizeSubtaskDetachedRetriesTransientFailure(t *testing.T) {
 	repo := &flakyFinalizeRepo{failures: subtaskSlotReleaseAttempts - 1}
 
-	finalizeSubtaskDetached(context.Background(), repo, "k-1", "summary", nil, false, true)
+	err := finalizeSubtaskDetached(context.Background(), repo, "k-1", "summary", nil, false, true)
+	require.NoError(t, err)
 
 	assert.Equal(t, subtaskSlotReleaseAttempts, repo.calls)
 	assert.Equal(t, 1, repo.successes)
@@ -71,7 +70,10 @@ type shortfallReleaseRepo struct {
 }
 
 func (r *shortfallReleaseRepo) FinalizeSubtask(ctx context.Context, id string) (int, bool, error) {
-	return r.flaky.FinalizeSubtask(ctx, id)
+	if _, _, err := r.flaky.FinalizeSubtask(ctx, id); err != nil {
+		return 0, false, err
+	}
+	return r.wikiEnqueueFailureKnowledgeRepo.FinalizeSubtask(ctx, id)
 }
 
 // Post-process releases one slot per subtask it planned but could not
@@ -96,29 +98,38 @@ func TestKnowledgePostProcessShortfallReleaseContinuesPastFailure(t *testing.T) 
 		}
 	}
 	queue := &wikiEnqueueFailureTaskQueue{}
-	svc := &KnowledgePostProcessService{
-		knowledgeRepo: repo,
-		kbService: &wikiEnqueueFailureKBService{kb: &types.KnowledgeBase{
-			ID: kbID, TenantID: 7,
-			IndexingStrategy: types.IndexingStrategy{GraphEnabled: true},
-			ExtractConfig:    &types.ExtractConfig{Enabled: true},
-		}},
-		chunkRepo: &wikiEnqueueFailureChunkRepo{chunks: []*types.Chunk{
-			chunk("c-1", "Contract between Alice and Bob."),
-			chunk("c-2", "Payment is due in thirty days."),
-		}},
-		taskEnqueuer: queue,
+	kb := &types.KnowledgeBase{
+		ID: kbID, TenantID: 7,
+		IndexingStrategy: types.IndexingStrategy{GraphEnabled: true},
+		ExtractConfig:    &types.ExtractConfig{Enabled: true},
 	}
-	payload, err := json.Marshal(types.KnowledgePostProcessPayload{
-		TenantID: 7, KnowledgeID: knowledgeID, KnowledgeBaseID: kbID,
+	svc := &KnowledgePostProcessService{knowledgeRepo: repo, taskEnqueuer: queue}
+	f := attachPostProcessOriginalInputs(t, svc, &repo.wikiEnqueueFailureKnowledgeRepo, kb, []*types.Chunk{
+		chunk("c-1", "Contract between Alice and Bob."),
+		chunk("c-2", "Payment is due in thirty days."),
 	})
-	require.NoError(t, err)
 
-	err = svc.Handle(context.Background(), asynq.NewTask(types.TypeKnowledgePostProcess, payload))
-
-	require.NoError(t, err)
+	require.NoError(t, svc.Handle(f.build, postProcessOriginalTask(t, f)))
 	assert.Equal(t, 3, repo.expectedSubtasks, "summary plus two graph slots")
 	assert.Equal(t, []string{types.TypeSummaryGeneration}, queue.taskTypes)
+	assertPostProcessQueuedOriginals(t, f, queue)
 	assert.Equal(t, subtaskSlotReleaseAttempts+1, repo.flaky.calls)
 	assert.Equal(t, 1, repo.flaky.successes, "the second shortfall slot is still released")
+	var stored types.Knowledge
+	require.NoError(t, f.db.Where("id = ?", knowledgeID).Take(&stored).Error)
+	assert.Equal(t, 2, stored.PendingSubtasksCount, "the queued summary and the failed release retain their slots")
+}
+
+func TestPostProcessSummarySkipsMissingChunkReceipt(t *testing.T) {
+	f := newEnrichmentTestFixture(t, false)
+	deleted := f.db.Exec("DELETE FROM knowledge_input_material_receipts WHERE row_kind = 'chunk' AND row_id = ?",
+		f.chunks[0].ID)
+	require.NoError(t, deleted.Error)
+	require.EqualValues(t, 1, deleted.RowsAffected)
+
+	queued := f.post.enqueueSummaryGenerationTask(f.build, types.KnowledgePostProcessPayload{
+		TenantID: f.k.TenantID, KnowledgeBaseID: f.k.KnowledgeBaseID, KnowledgeID: f.k.ID,
+	}, 0)
+	require.False(t, queued)
+	require.Empty(t, f.queue.tasks)
 }

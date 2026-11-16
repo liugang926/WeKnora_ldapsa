@@ -1467,8 +1467,9 @@ func TestNodeDocumentClassification(t *testing.T) {
 			// Off by default: with every switch unset only the native adoc
 			// path is admitted, and the switch must never admit a node that
 			// has no read path at all.
-			if got := testCase.node.isIngestible(documentSettings{}); got != (testCase.online || testCase.label == "axls") {
-				t.Fatalf("isIngestible(off) = %v, want %v", got, testCase.online)
+			want := testCase.online || testCase.label == "axls"
+			if got := testCase.node.isIngestible(documentSettings{}); got != want {
+				t.Fatalf("isIngestible(off) = %v, want %v", got, want)
 			}
 			enabled := documentSettings{IncludeUploadedFiles: true}
 			if got := testCase.node.isIngestible(enabled); got != testCase.document {

@@ -93,7 +93,8 @@ func TestSourceContentRerankTelemetryBypassPreservesOrdinary(t *testing.T) {
 		require.Equal(t, "PRIVATE_SOURCE_DOCUMENT", response[0].Document.Text)
 		require.True(t, spy.ctx == ctx)
 		require.False(t, spy.recording)
-		_, err = wrapper.RerankImages(ctx, "PRIVATE_SOURCE_IMAGE_QUERY", []Image{{Data: []byte("PRIVATE_SOURCE_IMAGE")}})
+		_, err = wrapper.RerankImages(ctx, "PRIVATE_SOURCE_IMAGE_QUERY",
+			[]Image{{Data: []byte("PRIVATE_SOURCE_IMAGE")}})
 		require.NoError(t, err)
 		require.True(t, spy.ctx == ctx)
 		require.False(t, spy.recording)

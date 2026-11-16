@@ -107,8 +107,10 @@ func TestIMChannelResourceRequiresLiveKBBindingOrCurrentArtifact(t *testing.T) {
 	f.wire(s)
 	require.NoError(t, f.db.Create(&types.KnowledgeBase{ID: "own-kb", TenantID: 7}).Error)
 	require.NoError(t, f.db.Create(&types.Knowledge{ID: "own-doc", KnowledgeBaseID: "own-kb", TenantID: 7}).Error)
-	require.NoError(t, f.catalog.Bind(context.Background(), f.refs[0], types.ResourceOwnerKnowledge, "own-doc", types.ResourceRelationExtractedImage))
-	require.NoError(t, f.catalog.Bind(context.Background(), f.refs[1], types.ResourceOwnerMessage, "this-answer", types.ResourceRelationArtifact))
+	require.NoError(t, f.catalog.Bind(context.Background(), f.refs[0],
+		types.ResourceOwnerKnowledge, "own-doc", types.ResourceRelationExtractedImage))
+	require.NoError(t, f.catalog.Bind(context.Background(), f.refs[1],
+		types.ResourceOwnerMessage, "this-answer", types.ResourceRelationArtifact))
 	scope := types.IMChannelScope{
 		TenantID: 7, AgentID: "agent", KnowledgeBases: map[string]uint64{"own-kb": 7, "shared-kb": 9},
 		Verify: func(context.Context, uint64, types.ResourceType, string, types.ResourceAction) error { return nil },

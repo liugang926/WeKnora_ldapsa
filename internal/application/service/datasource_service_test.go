@@ -1560,7 +1560,10 @@ func TestIngestItem_NextcloudConnectorCannotRelabelProvenance(t *testing.T) {
 func TestFetchedConnectorOriginRejectsRelabelAndMutatedArtifact(t *testing.T) {
 	ctx := context.Background()
 	ds := &types.DataSource{ID: "source", TenantID: 1, KnowledgeBaseID: "kb", Type: deletedItemConnectorType}
-	item := &types.FetchedItem{ExternalID: "doc", Content: []byte("fetched"), Metadata: map[string]string{"channel": "feishu"}}
+	item := &types.FetchedItem{
+		ExternalID: "doc", Content: []byte("fetched"),
+		Metadata: map[string]string{"channel": "feishu"},
+	}
 	bound := bindFetchedConnectorItem(ctx, deletedItemConnector{}, ds, item)
 	proof, ok := bound.Value(fetchedConnectorKey{}).(fetchedConnectorItem)
 	require.True(t, ok)
@@ -1574,5 +1577,6 @@ func TestFetchedConnectorOriginRejectsRelabelAndMutatedArtifact(t *testing.T) {
 	ds.ID = "different"
 	require.False(t, proof.matches(ds, item))
 	ds.Type = types.ConnectorTypeNextcloud
-	require.Nil(t, bindFetchedConnectorItem(ctx, nextcloudCursorMixedConnector{}, ds, item).Value(fetchedConnectorKey{}))
+	require.Nil(t, bindFetchedConnectorItem(ctx, nextcloudCursorMixedConnector{}, ds, item).
+		Value(fetchedConnectorKey{}))
 }

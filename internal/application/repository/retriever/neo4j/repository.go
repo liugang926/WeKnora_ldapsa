@@ -502,7 +502,14 @@ func decodeNode(raw neo4j.Node) (*types.GraphNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	node := &types.GraphNode{Name: name, Chunks: chunks, Attributes: attributes, SourceReceipt: receipt, ID: raw.ElementId, KnowledgeID: kg}
+	node := &types.GraphNode{
+		Name:          name,
+		Chunks:        chunks,
+		Attributes:    attributes,
+		SourceReceipt: receipt,
+		ID:            raw.ElementId,
+		KnowledgeID:   kg,
+	}
 	if err := types.CheckGraphNodeReceipt(types.NameSpace{KnowledgeBase: kb, Knowledge: kg}, node); err != nil {
 		return nil, err
 	}
@@ -545,7 +552,15 @@ func decodeEdge(raw neo4j.Relationship, source, target neo4j.Node) (*types.Graph
 	if err != nil {
 		return nil, err
 	}
-	edge := &types.GraphRelation{Node1: name1, Node2: name2, Type: kind, SourceReceipt: receipt, ID: raw.ElementId, SourceID: source.ElementId, TargetID: target.ElementId}
+	edge := &types.GraphRelation{
+		Node1:         name1,
+		Node2:         name2,
+		Type:          kind,
+		SourceReceipt: receipt,
+		ID:            raw.ElementId,
+		SourceID:      source.ElementId,
+		TargetID:      target.ElementId,
+	}
 	if err := types.CheckGraphRelationReceipt(types.NameSpace{KnowledgeBase: kb, Knowledge: kg}, edge); err != nil {
 		return nil, err
 	}

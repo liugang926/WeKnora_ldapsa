@@ -19,6 +19,9 @@ import (
 
 var ErrKnowledgeNotFound = errors.New("knowledge not found")
 
+// ErrSubtaskSlotReleased marks a follow-up failure after the slot release transaction succeeded.
+var ErrSubtaskSlotReleased = errors.New("subtask slot already released")
+
 // likeEscapeChar is the SQL ESCAPE character paired with escapeLikeKeyword.
 const likeEscapeChar = `\`
 
@@ -823,7 +826,9 @@ func (r *knowledgeRepository) UpdateKnowledgeColumns(
 					return err
 				}
 			}
-			admission, err := validateKnowledgeInputWrite(ctx, tx, guard.proof.TenantID, guard.proof.KnowledgeBaseID, id)
+			admission, err := validateKnowledgeInputWrite(
+				ctx, tx, guard.proof.TenantID, guard.proof.KnowledgeBaseID, id,
+			)
 			if err != nil {
 				return err
 			}
@@ -1017,11 +1022,11 @@ func (r *knowledgeRepository) FinalizeSubtask(
 		return 0, false, writeErr
 	}
 	if err := r.maybePublishNextcloudVersion(ctx, id); err != nil {
-		return 0, promoted, err
+		return 0, promoted, fmt.Errorf("%w: %w", ErrSubtaskSlotReleased, err)
 	}
 	if promoted && r.completionObserver != nil {
 		if err := r.completionObserver(ctx, id); err != nil {
-			return 0, promoted, err
+			return 0, promoted, fmt.Errorf("%w: %w", ErrSubtaskSlotReleased, err)
 		}
 	}
 
