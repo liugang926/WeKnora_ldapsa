@@ -30,13 +30,18 @@ type fakeAttachmentStore struct {
 	loads      map[string]int
 }
 
-func (s *fakeAttachmentStore) SessionAttachments(context.Context) (types.MessageAttachments, error) {
+func (s *fakeAttachmentStore) SessionAttachments(context.Context, bool) (types.MessageAttachments, error) {
 	return s.attachments, nil
 }
 
-func (s *fakeAttachmentStore) TemporaryDocument(_ context.Context, id string) (*types.TemporaryDocument, error) {
+func (s *fakeAttachmentStore) TemporaryDocument(
+	_ context.Context, id string, stateOnly bool,
+) (*types.TemporaryDocument, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if stateOnly {
+		return s.documents[id], nil
+	}
 	if s.loads == nil {
 		s.loads = map[string]int{}
 	}

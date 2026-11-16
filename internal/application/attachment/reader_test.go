@@ -25,15 +25,17 @@ type testStore struct {
 	loads   int
 }
 
-func (s *testStore) SessionAttachments(context.Context) (types.MessageAttachments, error) {
+func (s *testStore) SessionAttachments(context.Context, bool) (types.MessageAttachments, error) {
 	if !s.allowed {
 		return nil, nil
 	}
 	return types.MessageAttachments{{ID: s.doc.ID, FileName: "report.pdf"}}, nil
 }
 
-func (s *testStore) TemporaryDocument(context.Context, string) (*types.TemporaryDocument, error) {
-	s.loads++
+func (s *testStore) TemporaryDocument(_ context.Context, _ string, stateOnly bool) (*types.TemporaryDocument, error) {
+	if !stateOnly {
+		s.loads++
+	}
 	return s.doc, nil
 }
 
@@ -166,12 +168,14 @@ func TestFailedDescriptionsAreRetriedAndCacheFailureDoesNotLoseResult(t *testing
 
 type failedProjection struct{ images int }
 
-func (*failedProjection) Document(context.Context, *types.TemporaryDocument) (string, error) {
+func (*failedProjection) Document(
+	context.Context, *types.TemporaryDocument, func(context.Context) error,
+) (string, error) {
 	return "", errors.New("sandbox offline")
 }
 
 func (p *failedProjection) Image(
-	context.Context, *types.TemporaryDocument, int, []byte, string, string, *Description,
+	context.Context, *types.TemporaryDocument, int, []byte, string, string, *Description, func(context.Context) error,
 ) (map[string]string, error) {
 	p.images++
 	return nil, errors.New("sandbox offline")
@@ -206,7 +210,9 @@ func TestConcurrentDescriptionRequestsShareOneCall(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			value, _, err := reader.describe(context.Background(), "document", []byte("image"), "brief", "axes")
+			value, _, err := reader.describe(
+				context.Background(), "document", []byte("image"), "brief", "axes", context.Context.Err,
+			)
 			require.NoError(t, err)
 			require.Equal(t, "chart", value.Text)
 		}()
@@ -215,7 +221,7 @@ func TestConcurrentDescriptionRequestsShareOneCall(t *testing.T) {
 	require.Equal(t, int32(1), calls.Load())
 }
 
-func TestReadImagesAuthorizesOnceAndDescribesConcurrently(t *testing.T) {
+func TestReadImagesLoadsContentOnceAndDescribesConcurrently(t *testing.T) {
 	store, data := imageFixture(t)
 	store.doc.MimeType = "application/pdf"
 	store.doc.ImageRefs = types.JSON(`[{"url":"a"},{"url":"b"},{"url":"c"}]`)
@@ -265,7 +271,9 @@ func TestDescriptionDeadlineStartsAfterQueueing(t *testing.T) {
 		remaining = time.Until(deadline)
 		return "chart", nil
 	}
-	_, _, err := reader.describe(context.Background(), "document", []byte("image"), "brief", "")
+	_, _, err := reader.describe(
+		context.Background(), "document", []byte("image"), "brief", "", context.Context.Err,
+	)
 	require.NoError(t, err)
 	require.Greater(t, remaining, imageDescribeTimeout-queued/2)
 }
@@ -285,13 +293,15 @@ func TestCancelledCallerDoesNotFailSharedDescription(t *testing.T) {
 	firstCtx, cancel := context.WithCancel(context.Background())
 	firstErr := make(chan error, 1)
 	go func() {
-		_, _, err := reader.describe(firstCtx, "document", []byte("image"), "brief", "")
+		_, _, err := reader.describe(firstCtx, "document", []byte("image"), "brief", "", context.Context.Err)
 		firstErr <- err
 	}()
 	<-started
 	second := make(chan *Description, 1)
 	go func() {
-		value, _, err := reader.describe(context.Background(), "document", []byte("image"), "brief", "")
+		value, _, err := reader.describe(
+			context.Background(), "document", []byte("image"), "brief", "", context.Context.Err,
+		)
 		require.NoError(t, err)
 		second <- value
 	}()

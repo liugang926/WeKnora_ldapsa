@@ -103,6 +103,13 @@ func (s *NotificationService) List(
 	if err := query.Order("created_at DESC").Order("id DESC").Limit(limit + 1).Find(&page.Items).Error; err != nil {
 		return nil, err
 	}
+	// Older automation notifications contain an unguarded copy of the answer.
+	// The link opens the run under its current permissions.
+	for _, item := range page.Items {
+		if item.SourceType == "automation" && item.Kind == types.NotificationAutomationSucceeded {
+			item.Body = ""
+		}
+	}
 	if len(page.Items) > limit {
 		page.Items = page.Items[:limit]
 		last := page.Items[limit-1]

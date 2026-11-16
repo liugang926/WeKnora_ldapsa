@@ -16,6 +16,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"gorm.io/gorm"
 )
 
 const defaultAgentAttachmentParseWait = 60 * time.Second
@@ -29,34 +30,86 @@ type agentSessionAttachments struct {
 	sessions  interfaces.SessionRepository
 	verifier  interfaces.MessageSourceLineageVerifier
 	strict    bool
-	documents interfaces.TemporaryDocumentRepository
+	db        *gorm.DB
+	ownerID   string
 	files     interfaces.FileService
 	tenantID  uint64
 	sessionID string
 }
 
-func (a *agentSessionAttachments) SessionAttachments(ctx context.Context) (types.MessageAttachments, error) {
+func (a *agentSessionAttachments) SessionAttachments(
+	ctx context.Context, recheck bool,
+) (types.MessageAttachments, error) {
 	owner := types.SessionOwnerIDFromContext(ctx)
-	if a.sessions == nil || owner == "" {
-		return nil, access.ErrNextcloudPublicationDenied
+	tenant, ok := types.SandboxTenantIDFromContext(ctx)
+	sessionID, hasSession := types.SessionIDFromContext(ctx)
+	sessionTenant, hasTenant := ctx.Value(types.SessionTenantIDContextKey).(uint64)
+	meta, hasTool := tools.ToolExecFromContext(ctx)
+	if hasTool && meta.SessionID != "" && meta.SessionID != a.sessionID {
+		return nil, interfaces.ErrAttachmentNotFound
 	}
-	session, err := a.sessions.Get(ctx, a.tenantID, owner, a.sessionID)
+	if a.sessions == nil || owner == "" || owner != a.ownerID || !ok || tenant == 0 || tenant != a.tenantID ||
+		(hasSession && sessionID != a.sessionID) || (hasTenant && sessionTenant != a.tenantID) {
+		return nil, interfaces.ErrAttachmentNotFound
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// The first read binds the actual admitted materials to the turn. On
+	// rechecks only, use a short-lived material guard; retaining a new snapshot
+	// every half-second while parsing would grow the turn's output boundary.
+	if !recheck {
+		if err := a.checkOwner(ctx); err != nil {
+			return nil, err
+		}
+	}
+	var items types.MessageAttachments
+	var err error
+	if a.strict || agentExplicitInputMaterials(ctx) {
+		if recheck {
+			if _, held := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot); held {
+				if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
+					return nil, err
+				}
+			}
+			ctx = WithMessageMaterialOutputBoundary(ctx)
+			defer CloseMessageMaterialOutputBoundary(ctx)
+		}
+		items, err = admittedAgentSessionAttachments(ctx, a.verifier, a.sessionID)
+	} else {
+		items, err = a.messages.GetSessionAttachments(ctx, a.sessionID)
+	}
 	if err != nil {
 		return nil, err
 	}
-	if session == nil || session.UserID != owner || session.ID != a.sessionID || session.TenantID != a.tenantID {
-		return nil, access.ErrNextcloudPublicationDenied
+	if recheck {
+		// This is the final check, after potentially slow material verification.
+		if err := a.checkOwner(ctx); err != nil {
+			return nil, err
+		}
 	}
-	if a.strict {
-		return admittedAgentSessionAttachments(ctx, a.verifier, a.sessionID)
+	return items, nil
+}
+
+func (a *agentSessionAttachments) checkOwner(ctx context.Context) error {
+	session, err := a.sessions.Get(ctx, a.tenantID, a.ownerID, a.sessionID)
+	if err != nil {
+		return err
 	}
-	return a.messages.GetSessionAttachments(ctx, a.sessionID)
+	if session == nil || session.UserID != a.ownerID || session.ID != a.sessionID || session.TenantID != a.tenantID {
+		return access.ErrNextcloudPublicationDenied
+	}
+	return nil
 }
 
 func (a *agentSessionAttachments) TemporaryDocument(
-	ctx context.Context, documentID string,
+	ctx context.Context, documentID string, stateOnly bool,
 ) (*types.TemporaryDocument, error) {
-	return a.documents.GetByID(ctx, a.tenantID, documentID)
+	db := a.db
+	if stateOnly {
+		db = db.Select("id", "tenant_id", "session_id", "status", "created_at", "updated_at")
+	}
+	return repository.NewTemporaryDocumentRepository(db).GetByID(ctx, a.tenantID, documentID)
 }
 
 func (a *agentSessionAttachments) ReadImage(ctx context.Context, ref string) ([]byte, error) {
@@ -114,13 +167,13 @@ func (s *agentService) registerAttachmentReader(
 	verifier, _ := s.messageService.(interfaces.MessageSourceLineageVerifier)
 	store := &agentSessionAttachments{
 		sessions: repository.NewSessionRepository(s.db), verifier: verifier, strict: agentExplicitInputMaterials(ctx),
-		messages:  repository.NewMessageRepository(s.db),
-		documents: repository.NewTemporaryDocumentRepository(s.db),
+		messages: repository.NewMessageRepository(s.db),
+		db:       s.db, ownerID: types.SessionOwnerIDFromContext(ctx),
 		files:     s.fileService,
 		tenantID:  tenantID,
 		sessionID: sessionID,
 	}
-	attachments, err := store.SessionAttachments(ctx)
+	attachments, err := store.SessionAttachments(ctx, false)
 	if err != nil {
 		logger.Warnf(ctx, "attachment:// not offered: load session attachments: %v", err)
 		return nil

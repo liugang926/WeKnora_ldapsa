@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -638,35 +639,94 @@ func (s *AutomationService) hasLiveRun(db *gorm.DB, automationID string) (bool, 
 func (s *AutomationService) ListRuns(
 	ctx context.Context, id string, limit, offset int,
 ) ([]*types.AutomationRun, int64, error) {
-	if _, err := s.load(ctx, id); err != nil {
+	a, err := s.load(ctx, id)
+	if err != nil {
 		return nil, 0, err
 	}
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	query := s.db.WithContext(ctx).Model(&types.AutomationRun{}).Where("automation_id = ?", id)
+	query := s.db.WithContext(ctx).Model(&types.AutomationRun{}).
+		Where("automation_id = ? AND tenant_id = ?", id, a.TenantID)
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 	out := []*types.AutomationRun{}
-	err := query.Order("scheduled_at DESC, created_at DESC").Limit(limit).Offset(offset).Find(&out).Error
-	return out, total, err
+	if err := query.Omit("Answer").Order("scheduled_at DESC, created_at DESC").
+		Limit(limit).Offset(offset).Find(&out).Error; err != nil {
+		return nil, 0, err
+	}
+	for _, run := range out {
+		run.Answer = s.readRunAnswer(ctx, a, run)
+	}
+	return out, total, nil
 }
 
 // GetRun returns one of the caller's runs.
 func (s *AutomationService) GetRun(ctx context.Context, runID string) (*types.AutomationRun, error) {
 	var run types.AutomationRun
-	if err := s.db.WithContext(ctx).Where("id = ?", runID).First(&run).Error; err != nil {
+	if err := s.db.WithContext(ctx).Omit("Answer").Where("id = ?", runID).First(&run).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, apperrors.NewNotFoundError("run not found")
 		}
 		return nil, err
 	}
-	if _, err := s.load(ctx, run.AutomationID); err != nil {
+	a, err := s.load(ctx, run.AutomationID)
+	if err != nil || a.TenantID != run.TenantID {
 		return nil, apperrors.NewNotFoundError("run not found")
 	}
+	run.Answer = s.readRunAnswer(ctx, a, &run)
 	return &run, nil
+}
+
+// readRunAnswer resolves the original completed turn under the current owner and
+// source permissions. The legacy run cache carries no proof of readable inputs.
+func (s *AutomationService) readRunAnswer(ctx context.Context, a *types.Automation, run *types.AutomationRun) string {
+	if run.SessionID == "" || run.AssistantMessageID == "" || run.AutomationID != a.ID || run.TenantID != a.TenantID {
+		return ""
+	}
+	caller := types.CallerFromContext(ctx)
+	if caller.UserID != a.OwnerUserID || caller.TenantID != a.TenantID {
+		return ""
+	}
+	replay, ok := s.messages.(interface {
+		BeginCompletedMessageMaterialReplay(
+			context.Context, string, string,
+		) (*types.Message, func() error, func(), error)
+	})
+	if !ok || s.sessions == nil {
+		return ""
+	}
+	session, err := s.sessions.GetSession(ctx, run.SessionID)
+	if err != nil || session == nil || session.ID != run.SessionID || session.Kind != types.SessionKindAutomation ||
+		session.UserID != a.OwnerUserID || session.TenantID != a.TenantID {
+		return ""
+	}
+	if s.groups != nil && s.groups.Authorize(ctx, a.TenantID, types.GroupResourceTypeAgent,
+		types.BuiltinWeKnoraAssistantID, types.ResourceActionUse) != nil {
+		return ""
+	}
+	message, check, closeRead, err := replay.BeginCompletedMessageMaterialReplay(
+		ctx, session.ID, run.AssistantMessageID,
+	)
+	if closeRead != nil {
+		defer closeRead()
+	}
+	if err != nil || message == nil || message.SessionID != session.ID || message.ID != run.AssistantMessageID ||
+		message.RequestID != run.ID || message.Role != "assistant" || !message.IsCompleted ||
+		check == nil || check() != nil {
+		return ""
+	}
+	// Legacy runs may have citations outside the producer's recorded selectors.
+	// Such text has no current grant for the cited document.
+	for _, ref := range message.KnowledgeReferences {
+		if ref == nil || ref.KnowledgeID == "" ||
+			!slices.Contains(message.ExecutionContext.KnowledgeIDs, ref.KnowledgeID) {
+			return ""
+		}
+	}
+	return clipRunes(message.Content, maxStoredAnswerRunes)
 }
 
 // CancelRun stops one of the caller's runs.

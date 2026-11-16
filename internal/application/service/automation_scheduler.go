@@ -483,7 +483,7 @@ func (s *AutomationService) settle(ctx context.Context, run *types.AutomationRun
 	}
 	switch {
 	case run.Status == types.AutomationRunSucceeded && a.NotifyOnSuccess:
-		s.notify(ctx, &a, run, types.NotificationAutomationSucceeded, run.Answer)
+		s.notify(ctx, &a, run, types.NotificationAutomationSucceeded, "")
 	case failure:
 		s.notify(ctx, &a, run, types.NotificationAutomationFailed, run.Error)
 		if a.ConsecutiveFailures+1 >= s.cfg.FailuresBeforePause && a.Enabled {

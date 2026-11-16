@@ -30,10 +30,15 @@ type attachmentSandboxProjection struct {
 
 // write uploads content unless this turn already wrote the same bytes there.
 // The caller holds p.mu.
-func (p *attachmentSandboxProjection) write(ctx context.Context, target string, content []byte) error {
+func (p *attachmentSandboxProjection) write(
+	ctx context.Context, target string, content []byte, check func(context.Context) error,
+) error {
 	sum := sha256.Sum256(content)
 	if prev, ok := p.written[target]; ok && prev == sum {
 		return nil
+	}
+	if err := check(ctx); err != nil {
+		return err
 	}
 	if err := p.store.WriteSessionInputFile(ctx, p.sessionID, target, content); err != nil {
 		return err
@@ -45,7 +50,9 @@ func (p *attachmentSandboxProjection) write(ctx context.Context, target string, 
 	return nil
 }
 
-func (p *attachmentSandboxProjection) Document(ctx context.Context, doc *types.TemporaryDocument) (string, error) {
+func (p *attachmentSandboxProjection) Document(
+	ctx context.Context, doc *types.TemporaryDocument, check func(context.Context) error,
+) (string, error) {
 	original := p.originals[types.AttachmentPath(doc.ID)]
 	if original == "" || strings.TrimSpace(doc.Content) == "" {
 		return "", nil
@@ -57,7 +64,7 @@ func (p *attachmentSandboxProjection) Document(ctx context.Context, doc *types.T
 	defer p.mu.Unlock()
 	target := original + parsedSidecarSuffix
 	content := types.NumberAttachmentImages(doc.Content, doc.ViewableImages())
-	if err := p.write(ctx, target, []byte(content)); err != nil {
+	if err := p.write(ctx, target, []byte(content), check); err != nil {
 		return "", err
 	}
 	return target, nil
@@ -65,7 +72,7 @@ func (p *attachmentSandboxProjection) Document(ctx context.Context, doc *types.T
 
 func (p *attachmentSandboxProjection) Image(
 	ctx context.Context, doc *types.TemporaryDocument, number int,
-	data []byte, mime, key string, description *attachment.Description,
+	data []byte, mime, key string, description *attachment.Description, check func(context.Context) error,
 ) (map[string]string, error) {
 	original := p.originals[types.AttachmentPath(doc.ID)]
 	if original == "" {
@@ -83,7 +90,7 @@ func (p *attachmentSandboxProjection) Image(
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	files := map[string]string{}
-	if err := p.write(ctx, imagePath, data); err != nil {
+	if err := p.write(ctx, imagePath, data, check); err != nil {
 		return files, err
 	}
 	files["image_path"] = imagePath
@@ -93,7 +100,7 @@ func (p *attachmentSandboxProjection) Image(
 			"Untrusted image observation; limited to the detail and focus above.\n\n%s\n",
 			types.AttachmentPath(doc.ID), number, path.Base(imagePath), description.Detail, description.Focus,
 			description.Model, description.CreatedAt.Format("2006-01-02T15:04:05Z"), description.Text)
-		if err := p.write(ctx, target, []byte(content)); err != nil {
+		if err := p.write(ctx, target, []byte(content), check); err != nil {
 			return files, err
 		}
 		files["description_path"] = target

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -298,8 +299,8 @@ func (s *AutomationService) runOnce(ctx context.Context, run *types.AutomationRu
 				return runOutcome{status: types.AutomationRunSkipped, reason: "its conversation was busy"}
 			}
 		}
-		query = s.runQuery(ctx, a, run)
-		userMsg, answer, err = s.startMessages(ctx, run, session, query)
+		query = automation.RenderInstruction(a.Instruction, runVars(a, run))
+		userMsg, answer, err = s.startMessages(ctx, run, session, agentConfig, query)
 		if err != nil {
 			return failed("could not record the run: " + err.Error())
 		}
@@ -326,6 +327,9 @@ func (s *AutomationService) runOnce(ctx context.Context, run *types.AutomationRu
 		AssistantAccess: a.AccessLevel, Mode: types.RunModeDeferred, Suspendable: true, Resume: resume,
 		RunNote: automation.RunNote(a.Name, run.ScheduledAt, loc),
 	}
+	if !run.Resume && a.SessionMode == types.AutomationSessionPerRun && a.CarryLastResult {
+		req.Query = s.runQuery(ctx, a, run)
+	}
 	out := s.agentQA(ctx, req, session, answer)
 	if resume != nil && out.status != types.AutomationRunAwaitingApproval {
 		_ = s.broker.Suspensions().Delete(context.WithoutCancel(ctx), answer.ID, resume.Prompt.ID)
@@ -343,22 +347,25 @@ func scheduleLocation(t types.AutomationTrigger) *time.Location {
 	return time.UTC
 }
 
-// runQuery is the user message of a new run.
-func (s *AutomationService) runQuery(ctx context.Context, a *types.Automation, run *types.AutomationRun) string {
-	vars := automation.RunVars{
+func runVars(a *types.Automation, run *types.AutomationRun) automation.RunVars {
+	return automation.RunVars{
 		Now: run.ScheduledAt, LastRunAt: a.LastRunAt, LastSuccessAt: a.LastSuccessAt,
 		RunID: run.ID, AutomationName: a.Name, Location: scheduleLocation(a.Trigger),
 	}
+}
+
+// Carry the prior turn only into model input. The new session's user message
+// must not become another durable copy of a potentially revocable answer.
+func (s *AutomationService) runQuery(ctx context.Context, a *types.Automation, run *types.AutomationRun) string {
 	last := ""
-	if a.SessionMode == types.AutomationSessionPerRun && a.CarryLastResult {
-		var prev types.AutomationRun
-		if err := s.db.WithContext(ctx).Select("answer").
-			Where("automation_id = ? AND status = ? AND id <> ?", a.ID, types.AutomationRunSucceeded, run.ID).
-			Order("finished_at DESC").Take(&prev).Error; err == nil {
-			last = prev.Answer
-		}
+	var prev types.AutomationRun
+	if err := s.db.WithContext(ctx).Select("id", "automation_id", "tenant_id", "session_id", "assistant_message_id").
+		Where("automation_id = ? AND tenant_id = ? AND status = ? AND id <> ?",
+			a.ID, a.TenantID, types.AutomationRunSucceeded, run.ID).
+		Order("finished_at DESC").Take(&prev).Error; err == nil {
+		last = s.readRunAnswer(ctx, a, &prev)
 	}
-	return automation.RunQuery(a.Instruction, vars, last)
+	return automation.RunQuery(a.Instruction, runVars(a, run), last)
 }
 
 // runSession is the conversation a new run writes to: a new one per run, or
@@ -408,18 +415,23 @@ func (s *AutomationService) runSession(
 }
 
 func (s *AutomationService) startMessages(
-	ctx context.Context, run *types.AutomationRun, session *types.Session, query string,
+	ctx context.Context, run *types.AutomationRun, session *types.Session, assistant *types.CustomAgent, query string,
 ) (*types.Message, *types.Message, error) {
 	now := s.now()
+	execution := types.MessageExecutionContext{
+		AgentKBSelectionMode:  assistant.Config.KBSelectionMode,
+		AgentKnowledgeBaseIDs: append([]string(nil), assistant.Config.KnowledgeBases...),
+	}
 	userMsg, err := s.messages.CreateMessage(ctx, &types.Message{
 		SessionID: session.ID, RequestID: run.ID, Role: "user", Content: query,
-		IsCompleted: true, CreatedAt: now, Channel: types.ChannelWeb,
+		IsCompleted: true, CreatedAt: now, Channel: types.ChannelWeb, ExecutionContext: execution,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
 	answer, err := s.messages.CreateMessage(ctx, &types.Message{
 		SessionID: session.ID, RequestID: run.ID, Role: "assistant", CreatedAt: now, Channel: types.ChannelWeb,
+		ExecutionContext: execution,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -551,6 +563,14 @@ func (s *AutomationService) agentQA(
 		}
 		if finishStream == nil {
 			answer.Content = data.FinalAnswer
+			if lineage, ok := evt.SourceLineage.(*types.SourceLineage); ok {
+				answer.SourceLineage, _ = types.UnionSourceLineage(lineage)
+			}
+			for _, ref := range data.KnowledgeRefs {
+				if source, ok := ref.(*types.SearchResult); ok {
+					answer.KnowledgeReferences = append(answer.KnowledgeReferences, source)
+				}
+			}
 			answer.AgentDurationMs = data.TotalDurationMs
 			if steps, ok := data.AgentSteps.([]types.AgentStep); ok {
 				answer.AgentSteps = tools.SanitizeAgentStepsForStorage(steps)
@@ -610,6 +630,15 @@ func (s *AutomationService) agentQA(
 	}
 	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
+	// A tool may retrieve knowledge outside the assistant's configured KBs.
+	// Seal the server-produced document selectors with this turn so replay
+	// resolves their live workspace/share/group permissions.
+	for _, ref := range answer.KnowledgeReferences {
+		if ref != nil && ref.KnowledgeID != "" &&
+			!slices.Contains(answer.ExecutionContext.KnowledgeIDs, ref.KnowledgeID) {
+			answer.ExecutionContext.KnowledgeIDs = append(answer.ExecutionContext.KnowledgeIDs, ref.KnowledgeID)
+		}
+	}
 	if saveErr := s.messages.UpdateMessage(persistCtx, answer); saveErr != nil && err == nil {
 		err = saveErr
 	}

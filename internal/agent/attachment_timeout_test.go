@@ -13,12 +13,12 @@ import (
 
 type attachmentDeadlineStore struct{ deadline time.Time }
 
-func (s *attachmentDeadlineStore) SessionAttachments(ctx context.Context) (types.MessageAttachments, error) {
+func (s *attachmentDeadlineStore) SessionAttachments(ctx context.Context, _ bool) (types.MessageAttachments, error) {
 	s.deadline, _ = ctx.Deadline()
 	return types.MessageAttachments{{ID: "report"}}, nil
 }
 
-func (s *attachmentDeadlineStore) TemporaryDocument(context.Context, string) (*types.TemporaryDocument, error) {
+func (s *attachmentDeadlineStore) TemporaryDocument(context.Context, string, bool) (*types.TemporaryDocument, error) {
 	return &types.TemporaryDocument{ID: "report", Status: types.TemporaryDocumentStatusReady, Content: "body"}, nil
 }
 
@@ -40,7 +40,7 @@ func TestAttachmentToolExecutionHonorsParseWaitAndParentDeadline(t *testing.T) {
 			store := &attachmentDeadlineStore{}
 			engine.toolRegistry.RegisterTool(
 				tools.NewReadFileTool(nil).WithAttachments(attachment.NewReader(store, tc.wait, nil)))
-			ctx := context.Background()
+			ctx := types.WithRAGSourceLineage(t.Context(), engine.turnLineage)
 			if tc.parent > 0 {
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithTimeout(ctx, tc.parent)

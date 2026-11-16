@@ -43,10 +43,10 @@ type DescriptionCache interface {
 // Projection is optional. The durable document and cache remain usable when
 // the sandbox is absent, expires, or fails to accept a copy.
 type Projection interface {
-	Document(context.Context, *types.TemporaryDocument) (string, error)
+	Document(context.Context, *types.TemporaryDocument, func(context.Context) error) (string, error)
 	Image(
 		ctx context.Context, doc *types.TemporaryDocument, number int,
-		data []byte, mime, key string, description *Description,
+		data []byte, mime, key string, description *Description, check func(context.Context) error,
 	) (map[string]string, error)
 }
 
@@ -60,7 +60,7 @@ type ImageReader struct {
 	slots     chan struct{}
 }
 
-// ReadImages authorizes the document once, then prepares, describes and
+// ReadImages verifies the source at each disclosure, then prepares and
 // projects the requested images concurrently.
 func (r *Reader) ReadImages(
 	ctx context.Context, documentID string, numbers []int, detail, focus string,
@@ -77,6 +77,7 @@ func (r *Reader) ReadImages(
 		return nil, fmt.Errorf("attachment image storage is unavailable")
 	}
 	images := doc.ViewableImages()
+	check := func(ctx context.Context) error { return r.Confirm(ctx, *resolved) }
 	reads := make([]interfaces.AttachmentImageRead, len(numbers))
 	var wg sync.WaitGroup
 	for i, number := range numbers {
@@ -88,15 +89,19 @@ func (r *Reader) ReadImages(
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			reads[i].Image, reads[i].Err = r.readImageAt(ctx, doc, number, images[number-1].URL, detail, focus)
+			reads[i].Image, reads[i].Err = r.readImageAt(ctx, doc, number, images[number-1].URL, detail, focus, check)
 		}()
 	}
 	wg.Wait()
+	if err := check(ctx); err != nil {
+		return nil, err
+	}
 	return reads, nil
 }
 
 func (r *Reader) readImageAt(
 	ctx context.Context, doc *types.TemporaryDocument, number int, url, detail, focus string,
+	check func(context.Context) error,
 ) (*interfaces.AttachmentImage, error) {
 	data, err := r.readImage(ctx, url)
 	if err != nil {
@@ -112,7 +117,7 @@ func (r *Reader) readImageAt(
 	if r.Images != nil && r.Images.Describe != nil {
 		text := ""
 		result.Description = &text
-		description, key, err = r.Images.describe(ctx, doc.ID, prepared.Data, detail, focus)
+		description, key, err = r.Images.describe(ctx, doc.ID, prepared.Data, detail, focus, check)
 		if description != nil {
 			*result.Description = description.Text
 		}
@@ -121,7 +126,12 @@ func (r *Reader) readImageAt(
 		}
 	}
 	if r.Projection != nil {
-		result.Files, err = r.Projection.Image(ctx, doc, number, prepared.Data, prepared.MIMEType, key, description)
+		if err := check(ctx); err != nil {
+			return nil, err
+		}
+		result.Files, err = r.Projection.Image(
+			ctx, doc, number, prepared.Data, prepared.MIMEType, key, description, check,
+		)
 		if err != nil {
 			result.Warning = strings.TrimSpace(result.Warning + " Could not sync image to sandbox: " + err.Error())
 		}
@@ -130,7 +140,7 @@ func (r *Reader) readImageAt(
 }
 
 func (r *ImageReader) describe(
-	ctx context.Context, documentID string, data []byte, detail, focus string,
+	ctx context.Context, documentID string, data []byte, detail, focus string, check func(context.Context) error,
 ) (*Description, string, error) {
 	detail, focus = types.NormalizeImageRead(detail, focus)
 	prompt := types.ImageReadPrompt(detail, focus)
@@ -157,6 +167,9 @@ func (r *ImageReader) describe(
 		defer func() { <-r.slots }()
 		imageCtx, cancel := context.WithTimeout(shared, timeout)
 		defer cancel()
+		if err := check(imageCtx); err != nil {
+			return nil, err
+		}
 		text, err := r.Describe(imageCtx, data, prompt)
 		if err != nil {
 			return nil, err
@@ -167,6 +180,9 @@ func (r *ImageReader) describe(
 		}
 		value := &Description{Text: text, Detail: detail, Focus: focus, Model: r.Model, CreatedAt: time.Now().UTC()}
 		if r.Cache != nil {
+			if err := check(shared); err != nil {
+				return nil, err
+			}
 			if err := r.Cache.Put(shared, documentID, key, *value); err != nil {
 				return value, fmt.Errorf("save description: %w", err)
 			}

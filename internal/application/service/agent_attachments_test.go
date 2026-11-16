@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -187,9 +188,9 @@ func TestSentAttachmentRemainsReadableAfterExpiryAndFork(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, removed, "unused uploads must still expire")
 	store := &agentSessionAttachments{
-		messages:  messages,
-		sessions:  repository.NewSessionRepository(db),
-		documents: repo, tenantID: 7, sessionID: fork.ID,
+		messages: messages,
+		sessions: repository.NewSessionRepository(db),
+		db:       db, ownerID: fork.UserID, tenantID: 7, sessionID: fork.ID,
 	}
 	reader := tools.NewReadFileTool(nil).WithAttachments(attachment.NewReader(store, 0, nil))
 	args, err := json.Marshal(tools.ReadFileInput{Path: types.AttachmentPath(document.ID)})
@@ -424,7 +425,9 @@ func TestAttachmentReadSyncsNewlyReadyTextAndReusesImageObservation(t *testing.T
 	db := stagingTempDocDB(t)
 	doc := sessionDocument("read-sync", ".pdf", types.TemporaryDocumentStatusProcessing, 0, "")
 	require.NoError(t, db.Create(doc).Error)
-	require.NoError(t, db.AutoMigrate(&types.Message{}))
+	require.NoError(t, db.AutoMigrate(&types.Message{}, &types.Session{}))
+	session := &types.Session{ID: doc.SessionID, TenantID: doc.TenantID, UserID: "owner"}
+	require.NoError(t, db.Session(&gorm.Session{SkipHooks: true}).Create(session).Error)
 	items := types.MessageAttachments{{ID: doc.ID, FileName: doc.FileName, FileType: doc.FileType, FileSize: 7}}
 	require.NoError(t, db.Create(&types.Message{SessionID: "session-1", Role: "user", Attachments: items}).Error)
 	manager := &stagingSandboxManager{sandboxType: sandbox.SandboxTypeCube}
@@ -437,6 +440,8 @@ func TestAttachmentReadSyncsNewlyReadyTextAndReusesImageObservation(t *testing.T
 		db: db, sandboxMgr: manager, fileService: files, sandboxResolver: stubSandboxResolver{mgr: manager},
 	}
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
+	ctx = context.WithValue(ctx, types.UserIDContextKey, "owner")
+	ctx = types.WithSessionID(ctx, doc.SessionID)
 	layout := sandbox.RemoteWorkspaceLayout()
 	staged, err := svc.stageSessionAttachments(ctx, "session-1", "cfg-remote", 7, items, layout)
 	require.NoError(t, err)
@@ -496,8 +501,101 @@ func TestAttachmentReadSyncsNewlyReadyTextAndReusesImageObservation(t *testing.T
 	require.True(t, again.Success, again.Error)
 	require.Equal(t, 1, calls)
 	require.Contains(t, manager.files, descriptionPath)
+	// Revoke the session inside a real tool read, after the VLM has received
+	// the image but before its observation can be persisted or projected.
+	registry := tools.NewToolRegistry()
+	source := svc.registerAttachmentReader(ctx, registry, config, doc.SessionID)
+	require.NotNil(t, source)
+	source.Images = &attachment.ImageReader{
+		Model: "revoked-model", Cache: cache, Describe: func(context.Context, []byte, string) (string, error) {
+			return "private-observation", db.Model(session).Update("user_id", "new-owner").Error
+		},
+	}
+	tool, err := registry.GetTool(tools.ToolReadFile)
+	require.NoError(t, err)
+	manager.writes = nil
+	denied, _ := tool.Execute(ctx, args)
+	require.NotNil(t, denied)
+	require.False(t, denied.Success)
+	require.Empty(t, denied.Images)
+	require.Empty(t, denied.ImageDescriptions)
+	require.NotContains(t, denied.Output, "private-observation")
+	require.Equal(t, []string{staged[0].Path + parsedSidecarSuffix}, manager.writes,
+		"only the text projection made before revocation is allowed")
+	saved, err := repository.NewTemporaryDocumentRepository(db).GetByID(ctx, 7, doc.ID)
+	require.NoError(t, err)
+	require.NotContains(t, string(saved.Metadata), "private-observation")
 	// Removing the session attachment also removes its sandbox copies.
 	_, err = svc.stageSessionAttachments(ctx, "session-1", "cfg-remote", 7, nil, layout)
 	require.NoError(t, err)
 	require.Empty(t, manager.files)
+}
+
+// The registration is for one conversation and one principal, including when
+// execution borrows the shared assistant's model workspace.
+func TestAttachmentReaderScopeAndRevocationDuringWait(t *testing.T) {
+	db := stagingTempDocDB(t)
+	require.NoError(t, db.AutoMigrate(&types.Session{}, &types.Message{}))
+	session := &types.Session{TenantID: 7, UserID: "owner"}
+	require.NoError(t, db.Create(session).Error)
+	doc := sessionDocument("sensitive", ".pdf", types.TemporaryDocumentStatusReady, 20, "private-canary")
+	doc.SessionID = session.ID
+	require.NoError(t, db.Create(doc).Error)
+	require.NoError(t, db.Create(&types.Message{
+		SessionID: session.ID, Role: "user",
+		Attachments: types.MessageAttachments{{ID: doc.ID, FileName: doc.FileName}},
+	}).Error)
+	ctx := types.WithSessionID(t.Context(), session.ID)
+	ctx = context.WithValue(ctx, types.TenantIDContextKey, uint64(7))
+	ctx = context.WithValue(ctx, types.UserIDContextKey, session.UserID)
+	registry := tools.NewToolRegistry()
+	svc := agentService{db: db}
+	config := &types.AgentConfig{AttachmentParseWaitTimeoutSec: 5}
+	require.NotNil(t, svc.registerAttachmentReader(ctx, registry, config, session.ID))
+	tool, err := registry.GetTool(tools.ToolReadFile)
+	require.NoError(t, err)
+	args, err := json.Marshal(tools.ReadFileInput{Path: types.AttachmentPath(doc.ID)})
+	require.NoError(t, err)
+	borrowed := context.WithValue(ctx, types.TenantIDContextKey, uint64(8))
+	other := types.WithSessionID(ctx, "other-session")
+	for _, denied := range []context.Context{borrowed, other} {
+		result, _ := tool.Execute(denied, args)
+		require.NotNil(t, result)
+		require.False(t, result.Success)
+		require.NotContains(t, result.Output, doc.Content)
+	}
+	shared := types.WithSandboxTenantID(borrowed, 7)
+	result, err := tool.Execute(shared, args)
+	require.NoError(t, err)
+	require.True(t, result.Success, result.Error)
+	require.Contains(t, result.Output, doc.Content)
+	require.NoError(t, db.Model(doc).Update("status", types.TemporaryDocumentStatusProcessing).Error)
+	started := make(chan struct{})
+	var once sync.Once
+	queries := db.Callback().Query().After("gorm:query")
+	require.NoError(t, queries.Register("test:attachment-poll-started", func(tx *gorm.DB) {
+		if tx.Statement.Table == "temporary_documents" {
+			once.Do(func() { close(started) })
+		}
+	}))
+	done := make(chan *types.ToolResult, 1)
+	go func() { result, _ := tool.Execute(ctx, args); done <- result }()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("attachment was never read")
+	}
+	require.NoError(t, db.Model(session).Update("user_id", "new-owner").Error)
+	select {
+	case result = <-done:
+		require.NotNil(t, result)
+		require.False(t, result.Success)
+		require.NotContains(t, result.Output, doc.Content)
+	case <-time.After(3 * time.Second):
+		t.Fatal("read continued waiting after access was lost")
+	}
+	// A transferred session must not make the old registration valid for its new owner.
+	result, _ = tool.Execute(context.WithValue(ctx, types.UserIDContextKey, "new-owner"), args)
+	require.NotNil(t, result)
+	require.False(t, result.Success)
 }

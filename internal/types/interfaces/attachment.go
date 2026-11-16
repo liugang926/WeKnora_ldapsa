@@ -16,7 +16,9 @@ var ErrAttachmentNotFound = errors.New("attachment is not in this conversation")
 type AttachmentReader interface {
 	List(context.Context) ([]AttachmentDocument, error)
 	Resolve(ctx context.Context, ref string, wait bool) (*AttachmentDocument, error)
-	// ReadImages authorizes the document once and reads the numbered images
+	// Confirm rechecks the snapshots before publishing their contents or metadata.
+	Confirm(context.Context, ...AttachmentDocument) error
+	// ReadImages authorizes the document and reads the numbered images
 	// concurrently. The error covers the whole batch; per-image failures are
 	// reported in the aligned results.
 	ReadImages(

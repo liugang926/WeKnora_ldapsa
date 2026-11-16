@@ -2096,7 +2096,8 @@ func (s *Service) handleMessageFullOutput(
 	// user still receives the answer instead of being left on "thinking".
 	var fallbackErr error
 	if finalizeErr != nil {
-		fallbackErr = adapter.SendReply(outCtx, msg, &ReplyMessage{Content: finalContent, IsFinal: true})
+		fallbackErr = s.retryFinalReply(outCtx, msg, adapter, session.ID, answer, qaErr,
+			s.newOutboundFileServiceResolver(tenant, customAgent, kbIDs))
 		if fallbackErr != nil {
 			logger.Errorf(ctx, "[IM] Plain reply fallback after full-output finalize failure failed: %v", fallbackErr)
 		}
@@ -3003,7 +3004,8 @@ loop:
 	// answer in the database while the user only sees intermediate progress.
 	var fallbackErr error
 	if finalizeErr != nil {
-		fallbackErr = adapter.SendReply(outCtx, msg, &ReplyMessage{Content: finalDisplay, IsFinal: true})
+		fallbackErr = s.retryFinalReply(outCtx, msg, adapter, session.ID, answer, nil,
+			s.newOutboundFileServiceResolver(tenant, customAgent, kbIDs))
 		if fallbackErr != nil {
 			logger.Errorf(ctx, "[IM] Plain reply fallback after stream finalize failure failed: %v", fallbackErr)
 		}

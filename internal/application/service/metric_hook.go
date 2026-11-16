@@ -11,6 +11,9 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
+// Version 3 includes all relevant passages up to k in the ideal NDCG ranking.
+const evaluationMetricVersion = 3
+
 // MetricList stores and aggregates metric results
 type MetricList struct {
 	results []metricObservation
@@ -98,11 +101,11 @@ func (m *MetricList) Append(metricInput *types.MetricInput) {
 
 // Avg calculates average of all stored metric results
 func (m *MetricList) Avg() *types.MetricResult {
+	avgResult := &types.MetricResult{MetricVersion: evaluationMetricVersion}
 	if len(m.results) == 0 {
-		return &types.MetricResult{MetricVersion: 2}
+		return avgResult
 	}
 
-	avgResult := &types.MetricResult{MetricVersion: 2}
 	for _, observation := range m.results {
 		if observation.retrievalEvaluated {
 			avgResult.RetrievalEvaluated++

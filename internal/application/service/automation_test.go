@@ -347,14 +347,95 @@ func TestAutomationPausesWhenAssistantUnavailable(t *testing.T) {
 }
 
 func TestAutomationCarriesLastResult(t *testing.T) {
-	f := newAutomationFixture(t)
-	a := f.create(t, types.AutomationPatch{CarryLastResult: ptr(true)})
-	first, _ := f.svc.RunNow(f.ctx, a.ID)
-	f.settleRun(t, first.ID)
-	f.now = f.now.Add(time.Minute)
-	second, _ := f.svc.RunNow(f.ctx, a.ID)
-	f.settleRun(t, second.ID)
-	require.Contains(t, f.sessions.last().req.Query, "<previous_run_result>\ndone\n</previous_run_result>")
+	changes := []string{
+		"readable", "transferred session", "revoked source group",
+		"revoked retrieved KB", "missing receipt", "wrong turn",
+	}
+	for _, change := range changes {
+		t.Run(change, func(t *testing.T) {
+			messages, _, _, db, ctx, _ := messageMaterialActualFixture(t)
+			f := newAutomationFixture(t)
+			f.db, f.svc.db, f.sessions.db, f.ctx = db, db, db, ctx
+			f.svc.messages = messages
+			f.svc.notices = NewNotificationService(db)
+			f.svc.groups = NewGroupAccessService(repository.NewGroupAccessRepository(db))
+			require.NoError(t, db.AutoMigrate(
+				&types.Automation{}, &types.AutomationRun{}, &types.Notification{}, &types.AgentPrompt{},
+			))
+			if change == "revoked retrieved KB" || change == "readable" {
+				source := &types.Knowledge{ID: "referenced-doc", TenantID: automationTenant, KnowledgeBaseID: "kb"}
+				require.NoError(t, db.Create(source).Error)
+				f.sessions.run = func(ctx context.Context, _ *types.QARequest, bus *event.EventBus) error {
+					return complete(ctx, bus, event.AgentCompleteData{FinalAnswer: "done", KnowledgeRefs: []any{
+						&types.SearchResult{KnowledgeID: source.ID, KnowledgeBaseID: source.KnowledgeBaseID},
+					}})
+				}
+			} else {
+				f.agents.agent.Config.KnowledgeBases = []string{"kb"}
+			}
+			a := f.create(t, types.AutomationPatch{CarryLastResult: ptr(true), NotifyOnSuccess: ptr(true)})
+			first, err := f.svc.RunNow(ctx, a.ID)
+			require.NoError(t, err)
+			run := f.settleRun(t, first.ID)
+			require.Equal(t, types.AutomationRunSucceeded, run.Status, run.Error)
+			// Make cache reads distinguishable from the immutable producer's result.
+			require.NoError(t, db.Model(&run).Update("answer", "stale cached secret").Error)
+			switch change {
+			case "transferred session":
+				require.NoError(t, db.Model(&types.Session{}).Where("id = ?", run.SessionID).
+					Update("user_id", "other").Error)
+			case "revoked source group", "revoked retrieved KB":
+				require.NoError(t, db.Create(&types.ResourceAccessPolicy{
+					ID: "restricted", TenantID: a.TenantID, ResourceType: types.GroupResourceTypeKnowledgeBase,
+					ResourceID: "kb", Mode: types.ResourceAccessRestricted,
+				}).Error)
+				f.agents.agent.Config.KnowledgeBases = nil
+			case "missing receipt":
+				require.NoError(t, db.Exec("DELETE FROM message_material_receipts WHERE message_id = ?",
+					run.AssistantMessageID).Error)
+			case "wrong turn":
+				require.NoError(t, db.Model(&run).Update("assistant_message_id", run.UserMessageID).Error)
+			}
+			expected := ""
+			if change == "readable" {
+				expected = "done"
+			}
+			detail, err := f.svc.GetRun(ctx, run.ID)
+			require.NoError(t, err)
+			require.Equal(t, types.AutomationRunSucceeded, detail.Status)
+			require.Equal(t, expected, detail.Answer)
+			list, count, err := f.svc.ListRuns(ctx, a.ID, 10, 0)
+			require.NoError(t, err)
+			require.EqualValues(t, 1, count)
+			require.Len(t, list, 1)
+			require.Equal(t, expected, list[0].Answer)
+			var notice types.Notification
+			require.NoError(t, db.Where("source_id = ?", a.ID).Take(&notice).Error)
+			require.Empty(t, notice.Body)
+			require.NoError(t, db.Model(&notice).Update("body", "legacy notification secret").Error)
+			page, err := f.svc.notices.List(ctx, 10, false, "")
+			require.NoError(t, err)
+			require.Len(t, page.Items, 1)
+			require.Empty(t, page.Items[0].Body)
+			require.Contains(t, page.Items[0].Link, run.ID)
+
+			f.now = f.now.Add(time.Minute)
+			second, err := f.svc.RunNow(ctx, a.ID)
+			require.NoError(t, err)
+			newRun := f.settleRun(t, second.ID)
+			require.Equal(t, types.AutomationRunSucceeded, newRun.Status, newRun.Error)
+			query := f.sessions.last().req.Query
+			require.NotContains(t, query, "stale cached secret")
+			if expected == "" {
+				require.NotContains(t, query, "<previous_run_result>")
+			} else {
+				require.Contains(t, query, "<previous_run_result>\ndone\n</previous_run_result>")
+			}
+			var savedQuery types.Message
+			require.NoError(t, db.Take(&savedQuery, "id = ?", newRun.UserMessageID).Error)
+			require.NotContains(t, savedQuery.Content, "<previous_run_result>")
+		})
+	}
 }
 
 // suspendOnApproval makes the next run raise a suspended tool approval.

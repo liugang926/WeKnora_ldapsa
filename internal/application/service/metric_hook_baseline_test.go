@@ -62,9 +62,19 @@ func TestEvaluationMetricsExcludeUnlabeledCasesFromReferenceAverages(t *testing.
 	mixed.Append(answerable)
 	mixed.Append(unlabeled)
 	got := mixed.Avg()
-	require.Equal(t, 2, got.MetricVersion)
 	require.Equal(t, 1, got.RetrievalEvaluated)
 	require.Equal(t, 1, got.GenerationEvaluated)
 	require.Equal(t, want.RetrievalMetrics, got.RetrievalMetrics)
 	require.Equal(t, want.GenerationMetrics, got.GenerationMetrics)
+}
+
+func TestEvaluationMetricVersionForNDCG(t *testing.T) {
+	list := &MetricList{}
+	require.Equal(t, 3, list.Avg().MetricVersion)
+
+	list.Append(&types.MetricInput{RetrievalGT: [][]int{{1, 2, 3}}, RetrievalIDs: []int{1}})
+	got := list.Avg()
+	require.Equal(t, 3, got.MetricVersion)
+	// Version 2 scored this as 1.0 because only one relevant passage was retrieved.
+	require.InDelta(t, 0.4692787, got.RetrievalMetrics.NDCG10, 0.000001)
 }

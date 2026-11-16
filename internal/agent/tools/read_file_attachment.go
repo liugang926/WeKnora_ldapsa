@@ -96,7 +96,11 @@ func (r *attachmentFileReader) read(ctx context.Context, input ReadFileInput) (*
 		if err != nil {
 			return &types.ToolResult{Success: false, Error: err.Error()}, err
 		}
-		return r.list(inventory), nil
+		result := r.list(inventory)
+		if err := r.source.Confirm(ctx, inventory...); err != nil {
+			return attachmentReadError(err)
+		}
+		return result, nil
 	}
 	ref, sub, _ := strings.Cut(rest, "/")
 	address := types.AttachmentPathScheme + ref
@@ -126,33 +130,49 @@ func (r *attachmentFileReader) read(ctx context.Context, input ReadFileInput) (*
 
 	resolved, err := r.source.Resolve(ctx, ref, true)
 	if err != nil {
-		result := &types.ToolResult{Success: false, Error: err.Error()}
-		if errors.Is(err, interfaces.ErrAttachmentNotFound) {
-			return result, nil
-		}
-		return result, err
+		return attachmentReadError(err)
 	}
+	result := r.renderResolved(ctx, input, resolved, viewImages, firstImage, imageLimit)
+	// Rendering can invoke remote vision and wait for sandbox or cache I/O. Never
+	// fall back to this earlier text snapshot when access changed during that work.
+	if err := r.source.Confirm(ctx, *resolved); err != nil {
+		return attachmentReadError(err)
+	}
+	return result, nil
+}
+
+func attachmentReadError(err error) (*types.ToolResult, error) {
+	result := &types.ToolResult{Success: false, Error: err.Error()}
+	if errors.Is(err, interfaces.ErrAttachmentNotFound) {
+		return result, nil
+	}
+	return result, err
+}
+
+func (r *attachmentFileReader) renderResolved(ctx context.Context, input ReadFileInput,
+	resolved *interfaces.AttachmentDocument, viewImages bool, firstImage, imageLimit int,
+) *types.ToolResult {
 	attachment := resolved.Attachment
-	address = types.AttachmentPath(attachment.ID)
+	address := types.AttachmentPath(attachment.ID)
 	document := resolved.Document
 	switch {
 	case document == nil:
 		if attachment.Content != "" && !viewImages {
-			return r.expired(ctx, input, attachment), nil
+			return r.expired(ctx, input, attachment)
 		}
 		return &types.ToolResult{Success: false, Error: fmt.Sprintf(
 			"attachment %s (%s) has expired or was removed; ask the user to upload it again",
-			address, attachment.FileName)}, nil
+			address, attachment.FileName)}
 	case document.Status == types.TemporaryDocumentStatusFailed:
 		return &types.ToolResult{Success: false, Error: fmt.Sprintf(
 			"attachment %s (%s) could not be parsed: %s. If the original file is in the sandbox, "+
-				"shell tools may read it instead", address, document.FileName, document.ErrorMessage)}, nil
+				"shell tools may read it instead", address, document.FileName, document.ErrorMessage)}
 	case document.Status != types.TemporaryDocumentStatusReady:
 		return &types.ToolResult{Success: false, Error: fmt.Sprintf(
 			"attachment %s (%s) is still being parsed. Parsing continues in the background: "+
 				"call read_file on %s again to keep waiting, or work on other parts of the task first. "+
 				"Do not unpack or parse the original file yourself while it is being parsed",
-			address, document.FileName, address)}, nil
+			address, document.FileName, address)}
 	}
 	var result *types.ToolResult
 	if viewImages {
@@ -168,7 +188,7 @@ func (r *attachmentFileReader) read(ctx context.Context, input ReadFileInput) (*
 			result.Data["sandbox_warning"] = resolved.Warning
 		}
 	}
-	return result, nil
+	return result
 }
 
 func (r *attachmentFileReader) list(inventory []interfaces.AttachmentDocument) *types.ToolResult {

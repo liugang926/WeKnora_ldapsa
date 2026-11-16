@@ -20,15 +20,15 @@ func TestAttachmentSandboxProjectionWritesUnchangedFilesOnce(t *testing.T) {
 	ctx := context.Background()
 	description := &attachment.Description{Text: "chart", Detail: "brief", Model: "vision", CreatedAt: time.Now()}
 	for range 3 {
-		_, err := projection.Document(ctx, doc)
+		_, err := projection.Document(ctx, doc, context.Context.Err)
 		require.NoError(t, err)
-		_, err = projection.Image(ctx, doc, 1, []byte("png"), "image/png", "key", description)
+		_, err = projection.Image(ctx, doc, 1, []byte("png"), "image/png", "key", description, context.Context.Err)
 		require.NoError(t, err)
 	}
 	require.Len(t, store.writes, 3)
 
 	doc.Content = "# Report v2\n"
-	_, err := projection.Document(ctx, doc)
+	_, err := projection.Document(ctx, doc, context.Context.Err)
 	require.NoError(t, err)
 	require.Len(t, store.writes, 4)
 	require.Equal(t, "# Report v2\n", string(store.files["inputs/report.pdf"+parsedSidecarSuffix]))
