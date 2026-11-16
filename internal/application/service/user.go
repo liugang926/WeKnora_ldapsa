@@ -376,7 +376,7 @@ func (s *userService) Login(ctx context.Context, req *types.LoginRequest) (*type
 	// but tell the client they're in their home tenant.
 	logger.Info(ctx, "Generating tokens")
 	resolvedTenantID := s.resolveLoginTenantID(ctx, user)
-	accessToken, refreshToken, err := s.generateTokensForTenant(ctx, user, resolvedTenantID)
+	accessToken, refreshToken, err := s.generateTokensForTenant(ctx, user, resolvedTenantID, "")
 	if err != nil {
 		logger.Errorf(ctx, "Failed to generate tokens: %v", err)
 		return &types.LoginResponse{
@@ -664,7 +664,7 @@ func (s *userService) LoginWithOIDC(
 	// Resolve target tenant once so the JWT claim and the tenant we
 	// return below stay in sync; see Login for the rationale.
 	resolvedTenantID := s.resolveLoginTenantID(ctx, user)
-	accessToken, refreshToken, err := s.generateTokensForTenant(ctx, user, resolvedTenantID)
+	accessToken, refreshToken, err := s.generateTokensForTenant(ctx, user, resolvedTenantID, "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate local tokens: %w", err)
 	}
@@ -1121,7 +1121,7 @@ func (s *userService) GenerateTokens(
 	ctx context.Context,
 	user *types.User,
 ) (accessToken, refreshToken string, err error) {
-	return s.generateTokensForTenant(ctx, user, s.resolveLoginTenantID(ctx, user))
+	return s.generateTokensForTenant(ctx, user, s.resolveLoginTenantID(ctx, user), "")
 }
 
 // resolveLoginTenantID picks the tenant whose ID should be encoded in a
@@ -1348,14 +1348,18 @@ func (s *userService) generateTokensForTenant(
 	ctx context.Context,
 	user *types.User,
 	activeTenantID uint64,
+	previousRefresh string,
 ) (accessToken, refreshToken string, err error) {
-	// Generate access token (expires in 24 hours)
+	now := time.Now()
+	accessID, refreshID := uuid.NewString(), uuid.NewString()
+	// Include a unique JWT ID so rotating twice in one second yields distinct tokens.
 	accessClaims := jwt.MapClaims{
+		"jti":       accessID,
 		"user_id":   user.ID,
 		"email":     user.Email,
 		"tenant_id": activeTenantID,
-		"exp":       time.Now().Add(24 * time.Hour).Unix(),
-		"iat":       time.Now().Unix(),
+		"exp":       now.Add(24 * time.Hour).Unix(),
+		"iat":       now.Unix(),
 		"type":      "access",
 	}
 
@@ -1367,9 +1371,10 @@ func (s *userService) generateTokensForTenant(
 
 	// Generate refresh token (expires in 7 days)
 	refreshClaims := jwt.MapClaims{
+		"jti":     refreshID,
 		"user_id": user.ID,
-		"exp":     time.Now().Add(7 * 24 * time.Hour).Unix(),
-		"iat":     time.Now().Unix(),
+		"exp":     now.Add(7 * 24 * time.Hour).Unix(),
+		"iat":     now.Unix(),
 		"type":    "refresh",
 	}
 
@@ -1381,34 +1386,31 @@ func (s *userService) generateTokensForTenant(
 
 	// Store tokens in database
 	accessTokenRecord := &types.AuthToken{
-		ID:        uuid.New().String(),
+		ID:        accessID,
 		UserID:    user.ID,
 		Token:     accessToken,
 		TokenType: "access_token",
-		ExpiresAt: time.Now().Add(24 * time.Hour),
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ExpiresAt: now.Add(24 * time.Hour),
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 
 	refreshTokenRecord := &types.AuthToken{
-		ID:        uuid.New().String(),
+		ID:        refreshID,
 		UserID:    user.ID,
 		Token:     refreshToken,
 		TokenType: "refresh_token",
-		ExpiresAt: time.Now().Add(7 * 24 * time.Hour),
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ExpiresAt: now.Add(7 * 24 * time.Hour),
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 
 	// Persist before returning the pair: a signed token the database has no row
 	// for is rejected by ValidateToken / RefreshToken on the very next request,
 	// so swallowing a write error turns a transient database failure into a
 	// login that looks successful and then loses the session immediately.
-	if err := s.tokenRepo.CreateToken(ctx, accessTokenRecord); err != nil {
-		return "", "", fmt.Errorf("persist access token: %w", err)
-	}
-	if err := s.tokenRepo.CreateToken(ctx, refreshTokenRecord); err != nil {
-		return "", "", fmt.Errorf("persist refresh token: %w", err)
+	if err := s.tokenRepo.CreateTokenPair(ctx, accessTokenRecord, refreshTokenRecord, previousRefresh); err != nil {
+		return "", "", err
 	}
 
 	return accessToken, refreshToken, nil
@@ -1468,7 +1470,7 @@ func (s *userService) SwitchTenant(
 		return nil, fmt.Errorf("record last-active-tenant preference: %w", err)
 	}
 
-	accessToken, refreshToken, err := s.generateTokensForTenant(ctx, user, targetTenantID)
+	accessToken, refreshToken, err := s.generateTokensForTenant(ctx, user, targetTenantID, "")
 	if err != nil {
 		return nil, fmt.Errorf("generate tokens: %w", err)
 	}
@@ -1732,12 +1734,8 @@ func (s *userService) RefreshToken(
 		return "", "", err
 	}
 
-	// Revoke old refresh token
-	tokenRecord.IsRevoked = true
-	_ = s.tokenRepo.UpdateToken(ctx, tokenRecord)
-
-	// Generate new tokens
-	return s.GenerateTokens(ctx, user)
+	// Consume the authenticated refresh token in the same transaction as the new pair.
+	return s.generateTokensForTenant(ctx, user, s.resolveLoginTenantID(ctx, user), refreshTokenString)
 }
 
 // Logout invalidates every outstanding session for the user identified by

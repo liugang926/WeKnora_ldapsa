@@ -313,7 +313,9 @@ type cleanupTokenRepo struct {
 	revoked []string
 }
 
-func (r *cleanupTokenRepo) CreateToken(context.Context, *types.AuthToken) error { return nil }
+func (r *cleanupTokenRepo) CreateTokenPair(context.Context, *types.AuthToken, *types.AuthToken, string) error {
+	return nil
+}
 func (r *cleanupTokenRepo) GetTokenByValue(context.Context, string) (*types.AuthToken, error) {
 	return nil, errors.New("not found")
 }

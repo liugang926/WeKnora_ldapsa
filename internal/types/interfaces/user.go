@@ -218,8 +218,9 @@ type UserRepository interface {
 
 // AuthTokenRepository defines the auth token repository interface
 type AuthTokenRepository interface {
-	// CreateToken creates an auth token
-	CreateToken(ctx context.Context, token *types.AuthToken) error
+	// CreateTokenPair issues an active user's token pair. During rotation it consumes
+	// the previous refresh token in the same transaction.
+	CreateTokenPair(ctx context.Context, access, refresh *types.AuthToken, previousRefresh string) error
 	// GetTokenByValue gets a token by its value
 	GetTokenByValue(ctx context.Context, tokenValue string) (*types.AuthToken, error)
 	// GetTokenByID gets a token by its primary key

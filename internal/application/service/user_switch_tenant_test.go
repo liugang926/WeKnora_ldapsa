@@ -37,16 +37,6 @@ func (r *switchTenantUserRepo) UpdateUser(_ context.Context, user *types.User) e
 	return nil
 }
 
-type countingAuthTokenRepo struct {
-	stubAuthTokenRepo
-	createCalls int
-}
-
-func (s *countingAuthTokenRepo) CreateToken(context.Context, *types.AuthToken) error {
-	s.createCalls++
-	return nil
-}
-
 func newSwitchTenantTestService(repo *switchTenantUserRepo, memberSvc interfaces.TenantMemberService) *userService {
 	return &userService{
 		userRepo:      repo,
@@ -137,7 +127,7 @@ func TestSwitchTenantPreferenceWriteFailureAbortsSwitch(t *testing.T) {
 			42: {TenantID: 42, Status: types.TenantMemberStatusActive},
 		},
 	}
-	tokens := &countingAuthTokenRepo{}
+	tokens := &stubAuthTokenRepo{}
 	svc := newSwitchTenantTestService(repo, memberSvc)
 	svc.tokenRepo = tokens
 	user, _ := repo.GetUserByID(ctx, "alice")

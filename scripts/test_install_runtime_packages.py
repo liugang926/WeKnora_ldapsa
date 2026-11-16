@@ -18,7 +18,7 @@ PACKAGES = [
     "build-essential", "postgresql-client", "default-mysql-client", "tzdata",
     "sed", "curl", "bash", "vim", "wget", "libsqlite3-0", "python3",
     "python3-pip", "python3-dev", "libffi-dev", "libssl-dev", "nodejs",
-    "npm", "gosu", "ffmpeg",
+    "npm", "gosu", "ffmpeg", "qpdf",
 ]
 FAKE_APT = r'''#!/usr/bin/env python3
 import json, os
@@ -159,9 +159,10 @@ class RuntimeAPTTests(unittest.TestCase):
         self.assertIn("COPY scripts/install-runtime-packages.sh /tmp/install-runtime-packages.sh", dockerfile)
         runtime = dockerfile.split("COPY scripts/install-runtime-packages.sh", 1)[1]
         self.assertIn("apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=180 update &&", runtime)
-        batch = runtime.split("bash /tmp/install-runtime-packages.sh", 1)[1].split("&&", 1)[0]
-        self.assertEqual(batch.replace("\\", " ").split(), PACKAGES)
-        self.assertIn("ffmpeg && \\\n    rm -rf /var/lib/apt/lists/*", runtime)
+        install = runtime.split("bash /tmp/install-runtime-packages.sh", 1)[1].replace("\\\n", " ")
+        batch, cleanup = install.split("&&", 1)
+        self.assertEqual(batch.split(), PACKAGES)
+        self.assertEqual(cleanup.strip().splitlines()[0], "rm -rf /var/lib/apt/lists/*")
         self.assertNotIn("--fix-missing", runtime)
         self.assertNotIn("--allow-unauthenticated", runtime)
 

@@ -233,3 +233,84 @@ func TestConcurrentAdminChangesKeepOneActiveAdmin(t *testing.T) {
 		})
 	}
 }
+
+func TestTokenPairSerializesWithAccountDisable(t *testing.T) {
+	userStatusBackends(t, func(t *testing.T, db *gorm.DB) {
+		ctx := context.Background()
+		seedStatusUser(t, db, "employee", false, true)
+		tokens := NewAuthTokenRepository(db)
+		users := NewUserRepository(db)
+		newToken := func(kind string) *types.AuthToken {
+			id := uuid.NewString()
+			return &types.AuthToken{
+				ID: id, Token: id, UserID: "employee", TokenType: kind, ExpiresAt: time.Now().Add(time.Hour),
+			}
+		}
+		access, refresh := newToken("access_token"), newToken("refresh_token")
+		inserted, resume := make(chan struct{}), make(chan struct{})
+		defer func() {
+			select {
+			case <-resume:
+			default:
+				close(resume)
+			}
+		}()
+		afterCreate := db.Callback().Create().After("gorm:create")
+		require.NoError(t, afterCreate.Register("test:pause_after_access", func(tx *gorm.DB) {
+			if token, ok := tx.Statement.Dest.(*types.AuthToken); ok && token == access {
+				close(inserted)
+				<-resume
+			}
+		}))
+		issued := make(chan error, 1)
+		go func() { issued <- tokens.CreateTokenPair(ctx, access, refresh, "") }()
+		select {
+		case <-inserted:
+		case err := <-issued:
+			t.Fatalf("issuance returned before the access insert: %v", err)
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for the access insert")
+		}
+		var visible int64
+		require.NoError(t, db.Model(&types.AuthToken{}).Where("user_id = ?", "employee").Count(&visible).Error)
+		require.Zero(t, visible, "a concurrent reader must not see half a pair")
+		disableStarted := make(chan struct{})
+		disabled := make(chan error, 1)
+		go func() {
+			close(disableStarted)
+			_, err := users.SetUserActive(ctx, "employee", "operator", false)
+			disabled <- err
+		}()
+		<-disableStarted
+		close(resume)
+		require.NoError(t, <-issued)
+		require.NoError(t, <-disabled)
+		require.Error(t, tokens.CreateTokenPair(ctx, newToken("access_token"), newToken("refresh_token"), ""))
+		_, err := users.SetUserActive(ctx, "employee", "operator", true)
+		require.NoError(t, err)
+		require.Error(t, tokens.CreateTokenPair(ctx, newToken("access_token"), newToken("refresh_token"), refresh.Token))
+		live, err := tokens.GetTokensByUserID(ctx, "employee")
+		require.NoError(t, err)
+		require.Len(t, live, 2)
+		for _, token := range live {
+			require.True(t, token.IsRevoked)
+		}
+
+		old := newToken("refresh_token")
+		require.NoError(t, tokens.CreateTokenPair(ctx, newToken("access_token"), old, ""))
+		failedAccess := newToken("access_token")
+		err = tokens.CreateTokenPair(ctx, failedAccess, old, old.Token)
+		require.Error(t, err, "duplicate refresh ID must roll back both issuance and consumption")
+		_, err = tokens.GetTokenByID(ctx, failedAccess.ID)
+		require.ErrorIs(t, err, ErrTokenNotFound)
+		// Concurrent rotation of a single previous token has exactly one winner.
+		result := make(chan error, 2)
+		for range 2 {
+			go func() {
+				result <- tokens.CreateTokenPair(ctx, newToken("access_token"), newToken("refresh_token"), old.Token)
+			}()
+		}
+		first, second := <-result, <-result
+		require.True(t, (first == nil) != (second == nil), "rotation outcomes: %v, %v", first, second)
+	})
+}

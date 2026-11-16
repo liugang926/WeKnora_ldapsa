@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -10,7 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 // errTokenWrite stands in for a failed auth_tokens insert: statement timeout,
@@ -147,4 +151,37 @@ func TestValidateTokenStillReportsRevokedTokens(t *testing.T) {
 	_, _, err := svc.ValidateToken(ctx, access)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "token is revoked")
+}
+
+func TestSessionRotationCannotReviveDisabledSession(t *testing.T) {
+	ctx := context.Background()
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "sessions.db")), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&types.User{}, &types.AuthToken{}))
+	users := repository.NewUserRepository(db)
+	svc := &userService{userRepo: users, tokenRepo: repository.NewAuthTokenRepository(db)}
+	user := persistedTestUser(t, 1, "session@example.test", "Test-session-1")
+	require.NoError(t, users.CreateUser(ctx, user))
+	access, first, err := svc.GenerateTokens(ctx, user)
+	require.NoError(t, err)
+	secondAccess, second, err := svc.RefreshToken(ctx, first)
+	require.NoError(t, err)
+	require.NotEqual(t, access, secondAccess)
+	require.NotEqual(t, first, second)
+	_, _, err = svc.RefreshToken(ctx, first)
+	require.Error(t, err)
+	_, err = users.SetUserActive(ctx, user.ID, "operator", false)
+	require.NoError(t, err)
+	_, _, err = svc.GenerateTokens(ctx, user)
+	require.Error(t, err, "a stale in-memory user cannot get tokens")
+	_, err = users.SetUserActive(ctx, user.ID, "operator", true)
+	require.NoError(t, err)
+	_, _, err = svc.RefreshToken(ctx, second)
+	require.Error(t, err)
+	_, _, err = svc.ValidateToken(ctx, secondAccess)
+	require.Error(t, err)
+	fresh, _, err := svc.GenerateTokens(ctx, user)
+	require.NoError(t, err)
+	_, _, err = svc.ValidateToken(ctx, fresh)
+	require.NoError(t, err)
 }

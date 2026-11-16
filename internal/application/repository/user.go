@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -437,9 +438,52 @@ func NewAuthTokenRepository(db *gorm.DB) interfaces.AuthTokenRepository {
 	return &authTokenRepository{db: db}
 }
 
-// CreateToken creates an auth token
-func (r *authTokenRepository) CreateToken(ctx context.Context, token *types.AuthToken) error {
-	return r.db.WithContext(ctx).Create(token).Error
+// CreateTokenPair serializes issuance with account status changes and consumes a
+// refresh token only if the replacement pair commits.
+func (r *authTokenRepository) CreateTokenPair(
+	ctx context.Context, access, refresh *types.AuthToken, previousRefresh string,
+) error {
+	if access == nil || refresh == nil || access.UserID == "" || access.UserID != refresh.UserID ||
+		access.TokenType != "access_token" || refresh.TokenType != "refresh_token" {
+		return errors.New("invalid token pair")
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		account := tx.Model(&types.User{}).Where("id = ? AND is_active = ?", access.UserID, true)
+		var locked *gorm.DB
+		if tx.Name() == "sqlite" {
+			// SQLite has no row locks. Take its writer lock before reading or
+			// rotating tokens without modifying the user's status or timestamps.
+			locked = account.UpdateColumn("is_active", true)
+		} else {
+			var user types.User
+			locked = lockUserRows(account).Select("id").Find(&user)
+		}
+		if locked.Error != nil {
+			return locked.Error
+		}
+		if locked.RowsAffected == 0 {
+			return errors.New("account is disabled or missing")
+		}
+		if previousRefresh != "" {
+			old := tx.Model(&types.AuthToken{}).
+				Where("user_id = ? AND token = ? AND token_type = ? AND is_revoked = ? AND expires_at > ?",
+					access.UserID, previousRefresh, "refresh_token", false, time.Now()).
+				Update("is_revoked", true)
+			if old.Error != nil {
+				return old.Error
+			}
+			if old.RowsAffected == 0 {
+				return errors.New("refresh token is revoked or expired")
+			}
+		}
+		if err := tx.Create(access).Error; err != nil {
+			return fmt.Errorf("persist access token: %w", err)
+		}
+		if err := tx.Create(refresh).Error; err != nil {
+			return fmt.Errorf("persist refresh token: %w", err)
+		}
+		return nil
+	})
 }
 
 // GetTokenByValue gets a token by its value

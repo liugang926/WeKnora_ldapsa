@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,15 +33,25 @@ type stubAuthTokenRepo struct {
 	createCalls int
 }
 
-func (s *stubAuthTokenRepo) CreateToken(_ context.Context, token *types.AuthToken) error {
-	s.createCalls++
-	if s.createCalls <= len(s.createErrs) {
-		if err := s.createErrs[s.createCalls-1]; err != nil {
-			return err
+func (s *stubAuthTokenRepo) CreateTokenPair(
+	_ context.Context, access, refresh *types.AuthToken, previousRefresh string,
+) error {
+	for _, token := range []*types.AuthToken{access, refresh} {
+		s.createCalls++
+		if s.createCalls <= len(s.createErrs) && s.createErrs[s.createCalls-1] != nil {
+			kind := strings.TrimSuffix(token.TokenType, "_token")
+			return fmt.Errorf("persist %s token: %w", kind, s.createErrs[s.createCalls-1])
 		}
 	}
-	if s.tokens != nil && token != nil {
-		s.tokens[token.Token] = token
+	if s.tokens != nil {
+		if previousRefresh != "" {
+			old := s.tokens[previousRefresh]
+			if old == nil || old.IsRevoked {
+				return errors.New("refresh token is revoked")
+			}
+			old.IsRevoked = true
+		}
+		s.tokens[access.Token], s.tokens[refresh.Token] = access, refresh
 	}
 	return nil
 }
