@@ -204,7 +204,9 @@ func newCrashRecoveryFixture(t *testing.T) (*Handler, context.Context, *types.Ag
 	store := newAuthority(db)
 	repository.ConfigureKnowledgeDisplayInputWriters(store, nil, nil, newAuthority)
 	msgRepo := repository.NewMessageRepository(db)
-	messages := service.NewMessageService(msgRepo, repository.NewSessionRepository(db), nil, nil, nil, nil, nil, nil, nil)
+	messages := service.NewMessageService(
+		msgRepo, repository.NewSessionRepository(db), nil, nil, nil, nil, nil, nil, nil,
+	)
 	guard := access.NewNextcloudSourceLineageGuard(nil, nil, nil, nil, groups, nil, store)
 	service.ConfigureMessageSourceLineage(
 		messages, nil, &service.SessionForkService{}, &chatpipeline.EventManager{}, guard,
