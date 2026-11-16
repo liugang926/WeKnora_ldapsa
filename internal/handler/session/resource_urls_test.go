@@ -21,7 +21,7 @@ import (
 
 const testResourceHandle = "resource://xifDo7NTSL300Lp1goVutw"
 
-// stubResourceFileService resolves any storage reference to one fixed public URL.
+// stubResourceFileService serves the single registered image in these tests.
 type stubResourceFileService struct {
 	interfaces.FileService
 }
@@ -32,7 +32,12 @@ func stubRequestResolver(
 	return files.(*stubResourceFileService)
 }
 
-func (s *stubResourceFileService) ResolveFileService(string) interfaces.FileService { return s }
+func (s *stubResourceFileService) ResolveFileService(ref string) interfaces.FileService {
+	if ref != testResourceHandle {
+		return nil
+	}
+	return s
+}
 
 func (s *stubResourceFileService) GetFileURL(context.Context, string) (string, error) {
 	return "https://cdn.example.com/signed.png", nil

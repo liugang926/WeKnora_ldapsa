@@ -179,6 +179,7 @@ func TestContinueStreamPollFailureRechecksHeldPublication(t *testing.T) {
 			h := &Handler{
 				sessionService: &stubSessionService{}, messageService: messages,
 				streamManager: streams, fileService: &stubResourceFileService{},
+				ResourceURLResolver: stubRequestResolver,
 			}
 			router := gin.New()
 			router.Use(middleware.ErrorHandler())
