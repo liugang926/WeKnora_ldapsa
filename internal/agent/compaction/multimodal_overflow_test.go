@@ -13,10 +13,14 @@ func TestOverflowAfterSanitizationPreservesPreviousSummary(t *testing.T) {
 	const marker = "KEEP_PRIOR_USER_DECISION_7E93"
 	live := reactTurn(40)
 	summary := SummaryMessage(marker + "\n<modified-files>\n/workspace/prior.txt\n</modified-files>")
-	image := chat.Message{Role: "user", MultiContent: []chat.MessageContentPart{
-		{Type: "image_url", ImageURL: &chat.ImageURL{URL: "data:image/png;base64,AA=="}},
-		{Type: "text", Text: "continue from this screenshot"},
-	}}
+	summary.SourceLineage = literalCompactionInput()
+	image := chat.Message{
+		Role: "user", SourceLineage: literalCompactionInput(),
+		MultiContent: []chat.MessageContentPart{
+			{Type: "image_url", ImageURL: &chat.ImageURL{URL: "data:image/png;base64,AA=="}},
+			{Type: "text", Text: "continue from this screenshot"},
+		},
+	}
 	messages := append([]chat.Message{live[0], summary, image}, live[2:]...)
 	sanitized := agenttools.SanitizeMessages(messages)
 	require.Equal(t, chat.MessageKindCompactionSummary, sanitized[1].Kind)
@@ -24,7 +28,7 @@ func TestOverflowAfterSanitizationPreservesPreviousSummary(t *testing.T) {
 	require.NotEmpty(t, sanitized[1].MultiContent)
 
 	llm := &stubChat{response: "## Goal\ncontinue the task"}
-	c := New(llm, newEstimator(t), testSettings())
+	c := newLiteralTestCompactor(llm, newEstimator(t), testSettings())
 	result, err := c.Compact(t.Context(), sanitized, ReasonOverflow)
 	require.NoError(t, err)
 	require.NotEmpty(t, llm.prompts)

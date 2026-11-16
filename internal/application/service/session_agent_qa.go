@@ -190,7 +190,7 @@ func (s *sessionService) AgentQA(
 
 	// Resolve model ID using shared helper (AgentQA requires a model, so error if not found)
 	effectiveModelID, modelTenantID, err := s.resolveChatModelID(
-		ctx, req, agentConfig.KnowledgeBases, agentConfig.KnowledgeIDs,
+		ctx, req, agentConfig.SearchTargets,
 	)
 	if err != nil {
 		return err
@@ -518,8 +518,16 @@ func (s *sessionService) AgentQA(
 	}); ok {
 		mcpEngine.SetMCPIndependentTransportVerifier(s.agentMCPIndependentVerifier(ctx, req, agentConfig))
 	}
+	workerInput, _ := ctx.Value(delegatedWorkerInputKey{}).(*delegatedWorkerInput)
+	if workerInput != nil {
+		inputEngine, ok := engine.(interface{ SetUserInputSourceLineage(*types.SourceLineage) })
+		if !ok {
+			return access.ErrNextcloudPublicationUnavailable
+		}
+		inputEngine.SetUserInputSourceLineage(workerInput.lineage())
+	}
 	carryCheck, _ := ctx.Value(automationCarryCheckKey{}).(func() error)
-	if s.groupAccess != nil || carryCheck != nil {
+	if s.groupAccess != nil || carryCheck != nil || workerInput != nil {
 		guarded, ok := engine.(interface {
 			SetRoundGuard(func(context.Context) error)
 		})
@@ -534,12 +542,17 @@ func (s *sessionService) AgentQA(
 					return err
 				}
 			}
-			if hasRawInputMaterials || resume != nil {
+			if hasRawInputMaterials || resume != nil || workerInput != nil {
 				if err := CheckMessageMaterialOutputBoundary(ctx); err != nil {
 					return err
 				}
 			}
 
+			if turn := types.RAGSourceLineageFromContext(guardCtx); workerInput != nil && turn != nil {
+				if err := turn.Add(workerInput.lineage()); err != nil {
+					return err
+				}
+			}
 			return s.revalidateAgentExecution(guardCtx, agent, searchTargets)
 		})
 	}

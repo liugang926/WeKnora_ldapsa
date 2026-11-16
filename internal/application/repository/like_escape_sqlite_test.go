@@ -257,19 +257,30 @@ func TestSessionQueryPagedKeywordTreatsLikeWildcardsLiterally(t *testing.T) {
 	const tenantID = uint64(7)
 	const userID = "web_user:alice"
 
-	literal := &types.Session{TenantID: tenantID, UserID: userID, Title: "Deploy_Plan v1"}
-	require.NoError(t, db.Create(literal).Error)
-	require.NoError(t, db.Create(&types.Session{
-		TenantID: tenantID, UserID: userID, Title: "DeployXPlan v1",
-	}).Error)
-
-	rows, total, err := repo.QueryPaged(ctx, &types.SessionListQuery{
-		TenantID: tenantID, UserID: userID, Keyword: "Deploy_Plan", Page: 1, PageSize: 20,
-	})
+	proof, err := types.NewCompleteSourceLineage()
 	require.NoError(t, err)
-	require.Len(t, rows, 1, "underscore must match literally, not as a wildcard")
-	assert.Equal(t, literal.ID, rows[0].ID)
-	assert.Equal(t, int64(1), total, "the count query must use the same escape")
+	seed := func(tenant uint64, owner, title string) string {
+		t.Helper()
+		session := &types.Session{TenantID: tenant, UserID: owner, Title: title, TitleSourceLineage: proof}
+		require.NoError(t, db.Create(session).Error)
+		return session.ID
+	}
+
+	const title = `Deploy_Plan 100% rollout path\dir`
+	id := seed(tenantID, userID, title)
+	seed(tenantID, userID, "DeployXPlan 100X rollout pathdir")
+	seed(tenantID, "web_user:bob", title)
+	seed(tenantID+1, userID, title)
+
+	for _, keyword := range []string{"Deploy_Plan", "100% rollout", `path\dir`} {
+		rows, total, err := repo.QueryPaged(ctx, &types.SessionListQuery{
+			TenantID: tenantID, UserID: userID, Keyword: keyword, Page: 1, PageSize: 20,
+		})
+		require.NoError(t, err)
+		require.Len(t, rows, 1, "keyword %q", keyword)
+		assert.Equal(t, id, rows[0].ID)
+		assert.EqualValues(t, 1, total, "count for keyword %q", keyword)
+	}
 }
 
 // Covers the document chunk/Faq keyword filter, which previously did not

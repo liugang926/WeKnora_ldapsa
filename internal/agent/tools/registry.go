@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"sort"
@@ -18,6 +19,8 @@ import (
 type ToolRegistry struct {
 	executionGuard    func(context.Context, types.Tool) error
 	mcpCallGuard      MCPCallGuard
+	mcpSourceCatalog  *MCPCatalog // Source checks survive removal of the discovery tool.
+	restrictedTools   map[string]bool
 	tools             map[string]types.Tool
 	deferred          map[string]bool
 	mcpDirect         bool // Full exposure is an explicit compatibility path.
@@ -69,12 +72,18 @@ func (r *ToolRegistry) RegisterDeferredTool(tool types.Tool) {
 
 func (r *ToolRegistry) registerTool(tool types.Tool, deferred bool) {
 	name := tool.Name()
+	if r.restrictedTools != nil && !r.restrictedTools[name] {
+		return
+	}
 	if _, exists := r.tools[name]; exists {
 		logger.Warnf(context.Background(),
 			"[ToolRegistry] Duplicate tool registration rejected: %s (first-wins policy)", name)
 		return
 	}
 	r.tools[name] = tool
+	if discovery, ok := tool.(*MCPDiscoverTool); ok {
+		r.mcpSourceCatalog = discovery.catalog
+	}
 	if r.deferred == nil {
 		r.deferred = make(map[string]bool)
 	}
@@ -87,8 +96,11 @@ func (r *ToolRegistry) registerTool(tool types.Tool, deferred bool) {
 func (r *ToolRegistry) RestrictTools(names []string) {
 	allowed := make(map[string]bool, len(names))
 	for _, name := range names {
-		allowed[name] = true
+		if r.restrictedTools == nil || r.restrictedTools[name] {
+			allowed[name] = true
+		}
 	}
+	r.restrictedTools = allowed
 	for name := range r.tools {
 		if !allowed[name] {
 			delete(r.tools, name)
@@ -284,7 +296,7 @@ func (r *ToolRegistry) execute(ctx context.Context, tool types.Tool, args json.R
 		}
 	}
 	ctx = withMCPCallGuard(ctx, r.mcpCallGuard)
-	result, execErr := executeRecovered(WithOutputBudget(ctx, maxOutput), tool, args)
+	result, execErr := executeRecovered(WithOutputBudget(ctx, maxOutput), tool, name, args)
 	if result == nil {
 		result = &types.ToolResult{Success: false, Error: "tool returned no result"}
 	}
@@ -336,15 +348,22 @@ func (r *ToolRegistry) execute(ctx context.Context, tool types.Tool, args json.R
 // tool.Execute call alone: a goroutine a tool starts for itself must install
 // its own barrier (GoRecovered / RecoverGoroutine in goroutine.go).
 func executeRecovered(
-	ctx context.Context, tool types.Tool, args json.RawMessage,
+	ctx context.Context, tool types.Tool, name string, args json.RawMessage,
 ) (result *types.ToolResult, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			logger.Errorf(ctx, "[ToolRegistry] Tool %s panicked: %v\n%s", tool.Name(), r, debug.Stack())
+			logger.Errorf(ctx, "[ToolRegistry] Tool %s panicked: %v\n%s", name, r, debug.Stack())
 			// The panic value can carry internals (paths, addresses); the
 			// model and the user only need to know the call did not complete.
-			err = fmt.Errorf("tool %s failed with an internal error", tool.Name())
-			result = &types.ToolResult{Success: false, Error: err.Error()}
+			if types.RAGSourceLineageFromContext(ctx) != nil {
+				// A failed producer supplied no receipt. Only this fixed diagnostic
+				// can enter the turn, which retains its prior evidence and ACL checks.
+				err = errors.New("tool failed with an internal error")
+				result = &types.ToolResult{Error: err.Error(), SourceLineage: independentToolInput()}
+				return
+			}
+			err = fmt.Errorf("tool %s failed with an internal error", name)
+			result = &types.ToolResult{Error: err.Error()}
 		}
 	}()
 	return tool.Execute(ctx, args)

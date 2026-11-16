@@ -190,6 +190,13 @@ func (r *Runtime) previousChildren(ctx context.Context, scope *Scope) ([]*Member
 		m, run := *original, *last
 		m.Inherited, m.Mail = true, nil
 		run.Inherited = true
+		// Only the verified predecessor may transfer its input into a new scope.
+		// Unproven history remains visible but cannot be used for new work.
+		if last.MatchesInput(previous, original) {
+			run.InputDigest = run.inputDigest(*scope, &m)
+		} else {
+			run.InputDigest = ""
+		}
 		run.Owner, run.Lease, run.PromptID, run.Prompt = "", time.Time{}, "", nil
 		m.Runs = []*Run{&run}
 		members = append(members, &m)

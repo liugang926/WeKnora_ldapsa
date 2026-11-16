@@ -99,7 +99,7 @@ func TestCollaborationResultAtNaturalStopRequiresAnotherModelRound(t *testing.T)
 			},
 		},
 	}}
-	engine := newTestEngine(t, model)
+	engine := newWorkspaceTestEngine(t, model)
 	engine.eventBus = event.NewEventBus()
 	engine.SetCollaboration(b)
 	recorder := &truncationRecorder{}
@@ -112,7 +112,10 @@ func TestCollaborationResultAtNaturalStopRequiresAnotherModelRound(t *testing.T)
 		return nil
 	})
 	state := &types.AgentState{RoundSteps: []types.AgentStep{}}
-	_, err = engine.executeLoop(ctx, state, "query", []chat.Message{{Role: "user", Content: "query"}}, nil, "s", "m")
+	turnCtx := types.WithRAGSourceLineage(ctx, engine.turnLineage)
+	_, err = engine.executeLoop(
+		turnCtx, state, "query", []chat.Message{{Role: "user", Content: "query"}}, nil, "s", "m",
+	)
 	require.NoError(t, err)
 	require.Equal(t, "reviewed child result", state.FinalAnswer)
 	for _, event := range recorder.snapshot() {
@@ -190,7 +193,7 @@ func TestCollaborationProgressPreambleVisibleWithoutPublishingPrematureAnswer(t 
 			},
 		},
 	}}
-	engine := newTestEngine(t, model)
+	engine := newWorkspaceTestEngine(t, model)
 	engine.SetCollaboration(b)
 	engine.toolRegistry = agenttools.NewToolRegistry()
 	for _, tool := range agenttools.NewCollaborationTools(b, nil) {
@@ -239,7 +242,7 @@ func TestCollaborationWaitResumeDoesNotReplayEarlierTools(t *testing.T) {
 			},
 		},
 	}
-	engine := newTestEngine(t, model)
+	engine := newWorkspaceTestEngine(t, model)
 	engine.toolRegistry = agenttools.NewToolRegistry()
 	engine.SetCollaboration(owned)
 	engine.EnableSuspension(json.RawMessage(`{}`))
@@ -252,6 +255,7 @@ func TestCollaborationWaitResumeDoesNotReplayEarlierTools(t *testing.T) {
 	}
 	owned.WaitUntil = time.Now().Add(-time.Second)
 	snapshot := RunSnapshot{
+		WeKnoraACL: true, SourceLineage: independentAgentInput(),
 		Version: RunSnapshotVersion, CollaborationWait: true, Query: "task", CurrentRound: 0,
 		PendingRound: PendingRound{
 			BlockedIndex: 1,
@@ -293,10 +297,11 @@ func TestCollaborationRejectsNonWaitSnapshotWithoutApproval(t *testing.T) {
 	r, b := engineCollaboration(t)
 	owned, err := r.AcquireParent(context.Background(), b.Scope)
 	require.NoError(t, err)
-	engine := newTestEngine(t, &mockChat{})
+	engine := newWorkspaceTestEngine(t, &mockChat{})
 	engine.toolRegistry = agenttools.NewToolRegistry()
 	engine.SetCollaboration(owned)
 	snapshot := RunSnapshot{
+		WeKnoraACL: true, SourceLineage: independentAgentInput(),
 		Version:           RunSnapshotVersion,
 		CollaborationWait: true,
 		PendingRound:      PendingRound{Calls: []PendingCall{{ID: "unsafe", Name: "write_data"}}},
@@ -378,7 +383,7 @@ func TestCollaborationEngineWaitDeliversSteerPromptly(t *testing.T) {
 			},
 		},
 	}}
-	engine := newTestEngine(t, model)
+	engine := newWorkspaceTestEngine(t, model)
 	engine.SetCollaboration(b)
 	sink := &fakeSteerSink{}
 	engine.SetSteerSink(sink)
@@ -437,7 +442,7 @@ func TestCollaborationNaturalFinishReopensForSteerDuringWait(t *testing.T) {
 			},
 		},
 	}}
-	engine := newTestEngine(t, model)
+	engine := newWorkspaceTestEngine(t, model)
 	engine.SetCollaboration(b)
 	engine.toolRegistry = agenttools.NewToolRegistry()
 	sink := &collaborationDelayedSteer{
@@ -516,7 +521,7 @@ func TestCollaborationMultipartResultsWithoutRepeatedGuidance(t *testing.T) {
 			},
 		},
 	}}
-	engine := newTestEngine(t, model)
+	engine := newWorkspaceTestEngine(t, model)
 	engine.SetCollaboration(b)
 	engine.toolRegistry = agenttools.NewToolRegistry()
 	for _, tool := range agenttools.NewCollaborationTools(b, nil) {
@@ -563,10 +568,11 @@ func TestCollaborationResumeRestoresIntermediateDeliveryBoundary(t *testing.T) {
 			},
 		},
 	}
-	engine := newTestEngine(t, model)
+	engine := newWorkspaceTestEngine(t, model)
 	engine.SetCollaboration(owned)
 	engine.toolRegistry = agenttools.NewToolRegistry()
 	snapshot := RunSnapshot{
+		WeKnoraACL: true, SourceLineage: independentAgentInput(),
 		Version:           RunSnapshotVersion,
 		CollaborationWait: true,
 		BetweenRounds:     true,
@@ -689,12 +695,13 @@ func TestCollaborationResumeCollectsAllChildrenWithoutToolReplay(t *testing.T) {
 			Content:      "result-one\nresult-two\nresult-three", Done: true, FinishReason: "stop",
 		}}}},
 	}
-	engine := newTestEngine(t, model)
+	engine := newWorkspaceTestEngine(t, model)
 	engine.SetCollaboration(owned)
 	engine.toolRegistry = agenttools.NewToolRegistry()
 	write := newCountingTool("write")
 	engine.toolRegistry.RegisterTool(write)
 	snapshot := RunSnapshot{
+		WeKnoraACL: true, SourceLineage: independentAgentInput(),
 		Version:           RunSnapshotVersion,
 		CollaborationWait: true,
 		BetweenRounds:     true,
@@ -766,7 +773,7 @@ func TestCollaborationParentWithoutChildrenKeepsFallbacks(t *testing.T) {
 			model.responses = append(model.responses, mockResponse{chunks: []types.StreamResponse{{
 				ResponseType: types.ResponseTypeAnswer, Content: "summary", Done: true, FinishReason: "stop",
 			}}})
-			engine := newTestEngine(t, model)
+			engine := newWorkspaceTestEngine(t, model)
 			engine.toolRegistry = agenttools.NewToolRegistry()
 			engine.config.MaxIterations = 10
 			if mode == "max_iterations" {
@@ -774,7 +781,8 @@ func TestCollaborationParentWithoutChildrenKeepsFallbacks(t *testing.T) {
 			}
 			engine.SetCollaboration(owned)
 			state := &types.AgentState{}
-			_, err = engine.executeLoop(t.Context(), state, "task", nil, nil, "s", "m")
+			turnCtx := types.WithRAGSourceLineage(t.Context(), engine.turnLineage)
+			_, err = engine.executeLoop(turnCtx, state, "task", nil, nil, "s", "m")
 			require.NoError(t, err)
 			require.NotEmpty(t, state.FinalAnswer, "the ordinary fallback answer is produced")
 			g, err := r.Store.Read(t.Context(), b.Scope)
@@ -818,7 +826,7 @@ func TestCollaborationStalledParentCannotPublishSuccess(t *testing.T) {
 				}
 				model.responses = append(model.responses, mockResponse{chunks: chunks})
 			}
-			engine := newTestEngine(t, model)
+			engine := newWorkspaceTestEngine(t, model)
 			engine.config.MaxIterations = 10
 			engine.SetCollaboration(b)
 			if mode == "repeated_response" {
@@ -846,7 +854,8 @@ func TestCollaborationStalledParentCannotPublishSuccess(t *testing.T) {
 			recorder := &truncationRecorder{}
 			recorder.attach(engine.eventBus)
 			state := &types.AgentState{}
-			_, err = engine.executeLoop(t.Context(), state, "task", nil, nil, "s", "m")
+			turnCtx := types.WithRAGSourceLineage(t.Context(), engine.turnLineage)
+			_, err = engine.executeLoop(turnCtx, state, "task", nil, nil, "s", "m")
 			require.ErrorContains(t, err, "collaboration stopped")
 			require.False(t, state.IsComplete)
 			require.Empty(t, state.FinalAnswer)
@@ -928,7 +937,7 @@ func TestCollaborationArtifactsSurviveRecoveryAndKeepChildOrigins(t *testing.T) 
 	b := makeEvent("child-b", "resource://"+strings.Repeat("b", 22))
 	spoofed := makeEvent("child-spoofed", "resource://"+strings.Repeat("c", 22))
 	spoofed.Kind = "message" // Model prose can never manufacture an attachment.
-	engine := &AgentEngine{}
+	engine := newWorkspaceTestEngine(t, nil)
 	var messages []chat.Message
 	engine.deliverCollaborationEvents(&messages, []collaboration.Event{a, b, a, spoofed}, 0, false)
 	require.Contains(t, messages[0].Content, `File: "report.md" Reference: resource://`)
@@ -941,7 +950,7 @@ func TestCollaborationArtifactsSurviveRecoveryAndKeepChildOrigins(t *testing.T) 
 	require.NoError(t, err)
 	var snapshot RunSnapshot
 	require.NoError(t, json.Unmarshal(encoded, &snapshot))
-	restarted := &AgentEngine{}
+	restarted := newWorkspaceTestEngine(t, nil)
 	require.NoError(t, restarted.restoreCollaborationDeliveries(t.Context(), &snapshot))
 	require.Equal(t, before, restarted.collaborationArtifacts())
 

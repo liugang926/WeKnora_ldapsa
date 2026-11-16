@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/config"
+	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -52,19 +53,16 @@ func (m *titleGenerationModels) GetChatModel(_ context.Context, id string) (chat
 	return m.model, nil
 }
 
-type titleGenerationRepository struct {
-	interfaces.SessionRepository
-	title   string
-	ownerID string
-	done    chan struct{}
-}
-
-func (r *titleGenerationRepository) Update(_ context.Context, session *types.Session, ownerID string) (int64, error) {
-	r.title, r.ownerID = session.Title, ownerID
-	if r.done != nil {
-		close(r.done)
-	}
-	return 1, nil
+func newTitleGenerationFixture(t *testing.T, initialTitle string) (*sessionService, *types.Session, context.Context) {
+	t.Helper()
+	svc, db := newTestSessionService(t)
+	require.NoError(t, db.AutoMigrate(&testListSessionsIMChannelSession{}))
+	svc.cfg = &config.Config{Conversation: &config.ConversationConfig{}}
+	proof, err := types.NewCompleteSourceLineage()
+	require.NoError(t, err)
+	session := &types.Session{TenantID: 7, UserID: "reader", Title: initialTitle, TitleSourceLineage: proof}
+	require.NoError(t, db.Create(session).Error)
+	return svc, session, ragReadContext()
 }
 
 func TestGenerateTitleSummarizesFirstUserMessageWithConfiguredModel(t *testing.T) {
@@ -72,24 +70,22 @@ func TestGenerateTitleSummarizesFirstUserMessageWithConfiguredModel(t *testing.T
 		t.Run("model="+requestedModel, func(t *testing.T) {
 			model := &titleGenerationModel{}
 			models := &titleGenerationModels{model: model}
-			repo := &titleGenerationRepository{}
-			svc := &sessionService{
-				cfg:          &config.Config{Conversation: &config.ConversationConfig{}},
-				modelService: models,
-				sessionRepo:  repo,
-			}
-			session := &types.Session{ID: "session", UserID: "owner"}
+			svc, session, ctx := newTitleGenerationFixture(t, "")
+			svc.modelService = models
 			messages := []types.Message{
 				{Role: "system", Content: "system context"},
 				{Role: "user", Content: "请分析海缆寿命与短路电流"},
 				{Role: "assistant", Content: "previous answer"},
 				{Role: "user", Content: "later question"},
 			}
-			title, err := svc.GenerateTitle(context.Background(), session, messages, requestedModel)
+			title, err := svc.GenerateTitle(ctx, session, messages, requestedModel)
 			require.NoError(t, err)
 			assert.Equal(t, "海底电力电缆寿命与短路电流计算方法及其工程应用分", title)
-			assert.Equal(t, title, repo.title)
-			assert.Equal(t, "owner", repo.ownerID)
+			stored, err := svc.sessionRepo.Get(ctx, session.TenantID, session.UserID, session.ID)
+			require.NoError(t, err)
+			assert.Equal(t, title, stored.Title)
+			assert.Equal(t, "reader", stored.UserID)
+			require.NoError(t, stored.TitleSourceLineage.RequireComplete())
 			wantModel := requestedModel
 			if wantModel == "" {
 				wantModel = "qa-model"
@@ -103,10 +99,9 @@ func TestGenerateTitleSummarizesFirstUserMessageWithConfiguredModel(t *testing.T
 }
 
 func TestGenerateTitlePreservesExistingTitle(t *testing.T) {
-	// No dependencies are needed: an existing title must bypass both the LLM
-	// and persistence, including a title deliberately edited by the user.
-	svc := &sessionService{}
-	title, err := svc.GenerateTitle(context.Background(), &types.Session{Title: "My project"}, nil, "")
+	svc, session, ctx := newTitleGenerationFixture(t, "My project")
+	session.Title = "" // A stale caller must not overwrite a title that is already stored.
+	title, err := svc.GenerateTitle(ctx, session, nil, "")
 	require.NoError(t, err)
 	assert.Equal(t, "My project", title)
 }
@@ -119,18 +114,22 @@ func TestGenerateTitleAsyncUsesWorkspaceUtilityDefault(t *testing.T) {
 				{ID: "utility", Type: types.ModelTypeKnowledgeQA, Status: types.ModelStatusActive},
 			}}
 			(&types.DefaultSettings{UtilityModelID: "utility"}).ApplyModelDefaults(models.availableModels)
-			repo := &titleGenerationRepository{done: make(chan struct{})}
-			svc := &sessionService{
-				cfg:          &config.Config{Conversation: &config.ConversationConfig{}},
-				modelService: models,
-				sessionRepo:  repo,
-			}
-			ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
-			svc.GenerateTitleAsync(ctx, &types.Session{ID: "session", UserID: "owner"}, "hello", explicit, nil)
+			svc, session, ctx := newTitleGenerationFixture(t, "")
+			svc.modelService = models
+			bus := event.NewEventBus()
+			emitted := make(chan event.Event, 1)
+			bus.On(event.EventSessionTitle, func(_ context.Context, evt event.Event) error {
+				emitted <- evt
+				return nil
+			})
+			svc.GenerateTitleAsync(ctx, session, "hello", explicit, bus)
 			select {
-			case <-repo.done:
+			case evt := <-emitted:
+				assert.Equal(t, session.ID, evt.SessionID)
+				assert.NotEmpty(t, evt.Data.(event.SessionTitleData).Title)
+				assert.Empty(t, session.Title, "the request retains its own session snapshot")
 			case <-time.After(5 * time.Second):
-				t.Fatal("title was not saved")
+				t.Fatal("committed title was not published")
 			}
 			want := explicit
 			if want == "" {

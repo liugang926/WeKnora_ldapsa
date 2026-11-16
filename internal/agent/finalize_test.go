@@ -183,12 +183,13 @@ func finalSynthesisInputTokens(e *AgentEngine, messages []chat.Message, opts *ch
 
 func TestFinalSynthesisCompactsBeforeSendingOversizedInput(t *testing.T) {
 	model := &finalSynthesisChat{}
-	engine := newTestEngine(t, model, withMaxContextTokens(24000), withMaxCompletionTokens(2048))
+	engine := newWorkspaceTestEngine(t, model, withMaxContextTokens(24000), withMaxCompletionTokens(2048))
 	sink := &recordingCheckpointSink{}
 	engine.SetContextCheckpointSink(sink)
 	messages := append(storedHistoryOverflow(), chat.Message{
-		Role: "user", Content: "Latest correction: answer in Chinese using only the supplied evidence.",
-		Images: []string{"https://example.com/correction.png"},
+		SourceLineage: independentAgentInput(), Role: "user",
+		Content: "Latest correction: answer in Chinese using only the supplied evidence.",
+		Images:  []string{"https://example.com/correction.png"},
 	})
 	// The long tool transcript belongs to a completed stored turn. The latest
 	// correction starts the live turn, so compaction can persist turn-c.
@@ -222,7 +223,7 @@ func TestFinalSynthesisCompactsBeforeSendingOversizedInput(t *testing.T) {
 
 func TestFinalSynthesisBoundsTheLastLargeToolResult(t *testing.T) {
 	model := &finalSynthesisChat{}
-	engine := newTestEngine(t, model, withMaxContextTokens(8192), withMaxCompletionTokens(2048))
+	engine := newWorkspaceTestEngine(t, model, withMaxContextTokens(8192), withMaxCompletionTokens(2048))
 	messages := []chat.Message{
 		{Role: "system", Content: "Use only the evidence."},
 		{Role: "user", Content: "Summarize."},
@@ -492,7 +493,13 @@ type finalSynthesisLargeTool struct {
 
 func (tool *finalSynthesisLargeTool) Execute(context.Context, json.RawMessage) (*types.ToolResult, error) {
 	tool.calls++
-	return &types.ToolResult{Success: true, Output: tool.output}, nil
+	return &types.ToolResult{Success: true, Output: tool.output, SourceLineage: independentAgentInput()}, nil
+}
+
+func (tool *finalSynthesisLargeTool) ExecuteSourceLineage(
+	ctx context.Context, args json.RawMessage,
+) (*types.ToolResult, error) {
+	return tool.Execute(ctx, args)
 }
 
 func TestMaxIterationsCompactsFinalAnswerWithoutReplayingTools(t *testing.T) {
@@ -502,7 +509,9 @@ func TestMaxIterationsCompactsFinalAnswerWithoutReplayingTools(t *testing.T) {
 			Name: "synthetic_tool", Arguments: `{}`,
 		}}},
 	}}}}}}
-	engine := newTestEngine(t, model, withMaxIterations(1), withMaxContextTokens(8192), withMaxCompletionTokens(2048))
+	engine := newWorkspaceTestEngine(
+		t, model, withMaxIterations(1), withMaxContextTokens(8192), withMaxCompletionTokens(2048),
+	)
 	engine.toolRegistry = agenttools.NewToolRegistry()
 	tool := &finalSynthesisLargeTool{
 		countingTool: newCountingTool("synthetic_tool"),
@@ -524,8 +533,9 @@ func TestMaxIterationsCompactsFinalAnswerWithoutReplayingTools(t *testing.T) {
 		}), nil
 	}
 	state := &types.AgentState{}
+	turnCtx := types.WithRAGSourceLineage(t.Context(), engine.turnLineage)
 	_, err := engine.executeLoop(
-		t.Context(), state, "Summarize", emptyMessages(), engine.buildToolsForLLM(), "session", "message",
+		turnCtx, state, "Summarize", emptyMessages(), engine.buildToolsForLLM(), "session", "message",
 	)
 	require.NoError(t, err)
 	require.Equal(t, 1, tool.calls)
@@ -541,7 +551,7 @@ func TestMaxIterationsCompactsFinalAnswerWithoutReplayingTools(t *testing.T) {
 
 func TestFinalSynthesisDoesNotDoubleCountAnthropicThinking(t *testing.T) {
 	model := &finalSynthesisChat{}
-	engine := newTestEngine(t, model, withMaxContextTokens(32768), withMaxCompletionTokens(4096))
+	engine := newWorkspaceTestEngine(t, model, withMaxContextTokens(32768), withMaxCompletionTokens(4096))
 	thinking := strings.Repeat("synthetic reasoning ", 10000)
 	blocks, err := json.Marshal([]map[string]string{
 		{"type": "thinking", "thinking": thinking, "signature": "synthetic-signature"},

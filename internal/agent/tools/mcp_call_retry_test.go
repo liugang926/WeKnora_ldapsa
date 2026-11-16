@@ -155,7 +155,18 @@ func TestMCPCallRetryDoesNotRepeatAmbiguousExecution(t *testing.T) {
 			args, err := json.Marshal(map[string]any{"tool_ref": tool.ToolRef, "arguments": map[string]any{}})
 			require.NoError(t, err)
 			result, err := registry.ExecuteTool(ctx, ToolCallMCPTool, args)
-			require.NoError(t, err)
+			if tt.name == "cancel_after_execution" {
+				require.ErrorIs(t, err, context.Canceled)
+				require.NotNil(t, result)
+				require.Equal(t,
+					"MCP tool execution outcome is unknown. Verify the remote outcome before retrying.", result.Error,
+				)
+				require.Empty(t, result.Output)
+				require.Empty(t, result.Data)
+				require.Empty(t, result.Images)
+			} else {
+				require.NoError(t, err)
+			}
 			t.Logf("requests=%d, server executions=%d, approvals=%d",
 				requests.Load(), executed.Load(), gate.approvals.Load())
 			require.Equal(t, tt.wantRequests, requests.Load(), "one approval must not authorize blind replays")

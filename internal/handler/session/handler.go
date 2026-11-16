@@ -13,6 +13,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/infrastructure/docparser"
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/storageurl"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
@@ -36,6 +37,7 @@ type Handler struct {
 	fileService          interfaces.FileService          // Service for file storage (image uploads)
 	resourceCatalog      interfaces.ResourceCatalog
 	storageResolver      interfaces.StorageBackendResolver
+	ResourceURLResolver  storageurl.RequestResolver
 	modelService         interfaces.ModelService // Service for model management (VLM access)
 	attachmentProcessor  *AttachmentProcessor    // Processor for file attachments
 	temporaryDocuments   interfaces.TemporaryDocumentService

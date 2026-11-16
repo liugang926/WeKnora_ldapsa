@@ -16,6 +16,8 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 // A page context is a hint inside this turn's search targets: it never adds a
@@ -300,70 +302,60 @@ func TestPageContextInTargetsKeepsSettingsAndChat(t *testing.T) {
 		"a message without its session cannot be looked up")
 }
 
-type pageContextModelService struct {
-	interfaces.ModelService
-}
-
-func (*pageContextModelService) GetModelByID(_ context.Context, id string) (*types.Model, error) {
-	if id == "m-1" {
-		return &types.Model{ID: id, Name: "qwen-max", DisplayName: "Qwen", Type: types.ModelTypeKnowledgeQA}, nil
-	}
-	return nil, errors.New("not found")
-}
-
-type pageContextMCPService struct {
-	interfaces.MCPServiceService
-}
-
-func (*pageContextMCPService) GetMCPServiceByID(
-	_ context.Context, tenantID uint64, id string,
-) (*types.MCPService, error) {
-	if id == "mcp-1" && tenantID == 1 {
-		return &types.MCPService{ID: id, Name: "Jira", TransportType: types.MCPTransportSSE, Enabled: true}, nil
-	}
-	return nil, errors.New("not found")
-}
-
-type pageContextMessageService struct {
-	interfaces.MessageService
-}
-
-func (*pageContextMessageService) GetMessage(_ context.Context, sessionID, id string) (*types.Message, error) {
-	if sessionID != "s-1" || id != "msg-1" {
-		return nil, errors.New("session not found")
-	}
-	return &types.Message{
-		ID: id, SessionID: sessionID, RequestID: "r-2", Role: "assistant", AgentID: "agent-1",
-		Content: "Use the handbook.",
+// Settings and chat resources are the assistant's only, and each is dropped
+// unless the caller can read it.
+func TestResolveAssistantPageContext(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "page-context.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	require.NoError(t, db.AutoMigrate(
+		&types.Model{}, &types.MCPService{}, &types.Session{}, &types.Message{},
+		&types.MessageArtifactRecord{}, &testListSessionsIMChannelSession{},
+	))
+	require.NoError(t, db.Create(&types.Model{
+		ID: "m-1", TenantID: 1, Name: "qwen-max", DisplayName: "Qwen",
+		Type: types.ModelTypeKnowledgeQA, Status: types.ModelStatusActive,
+	}).Error)
+	require.NoError(t, db.Create(&types.MCPService{
+		ID: "mcp-1", TenantID: 1, Name: "Jira", TransportType: types.MCPTransportSSE, Enabled: true,
+	}).Error)
+	session := &types.Session{TenantID: 1, UserID: "u1"}
+	require.NoError(t, db.Create(session).Error)
+	now := time.Now().UTC()
+	require.NoError(t, db.Create(&types.Message{
+		ID: "question", SessionID: session.ID, RequestID: "r-2", Role: "user",
+		Content: "  Where are the rules?  ", CreatedAt: now.Add(-time.Minute),
+	}).Error)
+	require.NoError(t, db.Create(&types.Message{
+		ID: "other-question", SessionID: session.ID, RequestID: "r-other", Role: "user",
+		Content: "Unrelated request", CreatedAt: now.Add(-time.Second),
+	}).Error)
+	require.NoError(t, db.Create(&types.Message{
+		ID: "msg-1", SessionID: session.ID, RequestID: "r-2", Role: "assistant", AgentID: "agent-1",
+		Content: "Use the handbook.", CreatedAt: now, IsCompleted: true,
 		KnowledgeReferences: types.References{
 			{KnowledgeID: "k-1", KnowledgeBaseID: "kb-1", KnowledgeTitle: "Handbook"},
 			{KnowledgeID: "k-1", KnowledgeBaseID: "kb-1", KnowledgeTitle: "Handbook"},
 			{KnowledgeID: "k-2", KnowledgeFilename: "faq.pdf"},
 		},
-	}, nil
-}
-
-func (*pageContextMessageService) GetMessagesBySessionBeforeTime(
-	context.Context, string, time.Time, int,
-) ([]*types.Message, error) {
-	return []*types.Message{
-		{RequestID: "r-1", Role: "user", Content: "Earlier question"},
-		{RequestID: "r-1", Role: "assistant", Content: "Earlier answer"},
-		{RequestID: "r-2", Role: "user", Content: "  Where are the rules?  "},
-	}, nil
-}
-
-// Settings and chat resources are the assistant's only, and each is dropped
-// unless the caller can read it.
-func TestResolveAssistantPageContext(t *testing.T) {
+	}).Error)
 	svc := &agentService{
-		modelService:      &pageContextModelService{},
-		mcpServiceService: &pageContextMCPService{},
-		messageService:    &pageContextMessageService{},
+		modelService:      &modelService{repo: repository.NewModelRepository(db)},
+		mcpServiceService: NewMCPServiceService(repository.NewMCPServiceRepository(db), nil, nil),
+		messageService: &messageService{
+			messageRepo: repository.NewMessageRepository(db),
+			sessionRepo: repository.NewSessionRepository(db),
+		},
 	}
-	ctx := types.WithCaller(context.Background(), types.Caller{TenantID: 1, UserID: "u1"})
+	ctx := context.WithValue(t.Context(), types.UserIDContextKey, "u1")
+	ctx = types.WithCaller(ctx, types.Caller{TenantID: 1, UserID: "u1"})
+	// The agent can execute in its owner's workspace while the open page belongs to its caller.
+	ctx = types.WithExecutionTenant(ctx, 2)
+	ctx = context.WithValue(ctx, types.SessionTenantIDContextKey, uint64(1))
 	page := &types.PageContext{
-		Page: types.PageChat, ModelID: "m-1", MCPServiceID: "mcp-1", SessionID: "s-1", MessageID: "msg-1",
+		Page: types.PageChat, ModelID: "m-1", MCPServiceID: "mcp-1", SessionID: session.ID, MessageID: "msg-1",
 	}
 
 	assert.Nil(t, svc.resolvePageContextInfo(ctx, page, nil, nil, false),
@@ -383,6 +375,18 @@ func TestResolveAssistantPageContext(t *testing.T) {
 		{KnowledgeID: "k-1", KnowledgeBaseID: "kb-1", Title: "Handbook"},
 		{KnowledgeID: "k-2", Title: "faq.pdf"},
 	}, info.Message.References)
+
+	require.NoError(t, db.Model(&types.Session{}).Where("id = ?", session.ID).Update("user_id", "new-owner").Error)
+	info = svc.resolvePageContextInfo(ctx, page, nil, nil, true)
+	require.NotNil(t, info.Model)
+	require.NotNil(t, info.MCPService)
+	assert.Nil(t, info.Message, "the session's previous owner cannot quote its messages")
+
+	require.NoError(t, db.Model(&types.Model{}).Where("id = ?", "m-1").Update("tenant_id", 2).Error)
+	require.NoError(t, db.Model(&types.MCPService{}).Where("id = ?", "mcp-1").Update("tenant_id", 2).Error)
+	info = svc.resolvePageContextInfo(ctx, page, nil, nil, true)
+	assert.Nil(t, info.Model, "the execution tenant does not grant the caller model access")
+	assert.Nil(t, info.MCPService)
 
 	info = svc.resolvePageContextInfo(ctx, &types.PageContext{
 		Page: types.PageMCPServices, ModelID: "gone", MCPServiceID: "gone", SessionID: "other", MessageID: "msg-1",

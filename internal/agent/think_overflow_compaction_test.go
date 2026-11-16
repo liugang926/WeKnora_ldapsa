@@ -39,7 +39,7 @@ func TestOverflowRecoveryCompactsUnsanitizedHistory(t *testing.T) {
 			{ResponseType: types.ResponseTypeAnswer, Content: "ok", Done: true, FinishReason: "stop"},
 		}},
 	}}
-	engine := newTestEngine(t, model)
+	engine := newWorkspaceTestEngine(t, model)
 	_, err := engine.callLLMWithRetry(
 		context.Background(), &messages, nil, &types.AgentState{}, "q", 0, "test-session",
 	)

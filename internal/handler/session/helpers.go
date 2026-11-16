@@ -326,6 +326,7 @@ func (h *Handler) setupStreamHandler(
 	receivedAt time.Time,
 	assistantMessage *types.Message,
 	eventBus *event.EventBus,
+	resume *types.AgentResume,
 ) *AgentStreamHandler {
 	streamHandler := NewAgentStreamHandler(
 		ctx,
@@ -335,7 +336,7 @@ func (h *Handler) setupStreamHandler(
 		tenantID,
 		receivedAt,
 		assistantMessage,
-		h.nativeLiveStreamManager(ctx, tenantID, sessionID, assistantMessageID, requestID),
+		h.nativeLiveStreamManager(ctx, tenantID, sessionID, assistantMessageID, requestID, resume),
 		eventBus,
 		h.artifactCollector,
 		h.workspaceCheckpointer,

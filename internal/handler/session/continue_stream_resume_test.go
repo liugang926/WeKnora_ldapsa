@@ -1,27 +1,16 @@
 package session
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/middleware"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
-
-type resumeStreamMessageService struct {
-	interfaces.MessageService
-	completed bool
-}
-
-func (s *resumeStreamMessageService) GetMessage(
-	_ context.Context, sessionID, messageID string,
-) (*types.Message, error) {
-	return &types.Message{ID: messageID, SessionID: sessionID, IsCompleted: s.completed}, nil
-}
 
 func TestContinueStreamWaitsForApprovedSegment(t *testing.T) {
 	for _, tt := range []struct {
@@ -59,19 +48,30 @@ func TestContinueStreamWaitsForApprovedSegment(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			gin.SetMode(gin.TestMode)
 			r := gin.New()
-			events := []interfaces.StreamEvent{}
+			r.Use(middleware.ErrorHandler())
+			h, ctx, prompt, db := newCrashRecoveryFixture(t)
+			sessionID, messageID := prompt.SessionID, prompt.AssistantMessageID
+			h.sessionService = &stubSessionService{}
+			lineage := literalLiveSSEFixtureLineage(t)
+			if tt.completed {
+				message, err := h.messageService.GetMessage(ctx, sessionID, messageID)
+				require.NoError(t, err)
+				require.NoError(t, db.AutoMigrate(&types.CustomAgent{}))
+				require.NoError(t, db.Create(&types.CustomAgent{ID: message.AgentID, TenantID: prompt.TenantID}).Error)
+				message.IsCompleted = true
+				message.SourceLineage = lineage
+				require.NoError(t, h.messageService.UpdateMessage(ctx, message))
+			}
 			if tt.marker.Type != "" {
-				events = append(events, tt.marker)
+				tt.marker.SourceLineage = lineage
+				require.NoError(t, h.streamManager.AppendEvent(ctx, sessionID, messageID, tt.marker))
 			}
-			events = append(events, interfaces.StreamEvent{Type: types.ResponseTypeComplete, Done: true})
-			h := &Handler{
-				sessionService: &stubSessionService{},
-				messageService: &resumeStreamMessageService{completed: tt.completed},
-				streamManager:  &stubStreamManager{events: events},
-			}
+			require.NoError(t, h.streamManager.AppendEvent(ctx, sessionID, messageID,
+				interfaces.StreamEvent{Type: types.ResponseTypeComplete, SourceLineage: lineage, Done: true}))
 			r.GET("/sessions/continue-stream/:session_id", h.ContinueStream)
 			recorder := httptest.NewRecorder()
-			request := httptest.NewRequest(http.MethodGet, "/sessions/continue-stream/s?message_id=m"+tt.query, nil)
+			url := "/sessions/continue-stream/" + sessionID + "?message_id=" + messageID + tt.query
+			request := httptest.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 			r.ServeHTTP(recorder, request)
 			require.Equal(t, tt.status, recorder.Code, recorder.Body.String())
 			if tt.status == http.StatusConflict {

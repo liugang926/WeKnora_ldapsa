@@ -80,6 +80,55 @@ func TestNewParentTurnContinuesSameChildSessionWithoutReplayingOldWork(t *testin
 	require.Equal(t, "active", read(t, store, newScope).Status)
 }
 
+func TestDelegatedRunBindsOriginsThroughGuidanceAndInheritance(t *testing.T) {
+	store, scope := testStore(t)
+	ctx := t.Context()
+	r := New(store, nil)
+	admission := "initial"
+	r.CaptureInput = func(_ context.Context, s Scope, parent string) (*InputOrigin, error) {
+		return &InputOrigin{
+			ParentSession: s.SessionID, ParentMessage: parent, Generation: parent,
+			Messages: []InputMessage{{Session: s.SessionID, Message: parent, Admission: admission}},
+		}, nil
+	}
+	child, err := r.Spawn(ctx, scope, "spawn", "writer", "template", "{}", "draft")
+	require.NoError(t, err)
+	m := read(t, store, scope).Members[0]
+	require.True(t, current(m).MatchesInput(scope, m))
+
+	admission = "guidance"
+	_, err = r.Send(ctx, scope, "guide", child, "add a conclusion", "", false)
+	require.NoError(t, err)
+	m = read(t, store, scope).Members[0]
+	require.Len(t, m.InputOrigins, 2)
+	require.True(t, current(m).MatchesInput(scope, m))
+	require.NoError(t, store.Change(ctx, scope, func(g *Group) error {
+		current(g.Members[0]).State = "succeeded"
+		g.Status = "completed"
+		return nil
+	}))
+
+	successor := scope
+	successor.ID = "next-parent-turn"
+	b, err := r.AcquireParent(ctx, successor)
+	require.NoError(t, err)
+	admission = "followup"
+	_, err = r.Send(b.Context(ctx), successor, "continue", child, "revise the draft", "", true)
+	require.NoError(t, err)
+	m = read(t, store, successor).Members[0]
+	require.Len(t, m.InputOrigins, 3)
+	require.True(t, current(m).MatchesInput(successor, m))
+
+	require.NoError(t, store.Change(b.Context(ctx), successor, func(g *Group) error {
+		g.Members[0].InputOrigins[0] = g.Members[0].InputOrigins[1]
+		return nil
+	}))
+	m = read(t, store, successor).Members[0]
+	require.False(t, current(m).MatchesInput(successor, m))
+	_, err = r.Send(b.Context(ctx), successor, "later", child, "more changes", "", false)
+	require.ErrorIs(t, err, ErrScope, "later guidance must not legitimize a substituted origin")
+}
+
 func TestNewParentDoesNotInheritCancelledOrOtherOwnersChildren(t *testing.T) {
 	for _, barrier := range []string{"cancelled", "other-user", "other-session", "other-tenant"} {
 		t.Run(barrier, func(t *testing.T) {

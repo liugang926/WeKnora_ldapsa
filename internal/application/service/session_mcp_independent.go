@@ -89,6 +89,13 @@ func (s *sessionService) agentMCPIndependentVerifier(
 			current.UserID != owner || current.NextcloudScoped {
 			return access.ErrNextcloudPublicationDenied
 		}
+		if current.Kind == types.SessionKindAgentDelegated {
+			input, _ := ctx.Value(delegatedWorkerInputKey{}).(*delegatedWorkerInput)
+			if input == nil || input.work.Member.SessionID != sessionID || input.userID != userID ||
+				input.assistantID != assistantID || input.work.Run.ID != requestID {
+				return access.ErrNextcloudPublicationDenied
+			}
+		}
 		live, liveGeneration, err := native.materialStore.MessageLiveControl(checkCtx, sessionID, assistantID)
 		if err != nil || live == nil || liveGeneration != generation || live.RequestID != requestID ||
 			live.Role != "assistant" || live.IsCompleted || live.AgentID != control.AgentID ||

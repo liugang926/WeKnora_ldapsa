@@ -612,10 +612,9 @@ func (e *AgentEngine) runToolCallAnswered(
 
 	principal, _ := types.PrincipalFromContext(ctx)
 	execTimeout := toolExecutionTimeout(tc.Function.Name, tc.Function.Arguments)
-	if tool, lookupErr := e.toolRegistry.GetTool(tc.Function.Name); lookupErr == nil {
-		if timed, ok := tool.(interface{ ExecutionTimeout() time.Duration }); ok {
-			execTimeout = max(execTimeout, timed.ExecutionTimeout())
-		}
+	tool, lookupErr := e.toolRegistry.GetTool(tc.Function.Name)
+	if timed, ok := tool.(interface{ ExecutionTimeout() time.Duration }); ok {
+		execTimeout = max(execTimeout, timed.ExecutionTimeout())
 	}
 	toolExecCtx := agenttools.WithToolExecContext(toolCtx, &agenttools.ToolExecContext{
 		SessionID:          sessionID,
@@ -639,7 +638,15 @@ func (e *AgentEngine) runToolCallAnswered(
 		// A temporary handle is not an application identity. Fail before tool
 		// execution so a hallucinated/stale kb://, doc://, chunk://, url://, iN or res:// token can
 		// never reach persistence, an external service, or a routing decision.
-		err = fmt.Errorf("tool arguments contain unresolved model handles: %v", tc.UnresolvedHandles)
+		err = errors.New("tool arguments contain unresolved model handles")
+		if !e.requireCompleteSourceLineage {
+			result = &types.ToolResult{SourceLineage: independentAgentInput()}
+		}
+	} else if lookupErr != nil && !e.requireCompleteSourceLineage {
+		// Nothing was executed. A workspace model can correct its choice using
+		// a fixed diagnostic without exposing a registry entry or its contents.
+		err = errors.New("tool is unavailable; choose an available tool")
+		result = &types.ToolResult{SourceLineage: independentAgentInput()}
 	} else {
 		execCtx, toolCancel := context.WithTimeout(toolExecCtx, execTimeout)
 		result, err = e.toolRegistry.ExecuteToolWithSourceLineage(

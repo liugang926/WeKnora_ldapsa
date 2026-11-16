@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -382,6 +383,13 @@ func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.Too
 
 	result, err := connectAndCall(ctx)
 	if checkErr := checkMCPSourceTool(ctx, t); checkErr != nil {
+		// A cancelled call may already have committed. Keep its transport details
+		// private, and preserve cancellation for the caller handling the stop.
+		if checkErr == ctx.Err() && errors.Is(err, mcp.ErrToolCallOutcomeUnknown) {
+			return &types.ToolResult{
+				Error: mcp.ErrToolCallOutcomeUnknown.Error() + ". Verify the remote outcome before retrying.",
+			}, checkErr
+		}
 		return nil, checkErr
 	}
 	if err != nil {

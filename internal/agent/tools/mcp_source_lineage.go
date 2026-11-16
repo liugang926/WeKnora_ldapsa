@@ -23,7 +23,7 @@ type mcpIndependentTransport struct {
 // session/material check. Neither an empty lineage nor provider JSON installs it.
 func ConfigureMCPIndependentTransportVerifier(registry *ToolRegistry, check func(context.Context) error) {
 	if registry != nil {
-		if catalog := registry.mcpCatalog(); catalog != nil {
+		if catalog := registry.mcpSourceCatalog; catalog != nil {
 			catalog.independentTransportVerifier = check
 		}
 	}
@@ -56,15 +56,16 @@ func mcpSourceDigest(tool *MCPTool) string {
 // MCPSourceBindings retains only fingerprints of server-owned definitions.
 // A tool reference alone does not bind the transport or service instructions.
 func (r *ToolRegistry) MCPSourceBindings() map[string]string {
-	if r == nil {
-		return nil
-	}
-	c := r.mcpCatalog()
-	if c == nil {
+	if r == nil || r.mcpSourceCatalog == nil {
 		return nil
 	}
 	bindings := map[string]string{}
-	c.sourceDescribed.Range(func(k, v any) bool { bindings[k.(string)] = v.(string); return true })
+	if _, proxy := r.tools[ToolCallMCPTool].(*MCPCallTool); proxy || r.mcpCatalog() != nil {
+		r.mcpSourceCatalog.sourceDescribed.Range(func(k, v any) bool {
+			bindings[k.(string)] = v.(string)
+			return true
+		})
+	}
 	for _, registered := range r.tools {
 		if t, ok := registered.(*MCPRegisteredTool); ok && len(t.sourceSnapshot) > 0 {
 			bindings[mcpToolRef(t.MCPTool)] = mcpSourceDigest(t.MCPTool)
@@ -76,12 +77,26 @@ func (r *ToolRegistry) MCPSourceBindings() map[string]string {
 // RestoreMCPSourceBindings receives the checkpoint loaded by the server.
 // Each call verifies the current authorized tool and matches its fingerprint.
 func (r *ToolRegistry) RestoreMCPSourceBindings(bindings map[string]string) {
-	c := r.mcpCatalog()
-	if c == nil {
+	if r == nil || r.mcpSourceCatalog == nil {
 		return
 	}
-	for ref, digest := range bindings {
-		c.sourceDescribed.Store(ref, digest)
+	if _, proxy := r.tools[ToolCallMCPTool].(*MCPCallTool); proxy || r.mcpCatalog() != nil {
+		for ref, digest := range bindings {
+			r.mcpSourceCatalog.sourceDescribed.Store(ref, digest)
+		}
+		return
+	}
+	// A direct-only child may restore proofs for its retained functions without
+	// gaining the directory, proxy or any other function from the parent.
+	for _, tool := range r.tools {
+		if direct, ok := tool.(*MCPRegisteredTool); ok {
+			ref := mcpToolRef(direct.MCPTool)
+			if digest, exists := bindings[ref]; exists {
+				direct.catalog.sourceDescribed.Store(ref, digest)
+			} else {
+				direct.catalog.sourceDescribed.Delete(ref)
+			}
+		}
 	}
 }
 

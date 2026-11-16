@@ -719,6 +719,26 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 	if err := errors.Join(settlementErrors...); err != nil {
 		return fmt.Errorf("wiki terminal settlement: %w", err)
 	}
+	if ctx.Err() != nil {
+		// Interrupted maps can only release claims and account for failures.
+		// Leave successful but unpublished map results queued for a fresh pass.
+		cleanup, cancel := wikiIngestCleanupContext(ctx)
+		defer cancel()
+		if err := s.checkWikiTaskAuthorization(cleanup); err != nil {
+			return fmt.Errorf("wiki ingest: authorization changed after interrupted map: %w", err)
+		}
+		if s.redisClient != nil {
+			if err := s.pendingRepo.ReleaseByIDs(cleanup, wikiIDsExceptFailures(peekedIDs, failedOps)); err != nil {
+				return fmt.Errorf("wiki ingest: release interrupted map claims: %w", err)
+			}
+		}
+		if err := s.requeueFailedOps(cleanup, payload, failedOps); err != nil {
+			return fmt.Errorf("wiki ingest: retry interrupted map: %w", err)
+		}
+		claimsSettled = true
+		followUpScheduled = s.scheduleIngestSuccessor(cleanup, payload, batchSize, maxInflight, rateLimited)
+		return nil
+	}
 	if err := s.checkWikiTaskAuthorization(ctx); err != nil {
 		return fmt.Errorf("wiki ingest: authorization changed after map: %w", err)
 	}
@@ -1069,19 +1089,7 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 	// pulled, even ones de-duplicated by knowledge_id) and subtract
 	// any failed op's dbID — those need to stay in place so the
 	// requeueFailedOps path can decide between retry and dead-letter.
-	failedIDSet := make(map[int64]struct{}, len(failedOps))
-	for _, op := range failedOps {
-		if op.dbID != 0 {
-			failedIDSet[op.dbID] = struct{}{}
-		}
-	}
-	trimIDs := make([]int64, 0, len(peekedIDs))
-	for _, id := range peekedIDs {
-		if _, fail := failedIDSet[id]; fail {
-			continue
-		}
-		trimIDs = append(trimIDs, id)
-	}
+	trimIDs := wikiIDsExceptFailures(peekedIDs, failedOps)
 	settleCtx, settleCancel := wikiIngestCleanupContext(ctx)
 	trimErr := s.trimPendingList(settleCtx, trimIDs)
 
@@ -1105,17 +1113,43 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 
 	logger.Infof(ctx, "wiki ingest: batch completed for KB %s, %d ops, %d pages affected", payload.KnowledgeBaseID, len(pendingOps), len(allPagesAffected))
 
-	// Pace the follow-up: on a rate-limit trip, back off so the per-minute
-	// window can reset instead of retrying the failed docs immediately.
-	followUpDelay := wikiFollowUpDelay
-	if rateLimited {
-		followUpDelay = wikiRateLimitBackoff
-		logger.Warnf(ctx, "wiki ingest: KB %s hit upstream rate limiting, backing off follow-up to %s", payload.KnowledgeBaseID, followUpDelay)
-	}
 	followCtx, followCancel := wikiIngestCleanupContext(ctx)
-	followUpScheduled = s.scheduleFollowUp(followCtx, payload, followUpDelay, batchSize, maxInflight, rateLimited)
+	followUpScheduled = s.scheduleIngestSuccessor(followCtx, payload, batchSize, maxInflight, rateLimited)
 	followCancel()
 	return nil
+}
+
+// A batch that has seen a rate limit preserves its backoff even when map
+// processing is interrupted before the reduce stage.
+func (s *wikiIngestService) scheduleIngestSuccessor(
+	ctx context.Context, payload WikiIngestPayload, batchSize, maxInflight int, rateLimited bool,
+) bool {
+	delay := wikiFollowUpDelay
+	if rateLimited {
+		delay = wikiRateLimitBackoff
+		logger.Warnf(ctx, "wiki ingest: KB %s hit upstream rate limiting, backing off follow-up to %s",
+			payload.KnowledgeBaseID, delay)
+	}
+	return s.scheduleFollowUp(ctx, payload, delay, batchSize, maxInflight, rateLimited)
+}
+
+// wikiIDsExceptFailures separates successful or unprocessed claims from the
+// failed rows owned by requeueFailedOps.
+func wikiIDsExceptFailures(peekedIDs []int64, failedOps []WikiPendingOp) []int64 {
+	failedIDSet := make(map[int64]struct{}, len(failedOps))
+	for _, op := range failedOps {
+		if op.dbID != 0 {
+			failedIDSet[op.dbID] = struct{}{}
+		}
+	}
+	remainingIDs := make([]int64, 0, len(peekedIDs))
+	for _, id := range peekedIDs {
+		if _, fail := failedIDSet[id]; fail {
+			continue
+		}
+		remainingIDs = append(remainingIDs, id)
+	}
+	return remainingIDs
 }
 
 // ProcessWikiFinalize runs the debounced, per-KB KB-global convergence pass:

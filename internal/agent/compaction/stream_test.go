@@ -118,7 +118,7 @@ func TestSummarizationIsCancelledWhenItStalls(t *testing.T) {
 // are ready at once here, so this pins down the answer instead of letting select
 // choose it at random.
 func TestSummarizationIsCancelledWhenTheStreamCloses(t *testing.T) {
-	c := New(&closedStreamChat{}, newEstimator(t), pacedSettings())
+	c := newLiteralTestCompactor(&closedStreamChat{}, newEstimator(t), pacedSettings())
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 

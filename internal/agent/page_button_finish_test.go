@@ -17,7 +17,11 @@ import (
 type failingTool struct{ agenttools.BaseTool }
 
 func (*failingTool) Execute(context.Context, json.RawMessage) (*types.ToolResult, error) {
-	return &types.ToolResult{Success: false, Error: "not found"}, nil
+	return &types.ToolResult{SourceLineage: independentAgentInput(), Success: false, Error: "not found"}, nil
+}
+
+func (t *failingTool) ExecuteSourceLineage(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
+	return t.Execute(ctx, args)
 }
 
 func pageToolResponse(content, tool string) mockResponse {
@@ -46,7 +50,7 @@ func runPageButtonTurn(
 ) *pageButtonRun {
 	t.Helper()
 	run := &pageButtonRun{model: &mockChat{responses: responses}, answers: &terminalAnswerRecorder{}}
-	engine := newTestEngine(t, run.model)
+	engine := newWorkspaceTestEngine(t, run.model)
 	engine.eventBus = event.NewEventBus()
 	engine.toolRegistry = agenttools.NewToolRegistry()
 	if tool == nil {
@@ -67,7 +71,8 @@ func runPageButtonTurn(
 		return nil
 	})
 	run.state = &types.AgentState{RoundSteps: []types.AgentStep{}}
-	_, err := engine.executeLoop(context.Background(), run.state, "list my agents",
+	turnCtx := types.WithRAGSourceLineage(context.Background(), engine.turnLineage)
+	_, err := engine.executeLoop(turnCtx, run.state, "list my agents",
 		[]chat.Message{{Role: "user", Content: "list my agents"}}, emptyTools(), "s", "m")
 	require.NoError(t, err)
 	require.True(t, run.state.IsComplete)

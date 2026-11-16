@@ -4,7 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/agent"
 	"github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
@@ -40,9 +42,11 @@ func TestRegisterToolsSeparatesUnsetFromEmptyToolList(t *testing.T) {
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
 	offered := func(allowed []string) []string {
 		chatModel := &fakeAgentChatModel{}
-		engine, err := (&agentService{}).CreateAgentEngine(
+		svc := &agentService{ragChunkSnapshotReader: repository.NewRAGChunkSnapshotReader(nil, nil)}
+		engine, err := svc.CreateAgentEngine(
 			ctx, &types.AgentConfig{AllowedTools: allowed}, chatModel, nil, nil, "sess-1", "msg-1")
 		require.NoError(t, err)
+		engine.(*agent.AgentEngine).SetWeKnoraACLSourceLineageVerifier(context.Context.Err)
 		_, err = engine.Execute(ctx, "sess-1", "msg-1", "hello", nil)
 		require.NoError(t, err)
 		return chatModel.lastToolNames

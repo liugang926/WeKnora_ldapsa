@@ -4,6 +4,8 @@ package collaboration
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -93,9 +95,27 @@ type Member struct {
 	AgentID   string `json:"agent_id"`
 	SessionID string `json:"session_id"`
 	// ConfigJSON is stored separately from the model-visible projection.
-	ConfigJSON string  `json:"config_snapshot"`
-	Runs       []*Run  `json:"runs"`
-	Mail       []Event `json:"mail,omitempty"`
+	ConfigJSON string `json:"config_snapshot"`
+	// InputOrigins are captured by the producer, including prior instructions when
+	// the child is inherited. Each worker reopens the original inputs on use.
+	InputOrigins []InputOrigin `json:"input_origins,omitempty"`
+	Runs         []*Run        `json:"runs"`
+	Mail         []Event       `json:"mail,omitempty"`
+}
+
+// InputOrigin identifies the parent turn and original message admissions behind
+// a delegated instruction. No message bodies or worker credentials are retained.
+type InputOrigin struct {
+	ParentSession, ParentMessage, Generation string
+	Messages                                 []InputMessage
+	Lineage                                  *types.SourceLineage
+}
+
+// InputMessage pins the immutable admission and generated fields read by the parent.
+type InputMessage struct {
+	Session, Message, Admission string
+	OriginalFields              bool
+	Generated                   []string
 }
 
 // Progress is bounded operational telemetry, not model reasoning or tool payloads.
@@ -116,6 +136,7 @@ type Run struct {
 	ID              string       `json:"run_id"`
 	State           string       `json:"status"`
 	Query           string       `json:"query"`
+	InputDigest     string       `json:"input_digest,omitempty"`
 	Owner           string       `json:"-"`
 	Lease           time.Time    `json:"lease_until"`
 	Attempt         int          `json:"attempt"`
@@ -126,6 +147,35 @@ type Run struct {
 	PromptID          string `json:"prompt_id,omitempty"`
 	MessageID         string `json:"message_id,omitempty"`
 	UserMessageID     string `json:"user_message_id,omitempty"`
+}
+
+func newQueuedRun(id, query string, scope Scope, member *Member) *Run {
+	r := &Run{ID: id, State: "queued", Query: query}
+	r.InputDigest = r.inputDigest(scope, member)
+	return r
+}
+
+func (r *Run) inputDigest(scope Scope, member *Member) string {
+	fields := struct {
+		Scope                          Scope
+		Member, Session, Agent, Config string
+		Run, Query                     string
+		Origins                        []InputOrigin
+	}{
+		Scope: scope, Member: member.ID, Session: member.SessionID, Agent: member.AgentID,
+		Config: member.ConfigJSON, Run: r.ID, Query: r.Query, Origins: member.InputOrigins,
+	}
+	data, err := json.Marshal(fields)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// MatchesInput verifies the exact instruction accepted for this child run.
+func (r *Run) MatchesInput(scope Scope, member *Member) bool {
+	return r.InputDigest != "" && r.InputDigest == r.inputDigest(scope, member)
 }
 
 // MarshalJSON preserves private ownership for persistence; model projections omit it.

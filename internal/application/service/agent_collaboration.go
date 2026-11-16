@@ -62,6 +62,9 @@ func NewAgentCollaboration(
 		tenants:  tenants,
 	}
 	s.Runtime = collaboration.New(collaboration.NewStore(db), s.run)
+	if native, ok := messages.(*messageService); ok {
+		s.Runtime.CaptureInput = native.captureDelegatedInput
+	}
 	s.Runtime.WakeParent = s.resumeParent
 	s.Runtime.Reconcile = s.reconcile
 	s.Runtime.ParentInput = s.parentHasInput
@@ -454,11 +457,17 @@ func (s *AgentCollaboration) run(ctx context.Context, w collaboration.Work) (col
 	if err != nil {
 		return result, err
 	}
+	issuedWork := w
 	w.Member.ConfigJSON = string(configJSON)
 	b := &collaboration.Binding{Runtime: s.Runtime, Scope: w.Scope, Child: &w}
 	ctx = collaboration.WithBinding(ctx, b)
-	if err = s.Runtime.CheckOwner(ctx, w); err != nil {
+	member, run, err := s.Runtime.OwnedRun(ctx, w)
+	if err != nil {
 		return result, err
+	}
+	if member.SessionID != issuedWork.Member.SessionID || member.AgentID != issuedWork.Member.AgentID ||
+		member.ConfigJSON != issuedWork.Member.ConfigJSON || run.Query != issuedWork.Run.Query {
+		return result, collaboration.ErrScope
 	}
 	session := &types.Session{
 		ID:        w.Member.SessionID,
@@ -479,6 +488,24 @@ func (s *AgentCollaboration) run(ctx context.Context, w collaboration.Work) (col
 	session, err = s.sessions.GetSession(ctx, session.ID)
 	if err != nil {
 		return result, err
+	}
+	var input *delegatedWorkerInput
+	var parentLineage *types.SourceLineage
+	if native, ok := s.messages.(*messageService); ok {
+		if native.materialStore == nil {
+			return result, types.ErrSourceLineageUnknown
+		}
+		input = &delegatedWorkerInput{
+			work: issuedWork, service: s, native: native, userID: w.Run.UserMessageID, assistantID: w.Run.MessageID,
+		}
+		var closeInputs func()
+		ctx, _, _, closeInputs = BeginMessageMaterialHTTPBoundary(WithSteerCompletionOwner(ctx))
+		defer closeInputs()
+		if err = input.check(ctx); err != nil {
+			return result, err
+		}
+		parentLineage = input.lineage()
+		ctx = context.WithValue(ctx, delegatedWorkerInputKey{}, input)
 	}
 	var userMsg, answer *types.Message
 	var resume *types.AgentResume
@@ -517,13 +544,14 @@ func (s *AgentCollaboration) run(ctx context.Context, w collaboration.Work) (col
 		userMsg,
 			err = s.messages.CreateMessage(ctx,
 			&types.Message{
-				SessionID:   session.ID,
-				RequestID:   w.Run.ID,
-				Role:        "user",
-				Content:     w.Run.Query,
-				IsCompleted: true,
-				CreatedAt:   time.Now(),
-				Channel:     types.ChannelWeb,
+				SessionID:     session.ID,
+				RequestID:     w.Run.ID,
+				Role:          "user",
+				Content:       w.Run.Query,
+				SourceLineage: parentLineage,
+				IsCompleted:   true,
+				CreatedAt:     time.Now(),
+				Channel:       types.ChannelWeb,
 			})
 		if err != nil {
 			return result, err
@@ -531,11 +559,13 @@ func (s *AgentCollaboration) run(ctx context.Context, w collaboration.Work) (col
 		answer,
 			err = s.messages.CreateMessage(ctx,
 			&types.Message{
-				SessionID: session.ID,
-				RequestID: w.Run.ID,
-				Role:      "assistant",
-				CreatedAt: time.Now(),
-				Channel:   types.ChannelWeb,
+				SessionID:     session.ID,
+				RequestID:     w.Run.ID,
+				Role:          "assistant",
+				AgentID:       saved.Agent.ID,
+				AgentTenantID: saved.Agent.TenantID,
+				CreatedAt:     time.Now(),
+				Channel:       types.ChannelWeb,
 			})
 		if err != nil {
 			return result, err
@@ -543,6 +573,12 @@ func (s *AgentCollaboration) run(ctx context.Context, w collaboration.Work) (col
 		if err = s.Runtime.SetRunMessages(ctx, w, userMsg.ID, answer.ID); err != nil {
 			return result, err
 		}
+	}
+	if input != nil {
+		if err = input.bindChild(ctx, userMsg.ID, answer.ID); err != nil {
+			return result, err
+		}
+		markMessageMaterialReady(ctx)
 	}
 	ctx = hitl.WithDelegation(ctx, hitl.Delegation{
 		Register: func(ctx context.Context, p *types.AgentPrompt) error {
@@ -604,6 +640,9 @@ func (s *AgentCollaboration) run(ctx context.Context, w collaboration.Work) (col
 		// references and artifacts. Do not append the final answer twice.
 		if finishStream == nil {
 			answer.Content = data.FinalAnswer
+			if source, ok := evt.SourceLineage.(*types.SourceLineage); ok {
+				answer.SourceLineage = source
+			}
 			answer.AgentDurationMs = data.TotalDurationMs
 			if steps, ok := data.AgentSteps.([]types.AgentStep); ok {
 				answer.AgentSteps = tools.SanitizeAgentStepsForStorage(steps)
@@ -709,6 +748,25 @@ func (s *AgentCollaboration) run(ctx context.Context, w collaboration.Work) (col
 	}
 	if !owned {
 		return result, collaboration.ErrConflict
+	}
+	if input != nil {
+		if checkErr := CheckMessageMaterialOutputBoundary(persistCtx); checkErr != nil {
+			return result, checkErr
+		}
+		parentLineage = input.lineage()
+		// Never sign a generated child answer as independent of its task.
+		if answer.SourceLineage.RequireComplete() == nil {
+			combined, lineageErr := types.UnionSourceLineage(answer.SourceLineage, parentLineage)
+			if lineageErr != nil {
+				return result, lineageErr
+			}
+			answer.SourceLineage = combined
+		} else if answer.Content == "" && len(answer.AgentSteps) == 0 && len(answer.KnowledgeReferences) == 0 &&
+			len(answer.Artifacts) == 0 {
+			answer.SourceLineage = parentLineage
+		} else {
+			return result, types.ErrSourceLineageUnknown
+		}
 	}
 	if saveErr := s.messages.UpdateMessage(persistCtx, answer); saveErr != nil {
 		return result, saveErr

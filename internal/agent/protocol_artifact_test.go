@@ -86,7 +86,7 @@ func TestProtocolArtifactRecoveryDoesNotReplayToolsOrPublishGarbage(t *testing.T
 }
 
 func TestFinalSynthesisRejectsProtocolArtifact(t *testing.T) {
-	e := newTestEngine(t, &mockChat{responses: []mockResponse{artifactResponse()}})
+	e := newWorkspaceTestEngine(t, &mockChat{responses: []mockResponse{artifactResponse()}})
 	recorder := &truncationRecorder{}
 	recorder.attach(e.eventBus)
 	state := &types.AgentState{}
@@ -126,7 +126,7 @@ func TestNonceThinkContentDoesNotLeakIntoFinalAnswer(t *testing.T) {
 }
 
 func TestFinalSynthesisStripsNonceThinkContentBeforeStreaming(t *testing.T) {
-	e := newTestEngine(t, &mockChat{responses: []mockResponse{{chunks: []types.StreamResponse{
+	e := newWorkspaceTestEngine(t, &mockChat{responses: []mockResponse{{chunks: []types.StreamResponse{
 		{
 			ResponseType: types.ResponseTypeAnswer,
 			Content:      "<think:6124c78e>private reasoning</think:6124c78e>完整报告",

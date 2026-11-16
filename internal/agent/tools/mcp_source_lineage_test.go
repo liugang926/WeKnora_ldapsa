@@ -237,3 +237,62 @@ func TestMCPSourceLineageRechecksAfterApprovalBeforeTransport(t *testing.T) {
 	require.Nil(t, result)
 	require.Zero(t, f.calls.Load(), "approval waiting cannot retain an expired independent transport grant")
 }
+
+func TestInheritedMCPApprovalKeepsOnlyRetainedToolBindings(t *testing.T) {
+	f := newMCPSourceFixture(t)
+	f.registry.PrepareMCPToolsDirect(f.ctx)
+	var direct *MCPRegisteredTool
+	for _, tool := range f.registry.tools {
+		if bound, ok := tool.(*MCPRegisteredTool); ok {
+			direct = bound
+		}
+	}
+	require.NotNil(t, direct)
+	name, ref := direct.Name(), mcpToolRef(direct.MCPTool)
+	f.registry.RestrictTools([]string{name})
+	bindings := f.registry.MCPSourceBindings()
+	require.Equal(t, map[string]string{ref: mcpSourceDigest(direct.MCPTool)}, bindings)
+
+	f.registry.RestoreMCPSourceBindings(map[string]string{ref: bindings[ref], "removed": "parent proof"})
+	_, present := direct.catalog.sourceDescribed.Load("removed")
+	require.False(t, present)
+	f.registry.PrepareMCPToolsDirect(f.ctx)
+	f.registry.RefreshMCPTools(f.ctx)
+	require.Equal(t, []string{name}, f.registry.ListTools())
+
+	call := func() (*types.ToolResult, error) {
+		ctx := types.WithRAGSourceLineage(f.ctx, types.NewRAGSourceLineage(
+			func(_ context.Context, actual *types.SourceLineage) error { return actual.RequireComplete() },
+		))
+		ctx = WithToolExecContext(ctx, &ToolExecContext{
+			Answered: &types.AgentPrompt{Kind: types.AgentPromptKindToolApproval},
+		})
+		return f.registry.ExecuteToolWithSourceLineage(ctx, name, json.RawMessage(`{"id":"43"}`))
+	}
+	result, err := call()
+	require.NoError(t, err)
+	require.True(t, result.Success, result.Error)
+
+	for _, invalid := range []map[string]string{nil, {ref: "old-configuration-digest"}} {
+		f.registry.RestoreMCPSourceBindings(invalid)
+		result, err := call()
+		require.Error(t, err)
+		require.Nil(t, result)
+	}
+	f.registry.RestoreMCPSourceBindings(bindings)
+	f.eligible.Store(false)
+	result, err = call()
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.EqualValues(t, 1, f.calls.Load())
+}
+
+func TestMCPRefreshCannotExpandInheritedToolSet(t *testing.T) {
+	f := newMCPSourceFixture(t)
+	f.registry.PrepareMCPToolsDirect(f.ctx)
+	f.registry.RestrictTools([]string{ToolDiscoverMCPTools})
+	f.registry.RefreshMCPTools(f.ctx)
+	f.registry.RestrictTools([]string{ToolDiscoverMCPTools, ToolCallMCPTool})
+	f.registry.PrepareMCPToolsDirect(f.ctx)
+	require.Equal(t, []string{ToolDiscoverMCPTools}, f.registry.ListTools())
+}

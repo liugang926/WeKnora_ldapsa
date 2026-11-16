@@ -26,7 +26,7 @@ func TestWikiInterruptedLookupRecoveryStress(t *testing.T) {
 			t.Parallel()
 			kbID := fmt.Sprintf("kb-%d", worker)
 			svc, db := newWikiLookupRecoveryService(t, kbID, rdb)
-			lookup := svc.knowledgeSvc.(*wikiKnowledgeLookupStub)
+			lookup := svc.lookup
 			for round := range rounds {
 				var task *asynq.Task
 				for doc := range batchSize {
@@ -42,7 +42,7 @@ func TestWikiInterruptedLookupRecoveryStress(t *testing.T) {
 				cancel()
 				require.NoError(t, err)
 				var ops []types.TaskPendingOp
-				require.NoError(t, db.Find(&ops).Error)
+				require.NoError(t, db.Where("task_type = ?", wikiTaskType).Find(&ops).Error)
 				require.Len(t, ops, batchSize, "every interrupted op must remain retryable")
 				for _, op := range ops {
 					require.Nil(t, op.ClaimedAt)

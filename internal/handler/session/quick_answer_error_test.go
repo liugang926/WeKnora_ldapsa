@@ -19,7 +19,7 @@ func newQuickAnswerFailureHarness(
 	h := &Handler{messageService: messages, streamManager: stream}
 	bus := event.NewEventBus()
 	ctx := types.WithExecutionTenant(context.Background(), 1)
-	streamHandler := h.setupStreamHandler(ctx, msg.SessionID, msg.ID, "req", 1, time.Now(), msg, bus)
+	streamHandler := h.setupStreamHandler(ctx, msg.SessionID, msg.ID, "req", 1, time.Now(), msg, bus, nil)
 	released := false
 	streamCtx := &sseStreamContext{
 		eventBus:         bus,
@@ -91,7 +91,7 @@ func TestQuickAnswerFailureAfterCompletionIsIgnored(t *testing.T) {
 	h := &Handler{messageService: messages, streamManager: stream}
 	bus := event.NewEventBus()
 	ctx := types.WithExecutionTenant(context.Background(), 1)
-	h.setupStreamHandler(ctx, "s", "m", "req", 1, time.Now(), msg, bus)
+	h.setupStreamHandler(ctx, "s", "m", "req", 1, time.Now(), msg, bus, nil)
 	streamCtx := &sseStreamContext{eventBus: bus, assistantMessage: msg}
 
 	handled := true

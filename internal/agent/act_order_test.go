@@ -116,7 +116,9 @@ func TestParallelToolPanicFailsOnlyThatCall(t *testing.T) {
 	})
 	engine.toolRegistry.RegisterTool(&orderedTestTool{
 		BaseTool: tools.NewBaseTool(tools.ToolReadDocument, "", json.RawMessage(`{"type":"object"}`)),
-		run:      func(context.Context) *types.ToolResult { return &types.ToolResult{Success: true, Output: "ok"} },
+		run: func(context.Context) *types.ToolResult {
+			return &types.ToolResult{Success: true, Output: "ok", SourceLineage: independentAgentInput()}
+		},
 	})
 	response := &types.ChatResponse{ToolCalls: []types.LLMToolCall{
 		{ID: "a", Function: types.FunctionCall{Name: tools.ToolSearchKnowledge, Arguments: `{}`}},
@@ -124,7 +126,8 @@ func TestParallelToolPanicFailsOnlyThatCall(t *testing.T) {
 	}}
 	step := &types.AgentStep{}
 
-	engine.executeToolCallsParallel(context.Background(), response, step, 0, "session", "message")
+	turnCtx := types.WithRAGSourceLineage(context.Background(), engine.turnLineage)
+	engine.executeToolCallsParallel(turnCtx, response, step, 0, "session", "message")
 
 	require.Len(t, step.ToolCalls, 2)
 	require.False(t, step.ToolCalls[0].Result.Success)
@@ -136,7 +139,8 @@ func TestToolOutcomeKeepsLiveDataChangeOutOfModelAndHistory(t *testing.T) {
 	engine := newTestEngine(t, &mockChat{})
 	marker := map[string]any{"operation": "agent.delete", "area": "agent"}
 	call := types.ToolCall{Name: tools.ToolRunOperation, Result: &types.ToolResult{
-		Success: true, Output: "done", Data: map[string]any{"data_change": marker},
+		SourceLineage: independentAgentInput(),
+		Success:       true, Output: "done", Data: map[string]any{"data_change": marker},
 	}}
 	var outcomes []event.AgentToolResultData
 	engine.eventBus.On(event.EventAgentToolResult, func(_ context.Context, evt event.Event) error {

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/event"
-	"github.com/Tencent/WeKnora/internal/storageurl"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
@@ -41,9 +40,7 @@ func TestLiveSSEProducerErrorClosesWithoutSuccessOrHeldSourceTail(t *testing.T) 
 			r := gin.New()
 			r.GET("/stream", func(c *gin.Context) {
 				ctx := c.Request.Context()
-				rewriter := storageurl.NewStreamRewriter(
-					storageurl.NewRequestRewriter(ctx, storageurl.ModePublic, nil, nil),
-				)
+				rewriter := publicStreamRewriter()
 				rewriter.Push(ctx, "answer:held", "private held source ![", false, nil)
 				h.handleAgentEventsForSSE(
 					ctx,

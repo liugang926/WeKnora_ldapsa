@@ -90,6 +90,16 @@ func (r *attrsChunkRepo) CreateChunks(_ context.Context, chunks []*types.Chunk) 
 	return nil
 }
 
+func (r *attrsChunkRepo) UpdateChunk(_ context.Context, chunk *types.Chunk) error {
+	for i, stored := range r.created {
+		if stored.ID == chunk.ID {
+			r.created[i] = chunk
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown image chunk %q", chunk.ID)
+}
+
 type attrsChunkService struct {
 	interfaces.ChunkService
 	repo *attrsChunkRepo
@@ -97,16 +107,25 @@ type attrsChunkService struct {
 
 func (s *attrsChunkService) GetRepository() interfaces.ChunkRepository { return s.repo }
 
-// newAttrsTestService wires a service whose file reads come from memory and
-// whose knowledge base lookup returns nil, which makes indexChunks skip vector
-// work (it bails out on a nil KB). That keeps the test focused on the image
-// pipeline rather than on the retrieval engine.
+func (s *attrsChunkService) GetChunkByIDOnly(_ context.Context, id string) (*types.Chunk, error) {
+	for _, stored := range s.repo.created {
+		if stored.ID == id {
+			chunk := *stored
+			return &chunk, nil
+		}
+	}
+	return nil, fmt.Errorf("unknown image chunk %q", id)
+}
+
+// A Wiki-only KB persists image chunks and their indexed status without an embedding model.
 func newAttrsTestService(fileSvc interfaces.FileService, repo *attrsChunkRepo) *ImageMultimodalService {
 	return &ImageMultimodalService{
 		chunkService: &attrsChunkService{repo: repo},
-		kbService:    &orphanKBService{},
-		tenantRepo:   &attrsTenantRepo{},
-		fileSvc:      fileSvc,
+		kbService: &orphanKBService{kb: &types.KnowledgeBase{
+			ID: "kb-1", TenantID: 1, IndexingStrategy: types.IndexingStrategy{WikiEnabled: true},
+		}},
+		tenantRepo: knowledgeInputTenantRepo{tenant: &types.Tenant{ID: 1}},
+		fileSvc:    fileSvc,
 	}
 }
 

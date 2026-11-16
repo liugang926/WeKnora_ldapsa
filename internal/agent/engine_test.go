@@ -565,12 +565,12 @@ func TestContextCompactionDoesNotRunEveryRound(t *testing.T) {
 // toolRound is one assistant tool call plus its result.
 func toolRound(id, name, output string) []chat.Message {
 	return []chat.Message{
-		{Role: "assistant", ToolCalls: []chat.ToolCall{{
+		{SourceLineage: independentAgentInput(), Role: "assistant", ToolCalls: []chat.ToolCall{{
 			ID:       id,
 			Type:     "function",
 			Function: chat.FunctionCall{Name: name, Arguments: `{"path":"/w/a.log"}`},
 		}}},
-		{Role: "tool", Name: name, ToolCallID: id, Content: output},
+		{SourceLineage: independentAgentInput(), Role: "tool", Name: name, ToolCallID: id, Content: output},
 	}
 }
 
@@ -590,10 +590,10 @@ func TestSuccessfulCompactionClearsTheExhaustedMark(t *testing.T) {
 	// cannot reach, so the compaction frees almost nothing and marks the
 	// context exhausted at its message count.
 	exhausted := append([]chat.Message{
-		{Role: "system", Content: "you are an agent"},
-		{Role: "user", Content: "first question", TurnID: "turn-a"},
-		{Role: "assistant", Content: "first answer", TurnID: "turn-a"},
-		{Role: "user", Content: "read the export"},
+		{SourceLineage: independentAgentInput(), Role: "system", Content: "you are an agent"},
+		{SourceLineage: independentAgentInput(), Role: "user", Content: "first question", TurnID: "turn-a"},
+		{SourceLineage: independentAgentInput(), Role: "assistant", Content: "first answer", TurnID: "turn-a"},
+		{SourceLineage: independentAgentInput(), Role: "user", Content: "read the export"},
 	}, toolRound("call-1", "read_file", strings.Repeat("row,value ", 12000))...)
 	_, ok := engine.runCompaction(ctx, exhausted, 1, compaction.ReasonThreshold)
 	require.False(t, ok)
@@ -883,6 +883,15 @@ func newTestEngine(t *testing.T, chatModel chat.Chat, opts ...testEngineOption) 
 		}
 		return nil
 	})
+	return engine
+}
+
+// newWorkspaceTestEngine exercises ordinary WeKnora sessions with a live test
+// authorization callback. Tests for protected sources use newTestEngine.
+func newWorkspaceTestEngine(t *testing.T, model chat.Chat, opts ...testEngineOption) *AgentEngine {
+	t.Helper()
+	engine := newTestEngine(t, model, opts...)
+	engine.SetWeKnoraACLSourceLineageVerifier(context.Context.Err)
 	return engine
 }
 
@@ -1298,7 +1307,7 @@ func TestStreamLLMIncompleteFinishIsAStreamError(t *testing.T) {
 }
 
 func TestWebFetchUnknownReferenceIsAnItemError(t *testing.T) {
-	engine := newTestEngine(t, &mockChat{})
+	engine := newWorkspaceTestEngine(t, &mockChat{})
 	engine.toolRegistry = agenttools.NewToolRegistry()
 	engine.toolRegistry.RegisterTool(agenttools.NewWebFetchTool())
 	calls := []types.LLMToolCall{{
@@ -1310,12 +1319,13 @@ func TestWebFetchUnknownReferenceIsAnItemError(t *testing.T) {
 	}}
 	engine.modelContext.DecodeToolCalls(calls)
 	require.Equal(t, []string{"url://999"}, calls[0].UnresolvedHandles)
-	result := engine.runToolCall(t.Context(), calls[0], 0, 0, 1, "session", "message")
+	turnCtx := types.WithRAGSourceLineage(t.Context(), engine.turnLineage)
+	result := engine.runToolCall(turnCtx, calls[0], 0, 0, 1, "session", "message")
 	require.NotNil(t, result.Result)
 	require.Contains(t, result.Result.Output, "unknown_page_reference")
 	require.NotContains(t, result.Result.Error, "unresolved model handles")
 	// Other namespaces still fail closed before tool execution.
 	calls[0].UnresolvedHandles = []string{"res://9999"}
-	result = engine.runToolCall(t.Context(), calls[0], 0, 0, 1, "session", "message")
+	result = engine.runToolCall(turnCtx, calls[0], 0, 0, 1, "session", "message")
 	require.Contains(t, result.Result.Error, "unresolved model handles")
 }

@@ -168,7 +168,7 @@ func nativeACLTool(tool types.Tool) bool {
 		}
 		return nativeACLTool(t.inner)
 	case *FindOperationsTool, *RunOperationTool, *OpenPageTool, *ReadPageTool, *SelectTabTool, *FillPageTool,
-		*SearchWeKnoraDocsTool, *ReadWeKnoraDocTool, *AskUserTool, *CollaborationTool,
+		*SearchWeKnoraDocsTool, *ReadWeKnoraDocTool, *WebFetchTool, *AskUserTool, *CollaborationTool,
 		*WorkCancelTool, *WorkWaitTool, *ShellExecAsyncTool, *BrowserSkillTool,
 		*wikiSearchTool, *wikiReadPageTool, *wikiReadIssueTool, *wikiWritePageTool,
 		*wikiDeletePageTool, *wikiFlagIssueTool, *wikiRenamePageTool, *wikiReplaceTextTool, *wikiUpdateIssueTool:

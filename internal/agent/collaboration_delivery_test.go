@@ -53,7 +53,7 @@ func TestCollaborationRestartRetainsConsumedResults(t *testing.T) {
 				}}
 				return nil
 			}))
-			engine := newTestEngine(t, collaborationAnswerModel("WAITING_FOR_SECOND"))
+			engine := newWorkspaceTestEngine(t, collaborationAnswerModel("WAITING_FOR_SECOND"))
 			engine.toolRegistry = agenttools.NewToolRegistry()
 			engine.SetCollaboration(owned)
 			engine.EnableSuspension(json.RawMessage(`{}`))
@@ -95,7 +95,7 @@ func TestCollaborationRestartRetainsConsumedResults(t *testing.T) {
 			restarted := collaboration.New(r.Store, nil)
 			resumed := make(chan error, 1)
 			restarted.WakeParent = func(ctx context.Context, binding *collaboration.Binding, data []byte) error {
-				next := newTestEngine(t, model)
+				next := newWorkspaceTestEngine(t, model)
 				next.toolRegistry = agenttools.NewToolRegistry()
 				next.SetCollaboration(binding)
 				_, resumeErr := next.Resume(ctx, "s", "m", nil, data, nil)
@@ -136,7 +136,7 @@ func TestCollaborationPromptSnapshotPreservesDeliveryOrder(t *testing.T) {
 		g.NextSequence, g.Events = 2, []collaboration.Event{first, second}
 		return nil
 	}))
-	initial := newTestEngine(t, nil)
+	initial := newWorkspaceTestEngine(t, nil)
 	initial.toolRegistry = agenttools.NewToolRegistry()
 	initial.SetCollaboration(owned)
 	state := &types.AgentState{}
@@ -149,12 +149,11 @@ func TestCollaborationPromptSnapshotPreservesDeliveryOrder(t *testing.T) {
 	initial.recordSteerMessage("steer", "NEW_USER_GUIDANCE")
 	initial.beginRound(types.AgentStep{Thought: "APPROVAL_ROUND", UserMessagesBefore: []string{"steer"}},
 		[]types.LLMToolCall{{ID: "approved", Function: types.FunctionCall{Name: "approved_action", Arguments: `{}`}}})
-	snap, err := initial.snapshot(0)
-	require.NoError(t, err)
-	data, err := json.Marshal(snap)
+	initial.EnableSuspension(json.RawMessage(`{}`))
+	data, _, err := initial.snapshotFunc(t.Context(), 0, "approved_action")()
 	require.NoError(t, err)
 	model := collaborationAnswerModel("done")
-	next := newTestEngine(t, model)
+	next := newWorkspaceTestEngine(t, model)
 	next.toolRegistry = agenttools.NewToolRegistry()
 	action := newCountingTool("approved_action")
 	next.toolRegistry.RegisterTool(action)

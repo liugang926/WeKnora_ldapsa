@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	chatpipeline "github.com/Tencent/WeKnora/internal/application/service/chat_pipeline"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/event"
@@ -45,7 +46,7 @@ func (s *sharedChatModels) GetChatModel(ctx context.Context, id string) (chat.Ch
 }
 
 func sharedChatFixture() (context.Context, *sessionService, *sharedChatModels) {
-	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(2))
+	ctx := testSessionScopeContext(2, "reader")
 	kb := &types.KnowledgeBase{ID: "shared", TenantID: 1, SummaryModelID: "owner-model"}
 	ctx = (&access.KBAccess{
 		KnowledgeBase: kb, Caller: types.CallerFromContext(ctx), EffectiveTenantID: 1, Permission: types.OrgRoleViewer,
@@ -105,7 +106,9 @@ func TestSharedKBChatModelSelection(t *testing.T) {
 				kbIDs, knowledgeIDs = nil, []string{"doc"}
 			}
 			req := &types.QARequest{SummaryModelID: tc.override}
-			id, tenant, err := svc.resolveChatModelID(ctx, req, kbIDs, knowledgeIDs)
+			targets, err := svc.buildSearchTargets(ctx, 2, kbIDs, knowledgeIDs, nil)
+			require.NoError(t, err)
+			id, tenant, err := svc.resolveChatModelID(ctx, req, targets)
 			if tc.denied {
 				require.Error(t, err)
 				require.Empty(t, models.lookups, "no model lookup before KB authorization")
@@ -120,14 +123,42 @@ func TestSharedKBChatModelSelection(t *testing.T) {
 	}
 }
 
+func sharedChatTurn(
+	t *testing.T, mode types.ResourceAccessMode,
+) (context.Context, *sessionService, *sharedChatModels, *types.Session) {
+	t.Helper()
+	ctx, svc, models := sharedChatFixture()
+	store, db := newTestSessionService(t)
+	connections, err := db.DB()
+	require.NoError(t, err)
+	connections.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = connections.Close() })
+	require.NoError(t, db.AutoMigrate(
+		&types.ResourceAccessPolicy{}, &types.TenantMember{}, &types.Directory{}, &types.NextcloudOnboardingOperation{},
+		&types.DirectoryIdentity{}, &types.DirectoryGroupMembership{},
+		&types.DirectoryGroup{}, &types.TenantGroupRoleGrant{},
+	))
+	require.NoError(t, db.Create(&types.ResourceAccessPolicy{
+		ID: "shared-policy", TenantID: 1, ResourceType: types.GroupResourceTypeKnowledgeBase,
+		ResourceID: "shared", Mode: mode,
+	}).Error)
+	session := &types.Session{ID: "session-b", TenantID: 2, UserID: "reader"}
+	require.NoError(t, db.Create(session).Error)
+
+	svc.sessionRepo = store.sessionRepo
+	svc.groupAccess = NewGroupAccessService(repository.NewGroupAccessRepository(db))
+	svc.tenantService = &qaRerankTenantService{tenant: &types.Tenant{ID: 2}}
+	svc.eventManager = chatpipeline.NewEventManager()
+	chatpipeline.NewPluginChatCompletionStream(svc.eventManager, models)
+	return ctx, svc, models, session
+}
+
 // Exercise the public service entry and real streaming completion plugin, not
 // just the selector: dropping model ownership from ChatManage breaks this test.
 func TestKnowledgeQASharedKBStreamsWithOwnerModel(t *testing.T) {
 	for _, override := range []string{"", "caller-model"} {
 		t.Run("override="+override, func(t *testing.T) {
-			ctx, svc, models := sharedChatFixture()
-			svc.eventManager = chatpipeline.NewEventManager()
-			chatpipeline.NewPluginChatCompletionStream(svc.eventManager, models)
+			ctx, svc, models, session := sharedChatTurn(t, types.ResourceAccessInherit)
 			bus := event.NewEventBus()
 			done := make(chan event.AgentFinalAnswerData, 1)
 			bus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error {
@@ -138,7 +169,7 @@ func TestKnowledgeQASharedKBStreamsWithOwnerModel(t *testing.T) {
 				return nil
 			})
 			err := svc.KnowledgeQA(ctx, &types.QARequest{
-				Session: &types.Session{ID: "session-b", TenantID: 2}, TurnLeaseHeld: true,
+				Session: session, TurnLeaseHeld: true,
 				KnowledgeBaseIDs: []string{"shared"}, SummaryModelID: override, Query: "question",
 			}, bus)
 			require.NoError(t, err)
@@ -156,6 +187,16 @@ func TestKnowledgeQASharedKBStreamsWithOwnerModel(t *testing.T) {
 			require.Equal(t, uint64(2), types.MustTenantIDFromContext(ctx))
 		})
 	}
+}
+
+func TestKnowledgeQARevokedSharedKBCannotSupplyOwnerModel(t *testing.T) {
+	ctx, svc, models, session := sharedChatTurn(t, types.ResourceAccessRestricted)
+	err := svc.KnowledgeQA(ctx, &types.QARequest{
+		Session: session, TurnLeaseHeld: true, KnowledgeBaseIDs: []string{"shared"}, Query: "question",
+	}, event.NewEventBus())
+	require.Error(t, err)
+	require.NotContains(t, models.lookups, "owner-model")
+	require.Empty(t, models.tenants)
 }
 
 func TestSharedKBModelFallbackUsesOwner(t *testing.T) {
@@ -183,12 +224,10 @@ func TestSharedKBModelFallbackUsesOwner(t *testing.T) {
 }
 
 func TestSharedKBMissingModelReturnsPipelineError(t *testing.T) {
-	ctx, svc, models := sharedChatFixture()
+	ctx, svc, models, session := sharedChatTurn(t, types.ResourceAccessInherit)
 	delete(models.modelsByID, "owner-model")
-	svc.eventManager = chatpipeline.NewEventManager()
-	chatpipeline.NewPluginChatCompletionStream(svc.eventManager, models)
 	err := svc.KnowledgeQA(ctx, &types.QARequest{
-		Session: &types.Session{ID: "session-b", TenantID: 2}, TurnLeaseHeld: true,
+		Session: session, TurnLeaseHeld: true,
 		KnowledgeBaseIDs: []string{"shared"}, Query: "question",
 	}, event.NewEventBus())
 	require.ErrorIs(t, err, ErrModelNotFound)
@@ -200,7 +239,9 @@ func TestSharedKBRemoteModelPriority(t *testing.T) {
 	kbs := svc.knowledgeBaseService.(*sharedChatKBs)
 	kbs.kbs["local"] = &types.KnowledgeBase{ID: "local", TenantID: 2, SummaryModelID: "caller-model"}
 	models.modelsByID["caller-model"].Source = types.ModelSourceLocal
-	id, tenant, err := svc.resolveChatModelID(ctx, &types.QARequest{}, []string{"local", "shared"}, nil)
+	id, tenant, err := svc.resolveChatModelID(ctx, &types.QARequest{}, types.SearchTargets{
+		{KnowledgeBaseID: "local"}, {KnowledgeBaseID: "shared"},
+	})
 	require.NoError(t, err)
 	require.Equal(t, "owner-model", id)
 	require.Equal(t, uint64(1), tenant)

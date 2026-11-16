@@ -74,6 +74,7 @@ func TestImageOCRRejectsInvalidContentBeforePersistence(t *testing.T) {
 				// whole-task EnableOCR/EnableCaption pair of the action loop
 				// having been superseded by the image_pipeline field.
 				err := svc.processImage(context.Background(), &types.ImageMultimodalPayload{
+					TenantID: 1, KnowledgeBaseID: "kb-1", KnowledgeID: "k-1",
 					ImageURL: "local://test.png",
 					ImagePipelineParams: map[string]any{
 						manualCaptionKey: caption,

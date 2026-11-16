@@ -1165,8 +1165,6 @@ func (s *sessionService) GenerateTitle(ctx context.Context,
 	}
 	ctx = types.WithSessionID(ctx, session.ID)
 
-	// Skip if title already exists
-	session.Title = ""
 	// Get the first user message, either from provided messages or repository
 	var message *types.Message
 	if len(messages) == 0 {
@@ -1227,8 +1225,8 @@ func (s *sessionService) GenerateTitle(ctx context.Context,
 	chatMessages := buildSessionTitleMessages(titlePrompt, message.Content)
 
 	// Call model to generate title
-	// This adapter sends only the author's raw user Content and the configured
-	// static title prompt. It never consumes captions, attachments or answers.
+	// Only the human message and static title instructions reach this model.
+	// Captions, attachments and previous answers are excluded.
 	titleLineage, _ := types.NewCompleteSourceLineage()
 	for i := range chatMessages {
 		chatMessages[i].SourceLineage, _ = types.UnionSourceLineage(titleLineage)
@@ -1264,11 +1262,16 @@ func (s *sessionService) GenerateTitle(ctx context.Context,
 	if !ok {
 		return "", access.ErrNextcloudPublicationUnavailable
 	}
+	writeOwner := stored.UserID
+	if writeOwner == "" {
+		// Legacy sessions without an owner are readable by this caller until assigned.
+		writeOwner = sessionUserIDFromContext(ctx)
+	}
 	written, writeErr := titleWriter.SaveGeneratedSessionTitle(
 		ctx,
-		session.TenantID,
-		session.UserID,
-		session.ID,
+		stored.TenantID,
+		writeOwner,
+		stored.ID,
 		originalTitle,
 		title,
 		titleLineage,
@@ -1299,34 +1302,14 @@ func (s *sessionService) GenerateTitleAsync(
 	modelID string,
 	eventBus *event.EventBus,
 ) {
-	// Use context tenant (effective tenant when using shared agent) so ListModels/GetChatModel find the agent's model.
-	// The session row itself is still updated by its persisted tenant/user owner scope.
-	tenantID := ctx.Value(types.TenantIDContextKey)
-	requestID := ctx.Value(types.RequestIDContextKey)
-	language := ctx.Value(types.LanguageContextKey)
-	// Keep the Langfuse trace handle so the async title generation shows up
-	// as a child of the same trace as the originating chat request.
-	langfuseTrace := ctx.Value(types.LangfuseTraceContextKey)
-	go func() {
-		bgCtx := context.WithoutCancel(ctx) // Preserve captured caller/principal separately from effective tenant.
-		if tenantID != nil {
-			bgCtx = context.WithValue(bgCtx, types.TenantIDContextKey, tenantID)
-		}
-		if requestID != nil {
-			bgCtx = context.WithValue(bgCtx, types.RequestIDContextKey, requestID)
-		}
-		if language != nil {
-			bgCtx = context.WithValue(bgCtx, types.LanguageContextKey, language)
-		}
-		if langfuseTrace != nil {
-			bgCtx = context.WithValue(bgCtx, types.LangfuseTraceContextKey, langfuseTrace)
-		}
-
-		// Skip if title already exists
-		if session.Title != "" {
-			return
-		}
-
+	if session == nil || session.Title != "" {
+		return
+	}
+	// The foreground request continues using its session while the model runs.
+	// Keep the caller's principal and model tenant, but detach request cancellation.
+	snapshot := *session
+	bgCtx := context.WithoutCancel(ctx)
+	go func(session *types.Session) {
 		// Generate title using the first user message
 		messages := []types.Message{
 			{
@@ -1372,7 +1355,7 @@ func (s *sessionService) GenerateTitleAsync(
 				)
 			}
 		}
-	}()
+	}(&snapshot)
 }
 
 // holdSandboxTurn opens a chat-turn lease on the session's remote sandbox so

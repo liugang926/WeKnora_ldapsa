@@ -57,8 +57,9 @@ type MessageHandler struct {
 	// mode, which returns loadable HTTP URLs instead of internal
 	// `resource://` handles. Both may be nil, in which case only the default
 	// handle mode is available.
-	FileService     interfaces.FileService
-	StorageResolver interfaces.StorageBackendResolver
+	FileService         interfaces.FileService
+	StorageResolver     interfaces.StorageBackendResolver
+	ResourceURLResolver storageurl.RequestResolver
 	// Prompts supplies the pending prompt of messages awaiting input. May be
 	// nil, in which case such messages carry none.
 	Prompts               interfaces.AgentPromptRepository
@@ -162,7 +163,7 @@ func (h *MessageHandler) resolveResourceRewriter(c *gin.Context) (*storageurl.Re
 		}
 		return nil, errors.NewBadRequestError(err.Error())
 	}
-	return storageurl.NewRequestRewriter(ctx, mode, h.FileService, h.StorageResolver), nil
+	return storageurl.NewRequestRewriter(ctx, mode, h.FileService, h.StorageResolver, h.ResourceURLResolver), nil
 }
 
 func messageHistoryReadErrorOrNil(err error) error {

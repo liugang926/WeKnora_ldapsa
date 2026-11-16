@@ -106,6 +106,7 @@ func TestAllFailedImageIsAnError(t *testing.T) {
 		tracker := &ocrTestTracker{failed: map[string]string{}, outputs: map[string]types.JSONMap{}}
 		out := types.JSONMap{}
 		err := svc.processImage(context.Background(), &types.ImageMultimodalPayload{
+			TenantID: 1, KnowledgeBaseID: "kb-1", KnowledgeID: "k-1",
 			ImageURL:            "local://test.png",
 			ImagePipelineParams: map[string]any{manualCaptionKey: false, manualOCRKey: true},
 			Attempt:             1,
@@ -133,6 +134,7 @@ func TestAllFailedImageIsAnError(t *testing.T) {
 		tracker := &ocrTestTracker{failed: map[string]string{}, outputs: map[string]types.JSONMap{}}
 		out := types.JSONMap{}
 		err := svc.processImage(context.Background(), &types.ImageMultimodalPayload{
+			TenantID: 1, KnowledgeBaseID: "kb-1", KnowledgeID: "k-1",
 			ImageURL:            "local://test.png",
 			ImagePipelineParams: map[string]any{manualCaptionKey: true, manualOCRKey: true},
 			Attempt:             1,
@@ -158,6 +160,7 @@ func TestCancelledAllFailedImageIsCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	err := svc.processImage(ctx, &types.ImageMultimodalPayload{
+		TenantID: 1, KnowledgeBaseID: "kb-1", KnowledgeID: "k-1",
 		ImageURL:            "local://test.png",
 		ImagePipelineParams: map[string]any{manualCaptionKey: false, manualOCRKey: true},
 		Attempt:             1,
@@ -166,6 +169,7 @@ func TestCancelledAllFailedImageIsCancelled(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	require.NotErrorIs(t, err, asynq.SkipRetry)
 	require.Equal(t, "MULTIMODAL_CANCELLED", tracker.failed["multimodal.image[0]"])
+	require.Empty(t, model.calls)
 }
 
 func TestCaptionOnlyFailureFailsImage(t *testing.T) {
@@ -181,21 +185,19 @@ func TestCaptionOnlyFailureFailsImage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &attrsChunkRepo{}
 			svc := newAttrsTestService(&attrsFileService{body: testPNG(t)}, repo)
+			// Model-side cancellation is a failed caption. Caller cancellation before
+			// reading the image is covered separately and must not call the model.
 			model := &attrsFakeVLM{reply: func(string, int) (string, error) { return "", tc.err }}
 			tracker := &ocrTestTracker{failed: map[string]string{}, outputs: map[string]types.JSONMap{}}
 			out := types.JSONMap{}
-			ctx := context.Background()
-			if errors.Is(tc.err, context.Canceled) {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithCancel(ctx)
-				cancel()
-			}
-			err := svc.processImage(ctx, &types.ImageMultimodalPayload{
+			err := svc.processImage(context.Background(), &types.ImageMultimodalPayload{
+				TenantID: 1, KnowledgeBaseID: "kb-1", KnowledgeID: "k-1",
 				ImageURL: "local://test.png", Attempt: 1,
 				ImagePipelineID:     types.ImagePipelineDefault,
 				ImagePipelineParams: map[string]any{manualCaptionKey: true, manualOCRKey: false},
 			}, model, types.VLMConfig{}, tracker, out)
 			require.ErrorIs(t, err, tc.err)
+			require.Len(t, model.calls, 1)
 			require.Equal(t, "failed", out["outcome"])
 			require.Equal(t, 0, out["chunks_created"])
 			require.NotContains(t, out, "skipped")

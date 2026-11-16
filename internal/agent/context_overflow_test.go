@@ -91,11 +91,15 @@ func TestOverflowRecoveryPreservesCurrentTask(t *testing.T) {
 			model := openaicompletions.New(openaicompletions.Config{Endpoint: api.Endpoint{
 				BaseURL: server.URL, Model: "overflow-test", Client: server.Client(),
 			}})
-			engine := newTestEngine(t, model, withMaxContextTokens(40000), withMaxCompletionTokens(4000))
+			engine := newWorkspaceTestEngine(t, model, withMaxContextTokens(40000), withMaxCompletionTokens(4000))
 			engine.compactor = compaction.New(model, engine.tokenEstimator, compaction.Settings{
 				Enabled: true, MaxContextTokens: 40000, ReserveTokens: 8000, KeepRecentTokens: 2000,
 			})
+			engine.compactor.SetSourceLineageVerifier(engine.authorizeCompaction)
 			messages := overflowMessages(withSummary)
+			for i := range messages {
+				messages[i].SourceLineage = independentAgentInput()
+			}
 			before := engine.tokenEstimator.EstimateMessages(messages)
 			response, err := engine.callLLMWithRetry(t.Context(), &messages, nil,
 				&types.AgentState{}, overflowQueryMarker, 0, "overflow-session")
@@ -127,7 +131,7 @@ func TestOverflowRecoveryKeepsStructuredHistoryWithoutCompaction(t *testing.T) {
 	model := openaicompletions.New(openaicompletions.Config{Endpoint: api.Endpoint{
 		BaseURL: server.URL, Model: "overflow-test", Client: server.Client(),
 	}})
-	engine := newTestEngine(t, model, withMaxContextTokens(40000))
+	engine := newWorkspaceTestEngine(t, model, withMaxContextTokens(40000))
 	messages := overflowMessages(true)[:3]
 	expected := append([]chat.Message(nil), messages...)
 	response, err := engine.callLLMWithRetry(t.Context(), &messages, nil,

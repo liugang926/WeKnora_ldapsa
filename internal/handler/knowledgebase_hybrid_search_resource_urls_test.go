@@ -25,7 +25,7 @@ func newHybridSearchResourceURLRouter(svc interfaces.KnowledgeBaseService, fileS
 		c.Set(types.UserIDContextKey.String(), "u-test")
 		c.Next()
 	})
-	h := &KnowledgeBaseHandler{service: svc, fileService: fileSvc}
+	h := &KnowledgeBaseHandler{service: svc, fileService: fileSvc, ResourceURLResolver: stubRequestResolver}
 	router.POST("/knowledge-bases/:id/hybrid-search", h.HybridSearch)
 	router.GET("/knowledge-bases/:id/hybrid-search", h.HybridSearch)
 	return router

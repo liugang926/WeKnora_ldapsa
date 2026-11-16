@@ -252,6 +252,7 @@ func serveNativeSavedReplay(
 		nil, // Host project directories.
 		nil, // Background work.
 	)
+	h.ResourceURLResolver = stubRequestResolver
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(middleware.ErrorHandler())

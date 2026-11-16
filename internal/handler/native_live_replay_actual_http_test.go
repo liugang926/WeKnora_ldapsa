@@ -130,7 +130,7 @@ func nativeRunningHandler(
 	models interfaces.ModelService,
 	files interfaces.FileService,
 ) *sessionhandler.Handler {
-	return sessionhandler.NewHandler(
+	h := sessionhandler.NewHandler(
 		sessions,
 		f.messages,
 		nil,
@@ -166,6 +166,8 @@ func nativeRunningHandler(
 		nil, // Host project directories.
 		nil, // Background work.
 	)
+	h.ResourceURLResolver = stubRequestResolver
+	return h
 }
 
 func nativeRunningRouter(ctx context.Context, h *sessionhandler.Handler) *gin.Engine {

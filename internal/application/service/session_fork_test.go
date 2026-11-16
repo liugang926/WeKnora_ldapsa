@@ -1319,6 +1319,7 @@ func TestForkOnSharedMachineCopiesAndInheritsAssignment(t *testing.T) {
 	require.Equal(t, "web", sessions.created.OwnerAuthSource)
 	require.Nil(t, sessions.created.ForkBootstrap)
 	require.Equal(t, []string{
+		"ListMessagesBySessionUpTo", // Read the source through the fork point before acquiring the workspace.
 		"Begin", "ListMessagesBySessionUpTo", "Copy", "CreateForkedWithAssignment", "Release",
 	}, *calls)
 }

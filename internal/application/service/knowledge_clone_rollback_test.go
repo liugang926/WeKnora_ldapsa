@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	filesvc "github.com/Tencent/WeKnora/internal/application/service/file"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -21,7 +23,8 @@ func cloneImageHash(data []byte) string {
 
 func cloneRollbackStorage(t *testing.T, f *documentWriteFixture) (interfaces.ResourceCatalog, interfaces.FileService) {
 	t.Helper()
-	catalog, _ := newResourceCatalogForTest(t)
+	require.NoError(t, f.db.AutoMigrate(&types.StoredResource{}, &types.ResourceBinding{}))
+	catalog := NewResourceCatalog(repository.NewResourceRepository(f.db))
 	physical := filesvc.NewLocalFileService(t.TempDir(), "")
 	f.svc.resourceCatalog = catalog
 	f.svc.fileSvc = filesvc.NewResourceCatalogFileService(physical, catalog)
@@ -286,6 +289,15 @@ func TestFAQCloneRollbackKeepsSavedImagesAndReclaimsPartialCopies(t *testing.T) 
 			keep := scenario == "lost acknowledgement" || scenario == "uncertain saved rows" ||
 				scenario == "release fails"
 			require.Equal(t, keep, reused, "keep saved images and fail closed when ownership is uncertain")
+			var copiedImage types.StoredResource
+			require.NoError(t, f.db.Unscoped().Where("tenant_id = ? AND content_hash = ?",
+				7, cloneImageHash([]byte("pending image"))).First(&copiedImage).Error)
+			if keep {
+				requireCloneImageReadable(f.ctx, t, physical, copiedImage.PhysicalPath)
+			} else {
+				_, err := physical.GetFile(f.ctx, copiedImage.PhysicalPath)
+				require.ErrorIs(t, err, fs.ErrNotExist)
+			}
 		})
 	}
 }

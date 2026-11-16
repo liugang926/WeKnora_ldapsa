@@ -142,8 +142,7 @@ func (s *sessionService) restrictTagScopesToAgentScope(
 func (s *sessionService) resolveChatModelID(
 	ctx context.Context,
 	req *types.QARequest,
-	knowledgeBaseIDs []string,
-	knowledgeIDs []string,
+	targets types.SearchTargets,
 ) (string, uint64, error) {
 	summaryModelID := req.SummaryModelID
 	customAgent := req.CustomAgent
@@ -189,7 +188,7 @@ func (s *sessionService) resolveChatModelID(
 		logger.Infof(ctx, "Using custom agent's model_id: %s", configuredAgentModelID)
 		return configuredAgentModelID, tenantID, nil
 	}
-	return s.selectChatModelID(ctx, knowledgeBaseIDs, knowledgeIDs)
+	return s.selectChatModelID(ctx, targets)
 }
 
 // resolveRetrievalTenantID determines the tenant ID to use for retrieval scope.

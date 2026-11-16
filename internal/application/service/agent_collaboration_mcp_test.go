@@ -22,6 +22,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/utils"
 	sdkmcp "github.com/mark3labs/mcp-go/mcp"
 	sdkserver "github.com/mark3labs/mcp-go/server"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -68,7 +69,9 @@ func (m *collaborationMCPModel) ChatStream(
 }
 
 // Exercise the actual engine snapshot, MCP approval gate, scheduler restart,
-// resumed tool and HTTP MCP transport. Only the language model is scripted.
+// resumed tool and HTTP MCP transport. The test worker supplies the literal
+// task and rechecks the running lease. The production message-material verifier
+// is covered separately by TestAgentMCPIndependentTransportActualSessionAndMaterial.
 func TestDelegatedMCPApprovalRealEngine(t *testing.T) {
 	for _, inherited := range []bool{false, true} {
 		name := "template"
@@ -108,7 +111,12 @@ func testCollaborationMCPApproval(t *testing.T, inherited bool) {
 				URL:           &transport.URL,
 				TransportType: types.MCPTransportHTTPStreamable,
 			}
-			require.NoError(t, s.db.AutoMigrate(&types.AgentPrompt{}, &types.AgentRunSuspension{}))
+			require.NoError(t, s.db.AutoMigrate(&types.AgentPrompt{}, &types.AgentRunSuspension{}, &types.MCPService{}))
+			catalog := repository.NewMCPServiceRepository(s.db)
+			require.NoError(t, catalog.Create(ctx, svc))
+			svc, err := catalog.GetByID(ctx, 7, svc.ID)
+			require.NoError(t, err)
+			require.NotNil(t, svc)
 			broker := hitl.NewBroker(
 				repository.NewAgentPromptRepository(s.db),
 				nil,
@@ -116,23 +124,31 @@ func testCollaborationMCPApproval(t *testing.T, inherited bool) {
 			)
 			gate := approval.NewGate(nil, nil, broker)
 			s.BindRecovery(broker, gate, nil)
+			registerWriter := func(ctx context.Context) (*tools.ToolRegistry, string, error) {
+				registry := tools.NewToolRegistry()
+				_, err := tools.RegisterMCPTools(ctx, registry, []*types.MCPService{svc}, manager, gate, 0,
+					catalog.GetByID, nil)
+				if err != nil {
+					return nil, "", err
+				}
+				registry.PrepareMCPToolsDirect(ctx)
+				for _, name := range registry.ListTools() {
+					offered, _ := registry.GetTool(name)
+					if _, ok := offered.(*tools.MCPRegisteredTool); ok {
+						return registry, name, nil
+					}
+				}
+				return nil, "", fmt.Errorf("writer missing from registered MCP catalog")
+			}
 			s.Bind(
 				&collaborationSessions{run: func(ctx context.Context, req *types.QARequest, bus *event.EventBus) error {
 					if inherited && req.SummaryModelID != "selected-model" {
 						return fmt.Errorf("inherited model lost across approval recovery")
 					}
-					registry := tools.NewToolRegistry()
-					tool := tools.NewMCPTool(
-						svc,
-						&types.MCPTool{
-							Name:        "write",
-							InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
-						},
-						manager,
-						gate,
-						0,
-					)
-					registry.RegisterTool(tool)
+					registry, name, err := registerWriter(ctx)
+					if err != nil {
+						return err
+					}
 					cfg := &types.AgentConfig{MaxIterations: 5}
 					if mode == "fallback_partial" {
 						cfg.MaxIterations = 1
@@ -146,7 +162,7 @@ func testCollaborationMCPApproval(t *testing.T, inherited bool) {
 					}
 					engine := agent.NewAgentEngine(
 						cfg,
-						&collaborationMCPModel{truncations: truncations, call: req.Resume == nil, name: tool.Name()},
+						&collaborationMCPModel{truncations: truncations, call: req.Resume == nil, name: name},
 						registry,
 						bus,
 						nil,
@@ -154,6 +170,20 @@ func testCollaborationMCPApproval(t *testing.T, inherited bool) {
 						req.Session.ID,
 						"",
 					)
+					// The test worker receives only the scripted task, with its owner
+					// and lease revalidated against the same live collaboration.
+					check := func(current context.Context) error {
+						binding := collaboration.FromContext(current)
+						if binding == nil || binding.Child == nil || req.Query != "write" {
+							return collaboration.ErrScope
+						}
+						if _, err := s.workerContext(current, binding.Scope); err != nil {
+							return err
+						}
+						return s.Runtime.CheckOwner(current, *binding.Child)
+					}
+					engine.SetWeKnoraACLSourceLineageVerifier(check)
+					engine.SetMCPIndependentTransportVerifier(check)
 					if err := s.attach(ctx, engine, registry, cfg, req.Session.ID, req.AssistantMessageID); err != nil {
 						return err
 					}
@@ -170,7 +200,7 @@ func testCollaborationMCPApproval(t *testing.T, inherited bool) {
 						)
 						return err
 					}
-					_, err := engine.Execute(ctx, req.Session.ID, req.AssistantMessageID, req.Query, nil, nil)
+					_, err = engine.Execute(ctx, req.Session.ID, req.AssistantMessageID, req.Query, nil, nil)
 					return err
 				}},
 			)
@@ -183,7 +213,8 @@ func testCollaborationMCPApproval(t *testing.T, inherited bool) {
 				ctx = context.WithValue(ctx, childSourceKey{}, childSource{
 					Agent: agents.agent, ModelID: "selected-model",
 				})
-				name := tools.NewMCPTool(svc, &types.MCPTool{Name: "write"}, manager, gate, 0).Name()
+				_, name, lookupErr := registerWriter(ctx)
+				require.NoError(t, lookupErr)
 				config, err = inheritedChildSnapshot(ctx, &types.AgentConfig{
 					MaxIterations: 5, AssistantAccess: types.AssistantAccessConfirm,
 				}, []string{name})
@@ -192,9 +223,12 @@ func testCollaborationMCPApproval(t *testing.T, inherited bool) {
 			_, err = s.Runtime.Spawn(ctx, scope, "spawn", "writer", id, config, "write")
 			require.NoError(t, err)
 			startCollaborationTestRuntime(ctx, t, s.Runtime)
-			require.Eventually(t, func() bool {
-				g, _ := s.Runtime.Store.Read(ctx, scope)
-				return g != nil && g.Members[0].Runs[0].State == "waiting"
+			require.EventuallyWithT(t, func(c *assert.CollectT) {
+				g, err := s.Runtime.Store.Read(ctx, scope)
+				require.NoError(c, err)
+				require.NotNil(c, g)
+				run := g.Members[0].Runs[0]
+				require.Equal(c, "waiting", run.State, "run result: %+v", run.Result)
 			}, 5*time.Second, 5*time.Millisecond)
 			g, err := s.Runtime.Store.Read(ctx, scope)
 			require.NoError(t, err)
@@ -292,6 +326,8 @@ func testCollaborationMCPApproval(t *testing.T, inherited bool) {
 			if mode != "cancel" {
 				m, err := messages.GetMessage(ctx, g.Members[0].SessionID, run.MessageID)
 				require.NoError(t, err)
+				require.Equal(t, agents.agent.ID, m.AgentID)
+				require.Equal(t, agents.agent.TenantID, m.AgentTenantID)
 				require.True(t, m.IsCompleted)
 				require.Empty(t, m.RunState)
 				if mode == "partial" || mode == "fallback_partial" {

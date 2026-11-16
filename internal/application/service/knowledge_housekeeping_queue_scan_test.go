@@ -41,7 +41,8 @@ func TestHousekeeping_SweepScansQueuesOnce(t *testing.T) {
 	inspector := &queuePassCountingInspector{}
 	inspector.queued = map[string]bool{}
 	svc := newHousekeepingSvcWithInspector(db, inspector)
-	stale := time.Now().Add(-3 * time.Hour)
+	// The backlog is old enough to be inspected but still within the queue grace period.
+	stale := time.Now().Add(-3 * svc.staleThreshold() / 2)
 
 	const rows = 20
 	for i := 0; i < rows; i++ {
@@ -75,9 +76,8 @@ func TestHousekeeping_SweepScansQueuesOnce(t *testing.T) {
 	}
 }
 
-// When the queue scan fails, Sweep A keeps treating its candidates as stuck
-// (TestHousekeeping_QueueProbeError_FailsSafe), but a pending summary is only
-// a spinner and waits for the next sweep instead of being failed blind.
+// Pending summaries, like stuck-row candidates, wait for the next sweep
+// when the queue scan cannot establish whether their tasks still exist.
 func TestHousekeeping_QueueScanErrorDefersStrandedSummaries(t *testing.T) {
 	db := setupHousekeepingDB(t)
 	svc := newHousekeepingSvcWithInspector(db, fakeTaskInspector{err: errors.New("redis unavailable")})

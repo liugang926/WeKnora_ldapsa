@@ -18,10 +18,10 @@ func TestNewRequestRewriter_HandleModeIsDisabled(t *testing.T) {
 	assert.False(t, w.Enabled(), "the default mode must not resolve anything")
 }
 
-func TestNewRequestRewriter_PublicModeIsEnabled(t *testing.T) {
+func TestNewRequestRewriter_PublicModeWithoutAuthorizationKeepsHandle(t *testing.T) {
 	w := NewRequestRewriter(context.Background(), ModePublic, &stubFileService{}, nil)
-	require.True(t, w.Enabled())
-	assert.Equal(t, "https://cdn.example.com/resource://xifDo7NTSL300Lp1goVutw",
+	require.False(t, w.Enabled())
+	assert.Equal(t, "resource://xifDo7NTSL300Lp1goVutw",
 		w.Ref(context.Background(), "resource://xifDo7NTSL300Lp1goVutw"))
 }
 

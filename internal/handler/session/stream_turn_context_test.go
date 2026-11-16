@@ -40,13 +40,24 @@ func (s *cancelAfterFirstReadStream) GetEvents(
 	return s.events[fromOffset:], len(s.events), nil
 }
 
+type turnLeasePublication struct{ liveHistoryMessageService }
+
+func (s *turnLeasePublication) CheckLiveMessagePublication(ctx context.Context, msg *types.Message) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.liveHistoryMessageService.CheckLiveMessagePublication(ctx, msg)
+}
+
 func TestHandleAgentEventsForSSE_DrainsCompletionAfterTurnContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	h := &Handler{streamManager: &cancelAfterFirstReadStream{
+	lineage := literalLiveSSEFixtureLineage(t)
+	messages := &turnLeasePublication{liveHistoryMessageService{expectedLineage: lineage}}
+	h := &Handler{messageService: messages, streamManager: &cancelAfterFirstReadStream{
 		cancel: cancel,
 		events: []interfaces.StreamEvent{
-			{ID: "answer-1", Type: types.ResponseTypeAnswer, Content: "你好", Done: true},
-			{ID: "complete-1", Type: types.ResponseTypeComplete, Done: true},
+			{SourceLineage: lineage, ID: "answer-1", Type: types.ResponseTypeAnswer, Content: "你好", Done: true},
+			{SourceLineage: lineage, ID: "complete-1", Type: types.ResponseTypeComplete, Done: true},
 		},
 	}}
 	c, recorder := newTestGinContext(t, "")
@@ -54,7 +65,8 @@ func TestHandleAgentEventsForSSE_DrainsCompletionAfterTurnContextCanceled(t *tes
 	done := make(chan struct{})
 	go func() {
 		h.handleAgentEventsForSSE(
-			ctx, c, "sess1", "msg1", "req-1", nil, false, publicStreamRewriter())
+			ctx, c, "sess1", "msg1", "req-1", nil, false, publicStreamRewriter(),
+			&types.Message{ID: "msg1", SessionID: "sess1", RequestID: "req-1", Role: "assistant"})
 		close(done)
 	}()
 

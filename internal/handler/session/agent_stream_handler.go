@@ -1188,7 +1188,11 @@ func (h *AgentStreamHandler) publishCompletion(ctx context.Context) error {
 		return nil
 	}
 	h.completionEvent.SourceLineage, _ = types.UnionSourceLineage(h.assistantMessage.SourceLineage)
+	appendCompletion := h.streamManager.AppendEvent
 	if s := h.suspension; s != nil {
+		if live, ok := h.streamManager.(*nativeLiveAppender); ok {
+			appendCompletion = live.appendLiveFrame
+		}
 		if err := h.streamManager.AppendEvent(ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
 			SourceLineage: h.completionEvent.SourceLineage,
 			ID:            "suspended-" + s.PromptID,
@@ -1203,7 +1207,7 @@ func (h *AgentStreamHandler) publishCompletion(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := h.streamManager.AppendEvent(ctx, h.sessionID, h.assistantMessageID, *h.completionEvent); err != nil {
+	if err := appendCompletion(ctx, h.sessionID, h.assistantMessageID, *h.completionEvent); err != nil {
 		return err
 	}
 	h.completionEvent = nil

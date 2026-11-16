@@ -72,6 +72,41 @@ func TestWebFetchToolReturnsPageWithoutSummaryModel(t *testing.T) {
 	assert.Equal(t, "official specifications", items[0]["raw_content"])
 }
 
+func TestWebFetchRequiresCurrentWorkspaceAccess(t *testing.T) {
+	const rawURL = "https://example.com/scoped"
+	const body = "content from external server"
+	args := webFetchArgs(WebFetchItem{URL: rawURL})
+	check := func(context.Context, *types.SourceLineage) error { return nil }
+	fetcher := newStubWebContentFetcher(map[string]string{rawURL: body}, nil)
+	registry := NewToolRegistry()
+	registry.RegisterTool(newWebFetchTool(fetcher))
+
+	strict := types.WithRAGSourceLineage(t.Context(), types.NewRAGSourceLineage(check))
+	result, err := registry.ExecuteTool(strict, ToolWebFetch, args)
+	require.ErrorIs(t, err, ErrToolSourceLineageUnavailable)
+	require.Nil(t, result)
+	require.Empty(t, fetcher.callCount)
+
+	workspace := types.WithRAGSourceLineage(t.Context(), types.NewWeKnoraACLSourceLineage(check))
+	result, err = registry.ExecuteTool(workspace, ToolWebFetch, args)
+	require.NoError(t, err)
+	require.Contains(t, result.Output, body)
+	require.Equal(t, 1, fetcher.callCount[rawURL])
+
+	revoked := errors.New("workspace access revoked")
+	calls := 0
+	turn := types.NewWeKnoraACLSourceLineage(func(context.Context, *types.SourceLineage) error {
+		calls++
+		if calls == 1 {
+			return nil
+		}
+		return revoked
+	})
+	result, err = registry.ExecuteTool(types.WithRAGSourceLineage(t.Context(), turn), ToolWebFetch, args)
+	require.ErrorIs(t, err, revoked)
+	require.Nil(t, result)
+}
+
 func TestWebFetchToolPreservesPartialSuccess(t *testing.T) {
 	const successURL = "https://example.com/success"
 	const failedURL = "https://example.com/forbidden"

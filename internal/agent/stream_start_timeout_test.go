@@ -22,13 +22,15 @@ func startupTestEngine(t *testing.T, handler http.HandlerFunc) *AgentEngine {
 	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	return &AgentEngine{
+	engine := &AgentEngine{
 		config: &types.AgentConfig{LLMCallTimeout: 1},
 		chatModel: openaicompletions.New(openaicompletions.Config{Endpoint: api.Endpoint{
 			BaseURL: server.URL, Model: "timeout-test", Client: server.Client(),
 		}}),
 		modelContext: modelcontext.NewRegistry(false),
 	}
+	engine.SetWeKnoraACLSourceLineageVerifier(context.Context.Err)
+	return engine
 }
 
 func TestAgentStartupCancellationIsNotRetried(t *testing.T) {

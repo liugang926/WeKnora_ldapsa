@@ -1983,11 +1983,16 @@ func (s *agentService) resolveAssistantPageContext(
 	ctx context.Context, page *types.PageContext, info *agent.PageContextInfo,
 ) {
 	info.Page, info.Section = page.Page, page.Section
-	tenantID := types.CallerFromContext(ctx).TenantID
+	caller := types.CallerFromContext(ctx)
+	if caller.TenantID == 0 {
+		return
+	}
+	// The selected page belongs to the caller even when the agent runs in a shared workspace.
+	ctx = types.WithExecutionTenant(ctx, caller.TenantID)
 	if page.ModelID != "" && s.modelService != nil {
 		if m, err := s.modelService.GetModelByID(ctx, page.ModelID); err == nil &&
 			m != nil && !m.DeletedAt.Valid &&
-			(m.IsBuiltin || m.TenantID == tenantID) {
+			(m.IsBuiltin || m.TenantID == caller.TenantID) {
 			name := m.DisplayName
 			if name == "" {
 				name = m.Name
@@ -1999,8 +2004,8 @@ func (s *agentService) resolveAssistantPageContext(
 			logger.Infof(ctx, "Page context model %s dropped: not visible", secutils.SanitizeForLog(page.ModelID))
 		}
 	}
-	if page.MCPServiceID != "" && s.mcpServiceService != nil && tenantID != 0 {
-		svc, err := s.mcpServiceService.GetMCPServiceByID(ctx, tenantID, page.MCPServiceID)
+	if page.MCPServiceID != "" && s.mcpServiceService != nil {
+		svc, err := s.mcpServiceService.GetMCPServiceByID(ctx, caller.TenantID, page.MCPServiceID)
 		if err == nil && svc != nil {
 			info.MCPService = &agent.PageContextMCPService{
 				ID: svc.ID, Name: svc.Name, Transport: string(svc.TransportType), Enabled: svc.Enabled,
@@ -2011,7 +2016,14 @@ func (s *agentService) resolveAssistantPageContext(
 		}
 	}
 	if page.SessionID != "" && page.MessageID != "" && s.messageService != nil {
-		info.Message = s.pageContextMessage(ctx, page.SessionID, page.MessageID)
+		// Shared-agent execution can read its own pipeline session without a user filter.
+		// A client-selected session must pass the ordinary caller-scoped lookup.
+		ctx = context.WithValue(ctx, types.SessionTenantIDContextKey, nil)
+		ctx = context.WithValue(ctx, types.UserIDContextKey, caller.UserID)
+		ctx = context.WithValue(ctx, types.TenantRoleContextKey, caller.Role)
+		if types.SessionOwnerIDFromContext(ctx) != "" {
+			info.Message = s.pageContextMessage(ctx, page.SessionID, page.MessageID)
+		}
 	}
 }
 

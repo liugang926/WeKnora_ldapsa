@@ -165,6 +165,18 @@ func TestBuildResumeRequestKeepsTurnAndOriginalSteeringSnapshot(t *testing.T) {
 	require.Equal(t, snapshot, req.resume.Snapshot)
 }
 
+func recoveryMaterialStore(db *gorm.DB) *repository.KnowledgeInputProvenanceStore {
+	newAuthority := func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
+		store := repository.NewKnowledgeInputProvenanceStore(tx)
+		groups := service.NewGroupAccessService(repository.NewGroupAccessRepository(tx))
+		repository.ConfigureKnowledgeInputActorGroupAccess(store, groups)
+		return store
+	}
+	store := newAuthority(db)
+	repository.ConfigureKnowledgeDisplayInputWriters(store, nil, nil, newAuthority)
+	return store
+}
+
 func newCrashRecoveryFixture(t *testing.T) (*Handler, context.Context, *types.AgentPrompt, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "recovery.db")), &gorm.Config{})
@@ -195,14 +207,7 @@ func newCrashRecoveryFixture(t *testing.T) (*Handler, context.Context, *types.Ag
 
 	groups := service.NewGroupAccessService(repository.NewGroupAccessRepository(db))
 	users := service.NewUserService(nil, repository.NewUserRepository(db), nil, nil, nil, nil, nil, groups, nil, nil)
-	newAuthority := func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
-		store := repository.NewKnowledgeInputProvenanceStore(tx)
-		txGroups := service.NewGroupAccessService(repository.NewGroupAccessRepository(tx))
-		repository.ConfigureKnowledgeInputActorGroupAccess(store, txGroups)
-		return store
-	}
-	store := newAuthority(db)
-	repository.ConfigureKnowledgeDisplayInputWriters(store, nil, nil, newAuthority)
+	store := recoveryMaterialStore(db)
 	msgRepo := repository.NewMessageRepository(db)
 	messages := service.NewMessageService(
 		msgRepo, repository.NewSessionRepository(db), nil, nil, nil, nil, nil, nil, nil,

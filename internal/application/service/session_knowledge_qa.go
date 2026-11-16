@@ -143,8 +143,17 @@ func (s *sessionService) KnowledgeQA(
 		return err
 	}
 
-	// Resolve chat model ID using shared helper
-	chatModelID, chatModelTenantID, err := s.resolveChatModelID(ctx, req, knowledgeBaseIDs, knowledgeIDs)
+	// Resolve retrieval tenant scope using shared helper
+	retrievalTenantID := s.resolveRetrievalTenantID(ctx, req)
+
+	// Build unified search targets (computed once, used throughout pipeline)
+	searchTargets, err := s.buildSearchTargets(ctx, retrievalTenantID, knowledgeBaseIDs, knowledgeIDs, req.TagScopes)
+	if err != nil {
+		return fmt.Errorf("build search targets: %w", err)
+	}
+
+	// Only readable targets can lend their workspace's configured model to this turn.
+	chatModelID, chatModelTenantID, err := s.resolveChatModelID(ctx, req, searchTargets)
 	if err != nil {
 		return err
 	}
@@ -176,15 +185,6 @@ func (s *sessionService) KnowledgeQA(
 	}
 	if req.CustomAgent != nil {
 		vlmModelID = req.CustomAgent.Config.VLMModelID
-	}
-
-	// Resolve retrieval tenant scope using shared helper
-	retrievalTenantID := s.resolveRetrievalTenantID(ctx, req)
-
-	// Build unified search targets (computed once, used throughout pipeline)
-	searchTargets, err := s.buildSearchTargets(ctx, retrievalTenantID, knowledgeBaseIDs, knowledgeIDs, req.TagScopes)
-	if err != nil {
-		return fmt.Errorf("build search targets: %w", err)
 	}
 
 	// Create chat management object with session settings
@@ -372,26 +372,12 @@ func (s *sessionService) KnowledgeQA(
 // Return the KB owner alongside its model ID without changing the request scope.
 func (s *sessionService) selectChatModelID(
 	ctx context.Context,
-	knowledgeBaseIDs []string,
-	knowledgeIDs []string,
+	targets types.SearchTargets,
 ) (string, uint64, error) {
 	tenantID, _ := types.TenantIDFromContext(ctx)
-	if len(knowledgeBaseIDs) == 0 && len(knowledgeIDs) > 0 {
-		knowledgeList, err := s.knowledgeService.GetKnowledgeBatchWithSharedAccess(ctx, tenantID, knowledgeIDs)
-		if err != nil {
-			return "", 0, fmt.Errorf("resolve knowledge bases for chat model: %w", err)
-		}
-		for _, k := range knowledgeList {
-			if k != nil && k.KnowledgeBaseID != "" {
-				knowledgeBaseIDs = append(knowledgeBaseIDs, k.KnowledgeBaseID)
-			}
-		}
-		knowledgeBaseIDs = uniqueNonEmptyStrings(knowledgeBaseIDs)
-	}
-
 	permissions := kbReadPermissions(ctx, s.kbShareService)
 	var firstKB *types.KnowledgeBase
-	for _, kbID := range knowledgeBaseIDs {
+	for _, kbID := range targets.GetAllKnowledgeBaseIDs() {
 		kb, err := s.knowledgeBaseService.GetKnowledgeBaseByID(ctx, kbID)
 		if err != nil || kb == nil {
 			logger.Warnf(ctx, "Failed to get knowledge base %s for chat model: %v", kbID, err)

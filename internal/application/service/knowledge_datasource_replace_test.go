@@ -67,12 +67,15 @@ func (q *datasourceReplacementQueue) Enqueue(task *asynq.Task, _ ...asynq.Option
 	return &asynq.TaskInfo{ID: "task-1", Queue: types.QueueDefault}, nil
 }
 
-type replacementFetchConnector struct {
+type singleFileConnector struct {
 	conflictSkipConnector
+	kind string
 	item types.FetchedItem
 }
 
-func (c replacementFetchConnector) FetchAll(
+func (c singleFileConnector) Type() string { return c.kind }
+
+func (c singleFileConnector) FetchAll(
 	context.Context, *types.DataSourceConfig, []string,
 ) ([]types.FetchedItem, error) {
 	return []types.FetchedItem{c.item}, nil
@@ -86,23 +89,30 @@ type replacementSyncHarness struct {
 
 func (h *replacementSyncHarness) sync(t *testing.T, item *types.FetchedItem) (*types.SyncLog, error) {
 	t.Helper()
-	registry := datasource.NewConnectorRegistry()
-	require.NoError(t, registry.Register(replacementFetchConnector{item: *item}))
 	h.queue.fetched = item.Content
+	return syncConnectorFile(h.ctx, t, h.svc, h.source, item)
+}
+
+func syncConnectorFile(ctx context.Context, t *testing.T, ks *knowledgeService,
+	source *types.DataSource, item *types.FetchedItem,
+) (*types.SyncLog, error) {
+	t.Helper()
+	registry := datasource.NewConnectorRegistry()
+	require.NoError(t, registry.Register(singleFileConnector{kind: source.Type, item: *item}))
 	log := &types.SyncLog{
-		ID: "replace-sync", DataSourceID: h.source.ID, TenantID: h.source.TenantID,
+		ID: "file-sync", DataSourceID: source.ID, TenantID: source.TenantID,
 		Status: types.SyncLogStatusRunning, StartedAt: time.Now().UTC(),
 	}
 	logs := &processSyncSyncLogRepo{logs: map[string]*types.SyncLog{log.ID: log}}
 	svc := &DataSourceService{
-		dsRepo:      newKBDeleteDSRepo(h.source.KnowledgeBaseID, h.source),
-		syncLogRepo: logs, connectorRegistry: registry, knowledgeService: h.svc,
-		kbService: h.svc.kbService, tagService: &processSyncTagService{},
-		tenantRepo: &processSyncTenantRepo{tenant: h.ctx.Value(types.TenantInfoContextKey).(*types.Tenant)},
+		dsRepo:      newKBDeleteDSRepo(source.KnowledgeBaseID, source),
+		syncLogRepo: logs, connectorRegistry: registry, knowledgeService: ks,
+		kbService: ks.kbService, tagService: &processSyncTagService{},
+		tenantRepo: &processSyncTenantRepo{tenant: ctx.Value(types.TenantInfoContextKey).(*types.Tenant)},
 	}
 	task := enrichmentTask(t, types.TypeDataSourceSync, types.DataSourceSyncPayload{
-		DataSourceID: h.source.ID, TenantID: h.source.TenantID, SyncLogID: log.ID,
-		ForceFull: true, Trigger: "manual", Initiator: types.TaskInitiatorFromContext(h.ctx),
+		DataSourceID: source.ID, TenantID: source.TenantID, SyncLogID: log.ID,
+		ForceFull: true, Trigger: "manual", Initiator: types.TaskInitiatorFromContext(ctx),
 	})
 	err := svc.ProcessSync(context.Background(), task)
 	return logs.logs[log.ID], err

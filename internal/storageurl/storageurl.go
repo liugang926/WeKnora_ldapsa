@@ -48,7 +48,8 @@ type Resolver interface {
 
 // Rewriter replaces storage references with loadable HTTP URLs.
 //
-// Resolutions are memoised for the Rewriter's lifetime. Create one per request
+// Resolutions are memoised for the Rewriter's lifetime, or for one content
+// rewrite when the resolver enforces live authorization. Create one per request
 // or per outbound message: a `resource://` handle costs one access-grant row per
 // resolution, and a streamed answer repeats the same image across many chunks.
 //
@@ -92,8 +93,23 @@ func (w *Rewriter) String(ctx context.Context, content string) string {
 	if !w.Enabled() || content == "" {
 		return content
 	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if resolver, ok := w.resolver.(*FileServiceResolver); ok && resolver.authorize != nil {
+		// An IM stream can render the same handle again after a share was
+		// revoked or its storage backend disabled. Reuse clients and grants
+		// within this render, but never carry them into the next one.
+		clear(w.memo)
+		clear(resolver.cache)
+		clear(resolver.owners)
+	}
 	return Pattern.ReplaceAllStringFunc(content, func(ref string) string {
-		return w.ref(ctx, ref)
+		if cached, ok := w.memo[ref]; ok {
+			return cached
+		}
+		resolved := w.resolve(ctx, ref)
+		w.memo[ref] = resolved
+		return resolved
 	})
 }
 
@@ -107,21 +123,6 @@ func (w *Rewriter) Ref(ctx context.Context, ref string) string {
 		return ref
 	}
 	return w.String(ctx, ref)
-}
-
-// ref resolves one reference. The lock is held across resolve because Resolver
-// implementations (FileServiceResolver in particular) keep an unsynchronised
-// per-provider cache, and because it collapses a concurrent duplicate into one
-// signature instead of two.
-func (w *Rewriter) ref(ctx context.Context, ref string) string {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if cached, ok := w.memo[ref]; ok {
-		return cached
-	}
-	resolved := w.resolve(ctx, ref)
-	w.memo[ref] = resolved
-	return resolved
 }
 
 func (w *Rewriter) resolve(ctx context.Context, ref string) string {

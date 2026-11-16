@@ -157,7 +157,9 @@ func TestProcessDocumentChunksStoredInlineImagesOverLegacyLimit(t *testing.T) {
 			catalog := &fakeBindCatalog{resources: make(map[string]*types.StoredResource)}
 			storage := &inlineImageStorageState{catalog: catalog}
 			fileSvc := inlineImageFileService{content: strings.Repeat(image+"\n", count), state: storage}
+			queue := &inlineLifecycleTaskEnqueuer{}
 			svc := &knowledgeService{
+				task:            queue,
 				repo:            repo,
 				kbService:       &reparseFailureKBService{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 1}},
 				tenantRepo:      &inlineImageTenantRepo{tenant: &types.Tenant{ID: 1}},
@@ -178,6 +180,7 @@ func TestProcessDocumentChunksStoredInlineImagesOverLegacyLimit(t *testing.T) {
 			err := svc.ProcessDocument(context.Background(), task)
 
 			require.NoError(t, err)
+			require.Len(t, queue.postProcessTasks, 1)
 			require.NotEqual(t, types.ParseStatusFailed, knowledge.ParseStatus)
 			require.True(t, chunkRepo.created, "stored inline images must be chunked")
 			require.True(t, tracker.chunkingStarted, "the chunking stage must appear in the trace")
@@ -211,7 +214,9 @@ func TestProcessDocumentChunksCodeExampleAndStoresOnlyRealInlineImage(t *testing
 	tracker := &inlineImageSpanTracker{}
 	catalog := &fakeBindCatalog{resources: make(map[string]*types.StoredResource)}
 	storage := &inlineImageStorageState{catalog: catalog}
+	queue := &inlineLifecycleTaskEnqueuer{}
 	svc := &knowledgeService{
+		task:            queue,
 		repo:            &embedFailureKnowledgeRepo{knowledge: knowledge},
 		kbService:       &reparseFailureKBService{kb: &types.KnowledgeBase{ID: "kb-1", TenantID: 1}},
 		tenantRepo:      &inlineImageTenantRepo{tenant: &types.Tenant{ID: 1}},
@@ -232,6 +237,7 @@ func TestProcessDocumentChunksCodeExampleAndStoresOnlyRealInlineImage(t *testing
 		types.TypeDocumentProcess, mustMarshalDocumentPayload(t, payload)))
 
 	require.NoError(t, err)
+	require.Len(t, queue.postProcessTasks, 1)
 	require.NotEqual(t, types.ParseStatusFailed, knowledge.ParseStatus)
 	require.True(t, chunkRepo.created, "code example must reach chunking")
 	require.True(t, tracker.chunkingStarted)
@@ -276,7 +282,9 @@ func TestProcessDocumentOmitsMalformedImageAndKeepsValidImage(t *testing.T) {
 	chunkRepo := &inlineImageChunkRepo{}
 	catalog := &fakeBindCatalog{resources: make(map[string]*types.StoredResource)}
 	storage := &inlineImageStorageState{catalog: catalog}
+	queue := &inlineLifecycleTaskEnqueuer{}
 	svc := &knowledgeService{
+		task: queue,
 		repo: &embedFailureKnowledgeRepo{knowledge: knowledge},
 		kbService: &reparseFailureKBService{kb: &types.KnowledgeBase{
 			ID: "kb-1", TenantID: 1,
@@ -296,6 +304,7 @@ func TestProcessDocumentOmitsMalformedImageAndKeepsValidImage(t *testing.T) {
 	err := svc.ProcessDocument(context.Background(), asynq.NewTask(
 		types.TypeDocumentProcess, mustMarshalDocumentPayload(t, payload)))
 	require.NoError(t, err)
+	require.Len(t, queue.postProcessTasks, 1)
 	require.NotEqual(t, types.ParseStatusFailed, knowledge.ParseStatus)
 	require.True(t, chunkRepo.created)
 	require.Len(t, storage.saved, 2, "only the valid PNG and SVG images are uploaded")
@@ -326,7 +335,9 @@ func TestProcessDocumentAllowsShortDataURIProseExample(t *testing.T) {
 	}
 	chunkRepo := &inlineImageChunkRepo{}
 	modelService := &inlineImageModelService{}
+	queue := &inlineLifecycleTaskEnqueuer{}
 	svc := &knowledgeService{
+		task: queue,
 		repo: &embedFailureKnowledgeRepo{knowledge: knowledge},
 		kbService: &reparseFailureKBService{kb: &types.KnowledgeBase{
 			ID: "kb-1", TenantID: 1,
@@ -350,6 +361,7 @@ func TestProcessDocumentAllowsShortDataURIProseExample(t *testing.T) {
 		types.TypeDocumentProcess, mustMarshalDocumentPayload(t, payload)))
 
 	require.NoError(t, err)
+	require.Len(t, queue.postProcessTasks, 1)
 	require.NotEqual(t, types.ParseStatusFailed, knowledge.ParseStatus)
 	require.True(t, chunkRepo.created)
 	require.Equal(t, 0, modelService.calls)

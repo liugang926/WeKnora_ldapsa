@@ -35,7 +35,7 @@ func TestCompactionHTTPStreamCheckpoint(t *testing.T) {
 			model := openaicompletions.New(openaicompletions.Config{Endpoint: api.Endpoint{
 				BaseURL: server.URL, Model: "summary-test", Client: server.Client(),
 			}})
-			c := New(model, newEstimator(t), testSettings())
+			c := newLiteralTestCompactor(model, newEstimator(t), testSettings())
 			messages := withStoredHistory(reactTurn(12), storedTurn("stored-turn", 1, "/workspace/a.txt"))
 			result, err := c.Compact(context.Background(), messages, ReasonThreshold)
 			require.NoError(t, err)

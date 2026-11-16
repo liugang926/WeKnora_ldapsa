@@ -140,7 +140,7 @@ func renderReplayCodec(t *testing.T, initial, polled []interfaces.StreamEvent, q
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(middleware.ErrorHandler())
-	h := &Handler{fileService: &stubResourceFileService{}}
+	h := &Handler{fileService: &stubResourceFileService{}, ResourceURLResolver: stubRequestResolver}
 	r.GET("/codec", func(c *gin.Context) {
 		rewriter, err := h.resolveStreamRewriter(c)
 		if err != nil {

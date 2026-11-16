@@ -18,7 +18,11 @@ type alwaysFailingTool struct {
 
 func (t *alwaysFailingTool) Execute(context.Context, json.RawMessage) (*types.ToolResult, error) {
 	t.calls++
-	return &types.ToolResult{Success: false, Error: "browser unavailable"}, nil
+	return &types.ToolResult{SourceLineage: independentAgentInput(), Success: false, Error: "browser unavailable"}, nil
+}
+
+func (t *alwaysFailingTool) ExecuteSourceLineage(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
+	return t.Execute(ctx, args)
 }
 
 func failedToolResponse(id string) mockResponse {
@@ -49,14 +53,15 @@ func TestExecuteLoopPromptsForAlternativeAfterRepeatedFailedToolCall(t *testing.
 			FinishReason: "stop",
 		}}},
 	}}
-	engine := newTestEngine(t, model)
+	engine := newWorkspaceTestEngine(t, model)
 	tool := &alwaysFailingTool{BaseTool: agenttools.NewBaseTool(
 		"failing_browser", "always fails in this test", json.RawMessage(`{"type":"object"}`),
 	)}
 	engine.toolRegistry = agenttools.NewToolRegistry()
 	engine.toolRegistry.RegisterTool(tool)
 
-	state, err := engine.executeLoop(context.Background(), &types.AgentState{}, "visit the website",
+	turnCtx := types.WithRAGSourceLineage(context.Background(), engine.turnLineage)
+	state, err := engine.executeLoop(turnCtx, &types.AgentState{}, "visit the website",
 		emptyMessages(), emptyTools(), "session", "message")
 
 	require.NoError(t, err)

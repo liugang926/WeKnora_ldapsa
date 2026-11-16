@@ -1046,7 +1046,7 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 
 	// Setup stream handler
 	streamCtx.streamHandler = h.setupStreamHandler(asyncCtx, reqCtx.sessionID, reqCtx.assistantMessage.ID,
-		reqCtx.requestID, reqCtx.session.TenantID, reqCtx.receivedAt, reqCtx.assistantMessage, eventBus)
+		reqCtx.requestID, reqCtx.session.TenantID, reqCtx.receivedAt, reqCtx.assistantMessage, eventBus, reqCtx.resume)
 
 	// Generate title if needed
 	if generateTitle && reqCtx.session.Title == "" {

@@ -46,7 +46,7 @@ func TestQuickAnswerCompletionPersistsAfterGenerationCancellation(t *testing.T) 
 		ID: "m", SessionID: "s", Role: "assistant", AgentTenantID: 2,
 	}
 	ctx, cancel := context.WithCancel(types.WithExecutionTenant(context.Background(), 1))
-	streamHandler := h.setupStreamHandler(ctx, "s", "m", "req", 1, time.Now(), message, bus)
+	streamHandler := h.setupStreamHandler(ctx, "s", "m", "req", 1, time.Now(), message, bus, nil)
 	// The local mock model owns these literal bytes. Use the actual producer
 	// handler before cancellation; pre-filling an unknown message is not proof.
 	literal, err := types.NewCompleteSourceLineage()
@@ -112,7 +112,7 @@ func TestSharedImageCompletionWaitsForPersistedReferences(t *testing.T) {
 					// the visitor's workspace and must be saved there before notifying it.
 					runCtx := types.WithExecutionTenant(context.Background(), 2)
 					saveCtx := types.WithExecutionTenant(runCtx, 1)
-					streamHandler := h.setupStreamHandler(runCtx, "s", "m", "req", 1, time.Now(), message, bus)
+					streamHandler := h.setupStreamHandler(runCtx, "s", "m", "req", 1, time.Now(), message, bus, nil)
 					streamCtx := &sseStreamContext{
 						eventBus: bus, streamHandler: streamHandler, assistantMessage: message,
 					}
@@ -178,7 +178,7 @@ func TestQuickAnswerUnknownPrefilledBodyCannotPublishCompletion(t *testing.T) {
 	bus := event.NewEventBus()
 	message := &types.Message{ID: "m", SessionID: "s", Role: "assistant", Content: "unknown prefilled private answer"}
 	ctx := types.WithExecutionTenant(context.Background(), 1)
-	h.setupStreamHandler(ctx, "s", "m", "req", 1, time.Now(), message, bus)
+	h.setupStreamHandler(ctx, "s", "m", "req", 1, time.Now(), message, bus, nil)
 	require.ErrorIs(t, bus.Emit(ctx, event.Event{
 		Type: event.EventAgentComplete,
 		Data: event.AgentCompleteData{MessageID: "m"},

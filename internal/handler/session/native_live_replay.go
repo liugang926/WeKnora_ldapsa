@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"net/http"
 	"sync"
 	"time"
 
@@ -46,15 +47,16 @@ type nativeLiveFrame struct {
 	Expires        time.Time
 }
 type nativeLiveRun struct {
-	mu       sync.Mutex
-	key      nativeLiveKey
-	control  *types.Message
-	frames   []nativeLiveFrame
-	sequence uint64
-	bytes    int
-	expires  time.Time
-	timer    *time.Timer
-	closed   bool
+	mu             sync.Mutex
+	key            nativeLiveKey
+	control        *types.Message
+	resumePromptID string
+	frames         []nativeLiveFrame
+	sequence       uint64
+	bytes          int
+	expires        time.Time
+	timer          *time.Timer
+	closed         bool
 }
 
 var nativeLiveRuns = struct {
@@ -75,6 +77,10 @@ func eraseNativeLiveRun(run *nativeLiveRun) {
 		delete(nativeLiveRuns.items, run.key)
 	}
 	nativeLiveRuns.Unlock()
+	run.close()
+}
+
+func (run *nativeLiveRun) close() {
 	run.mu.Lock()
 	run.closed = true
 	for i := range run.frames {
@@ -102,6 +108,7 @@ func (h *Handler) nativeLiveStreamManager(
 	ctx context.Context,
 	tenant uint64,
 	session, message, request string,
+	resume *types.AgentResume,
 ) interfaces.StreamManager {
 	actual, ok := h.messageService.(nativeLiveMaterialService)
 	if !ok || !actual.HasOriginalMessageMaterialStore() {
@@ -130,14 +137,25 @@ func (h *Handler) nativeLiveStreamManager(
 		return appender
 	}
 	run := &nativeLiveRun{key: key, control: copied, expires: time.Now().Add(nativeLiveFrameTTL)}
+	if resume != nil && resume.Prompt != nil {
+		run.resumePromptID = resume.Prompt.ID
+	}
 	nativeLiveRuns.Lock()
 	prior := nativeLiveRuns.items[key]
-	if prior == nil {
+	if prior != nil && prior.resumePromptID != "" && run.resumePromptID == "" {
+		nativeLiveRuns.Unlock()
+		appender.registrationErr = access.ErrNextcloudPublicationDenied
+		return appender
+	}
+	if prior == nil || prior.resumePromptID != run.resumePromptID {
 		nativeLiveRuns.items[key] = run
 	} else {
 		run = prior
 	}
 	nativeLiveRuns.Unlock()
+	if prior != nil && prior != run {
+		prior.close()
+	}
 	run.mu.Lock()
 	if run.timer == nil {
 		run.timer = time.AfterFunc(nativeLiveFrameTTL, func() { eraseNativeLiveRun(run) })
@@ -190,12 +208,26 @@ func (a *nativeLiveAppender) AppendEvent(
 			current.RequestID != a.run.key.Request {
 			return access.ErrNextcloudPublicationDenied
 		}
+		a.run.mu.Lock()
+		if a.run.closed {
+			a.run.mu.Unlock()
+			return access.ErrNextcloudPublicationDenied
+		}
 		err = a.StreamManager.AppendEvent(ctx, session, message, frame)
-		if err == nil && a.run != nil {
+		a.run.mu.Unlock()
+		if err == nil {
 			eraseNativeLiveRun(a.run)
 		}
 		return err
 	}
+	return a.appendLiveFrame(ctx, session, message, frame)
+}
+
+// A suspended segment ends before the message does. Its terminal frame must
+// retain the same parents and publication checks as its other live frames.
+func (a *nativeLiveAppender) appendLiveFrame(
+	ctx context.Context, session, message string, frame interfaces.StreamEvent,
+) error {
 	if a.registrationErr != nil {
 		return a.registrationErr
 	}
@@ -381,6 +413,10 @@ func (h *Handler) tryNativeLiveReplay(
 	nativeLiveRuns.Lock()
 	run := nativeLiveRuns.items[key]
 	nativeLiveRuns.Unlock()
+	if pending := c.Query("resume_pending_id"); pending != "" && (run == nil || run.resumePromptID != pending) {
+		c.JSON(http.StatusConflict, gin.H{"success": false, "error": "The resumed stream is not ready yet"})
+		return true
+	}
 	if run == nil {
 		_ = c.Error(nativeSavedReplayHTTPError(access.ErrNextcloudPublicationUnavailable))
 		return true
@@ -531,7 +567,7 @@ func (h *Handler) tryNativeLiveReplay(
 				return true
 			}
 			writer.Flush()
-			if writer.denied != nil {
+			if writer.denied != nil || frame.Type == types.ResponseTypeComplete {
 				return true
 			}
 			offset = entry.Sequence

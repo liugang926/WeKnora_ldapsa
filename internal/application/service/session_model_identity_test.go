@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	chatpipeline "github.com/Tencent/WeKnora/internal/application/service/chat_pipeline"
-	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
@@ -37,12 +37,9 @@ func TestGenerateTitlePropagatesBusinessSession(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			model := &sessionIdentityModel{seen: make(chan string, 1), err: errors.New("stop after model call")}
-			svc := &sessionService{
-				cfg:          &config.Config{Conversation: &config.ConversationConfig{}},
-				modelService: &stubModelService{chatModel: model},
-			}
-			session := &types.Session{ID: "title-session"}
-			ctx := types.WithSessionID(context.Background(), "parent-session")
+			svc, session, ctx := newTitleGenerationFixture(t, "")
+			svc.modelService = &stubModelService{chatModel: model}
+			ctx = types.WithSessionID(ctx, "parent-session")
 			if async {
 				svc.GenerateTitleAsync(ctx, session, "hello", "model", nil)
 			} else {
@@ -76,6 +73,7 @@ func (p *sessionIdentityPlugin) OnEvent(
 func TestKnowledgeQAByEventPropagatesBusinessSession(t *testing.T) {
 	plugin := &sessionIdentityPlugin{}
 	events := chatpipeline.NewEventManager()
+	chatpipeline.ConfigureSourceLineage(events, access.NewNextcloudSourceLineageGuard(nil, nil, nil, nil, nil, nil))
 	events.Register(plugin)
 	svc := &sessionService{eventManager: events}
 	ctx := context.Background()

@@ -102,6 +102,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/sandbox"
 	"github.com/Tencent/WeKnora/internal/sandbox/admission"
 	"github.com/Tencent/WeKnora/internal/storageallowlist"
+	"github.com/Tencent/WeKnora/internal/storageurl"
 	"github.com/Tencent/WeKnora/internal/stream"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -955,6 +956,16 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(handler.NewTagHandler))
 	must(container.Provide(session.NewHandler))
 	must(container.Provide(handler.NewMessageHandler))
+	must(container.Invoke(func(
+		messages *handler.MessageHandler, kbs *handler.KnowledgeBaseHandler, sessions *session.Handler,
+		catalog interfaces.ResourceCatalog, tenants interfaces.TenantService, guard *access.NextcloudSourceLineageGuard,
+	) {
+		resolver := storageurl.NewHTTPResourceResolver(catalog, tenants, guard)
+		messages.ResourceURLResolver = resolver
+		kbs.ResourceURLResolver = resolver
+		sessions.ResourceURLResolver = resolver
+	}))
+
 	must(container.Provide(handler.NewMessageSuggestionHandler))
 	must(container.Provide(handler.NewModelHandler))
 	must(container.Provide(handler.NewSandboxConfigHandler))

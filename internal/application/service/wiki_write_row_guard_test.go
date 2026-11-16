@@ -144,7 +144,7 @@ func newWikiWriteGuardStore(t *testing.T, content string) (interfaces.WikiPageSe
 	require.NoError(t, db.AutoMigrate(&types.WikiFolder{}, &types.WikiPage{}, &types.WikiPageRevision{}))
 
 	ctx := context.Background()
-	svc := NewWikiPageService(repository.NewWikiPageRepository(db), nil, nil, nil, nil, nil)
+	svc := newWikiWriterTestService(t, db, "kb-row-guard")
 	page, err := svc.CreatePage(ctx, &types.WikiPage{
 		TenantID: 1, KnowledgeBaseID: "kb-row-guard", Slug: "entity/pmp",
 		Title: "PMP", PageType: types.WikiPageTypeEntity,
@@ -152,6 +152,19 @@ func newWikiWriteGuardStore(t *testing.T, content string) (interfaces.WikiPageSe
 	})
 	require.NoError(t, err)
 	return svc, page
+}
+
+// newWikiWriterTestService binds the page writer to a persisted, ordinary knowledge base.
+func newWikiWriterTestService(t *testing.T, db *gorm.DB, kbID string) interfaces.WikiPageService {
+	t.Helper()
+	require.NoError(t, db.AutoMigrate(&types.KnowledgeBase{}, &types.Knowledge{}, &types.DataSource{}))
+	require.NoError(t, db.Create(&types.KnowledgeBase{ID: kbID, TenantID: 1, Name: "Wiki writer"}).Error)
+	policy := &knowledgeBaseService{
+		repo:   repository.NewKnowledgeBaseRepository(db),
+		kgRepo: repository.NewKnowledgeRepository(db),
+		dsRepo: repository.NewDataSourceRepository(db),
+	}
+	return NewWikiPageService(repository.NewWikiPageRepository(db), nil, policy, nil, nil, nil)
 }
 
 // ledgerHolders builds n distinct ledger identities.

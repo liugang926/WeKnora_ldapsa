@@ -17,7 +17,6 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -137,19 +136,6 @@ func TestWikiKnowledgeTombstoneSkipsLookup(t *testing.T) {
 	assert.Empty(t, updates)
 }
 
-type wikiLookupKBService struct {
-	interfaces.KnowledgeBaseService
-	kb *types.KnowledgeBase
-}
-
-func (s *wikiLookupKBService) GetKnowledgeBaseByIDOnly(context.Context, string) (*types.KnowledgeBase, error) {
-	return s.kb, nil
-}
-
-func (s *wikiLookupKBService) GetKnowledgeBaseByID(context.Context, string) (*types.KnowledgeBase, error) {
-	return s.kb, nil
-}
-
 type wikiLookupModelService struct{ interfaces.ModelService }
 
 func (wikiLookupModelService) GetChatModel(context.Context, string) (chat.Chat, error) {
@@ -157,51 +143,85 @@ func (wikiLookupModelService) GetChatModel(context.Context, string) (chat.Chat, 
 	return nil, nil
 }
 
-type wikiLookupEmptyChunks struct{ interfaces.ChunkRepository }
-
-func (wikiLookupEmptyChunks) ListChunksByKnowledgeID(context.Context, uint64, string) ([]*types.Chunk, error) {
-	return nil, nil
+// Inject failures only at the map-stage read. Terminal settlement still uses
+// the real knowledge service and revalidates the original document and actor.
+type wikiRecoveryLookup struct {
+	interfaces.KnowledgeRepository
+	lookup func(context.Context, string) (*types.Knowledge, error)
 }
 
-func (wikiLookupEmptyChunks) ListChunksByKnowledgeIDAndTypes(
-	context.Context, uint64, string, []types.ChunkType,
-) ([]*types.Chunk, error) {
-	return nil, nil
+func (r *wikiRecoveryLookup) GetKnowledgeByIDOnly(ctx context.Context, id string) (*types.Knowledge, error) {
+	return r.lookup(ctx, id)
 }
 
-func newWikiLookupRecoveryService(t *testing.T, kbID string, rdb *redis.Client) (*wikiIngestService, *gorm.DB) {
+type wikiLookupRecoveryFixture struct {
+	*wikiIngestService
+	lookup *wikiRecoveryLookup
+	actor  context.Context
+	store  *apprepo.KnowledgeInputProvenanceStore
+}
+
+func newWikiLookupRecoveryService(t *testing.T, kbID string, rdb *redis.Client) (*wikiLookupRecoveryFixture, *gorm.DB) {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	f := newEnrichmentTestFixture(t, false)
+	db := f.db
+	pool, err := db.DB()
 	require.NoError(t, err)
-	sqlDB, err := db.DB()
+	pool.SetMaxOpenConns(1)
+	err = db.AutoMigrate(&types.TaskPendingOp{}, &types.KnowledgeProcessingSpan{}, &types.TaskDeadLetter{})
 	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = sqlDB.Close() })
-	require.NoError(t, db.Exec(knowledgeTestDDL).Error)
-	require.NoError(t, db.Exec("ALTER TABLE knowledges ADD COLUMN processed_at DATETIME").Error)
-	require.NoError(t, db.AutoMigrate(&types.TaskPendingOp{}))
-	require.NoError(t, db.Exec("CREATE TABLE tenants (id INTEGER PRIMARY KEY, deleted_at DATETIME)").Error)
-	require.NoError(t, db.Exec("INSERT INTO tenants (id) VALUES (7)").Error)
-	repo := apprepo.NewKnowledgeRepository(db)
-	svc := &wikiIngestService{
-		kbService: &wikiLookupKBService{kb: &types.KnowledgeBase{
-			ID: kbID, SummaryModelID: "unused", IndexingStrategy: types.IndexingStrategy{WikiEnabled: true},
-		}},
-		modelService: wikiLookupModelService{}, chunkRepo: wikiLookupEmptyChunks{},
-		knowledgeRepo: repo, knowledgeSvc: &wikiKnowledgeLookupStub{lookup: repo.GetKnowledgeByIDOnly},
-		pendingRepo: apprepo.NewTaskPendingOpsRepository(db), task: &wikiGuardTaskQueue{}, redisClient: rdb,
+	actor := types.WithCaller(context.Background(), types.CallerFromContext(f.ctx))
+	principal, ok := types.PrincipalFromContext(f.ctx)
+	require.True(t, ok)
+	actor = types.WithExecutionTenant(types.WithPrincipal(actor, principal), 7)
+	kb := &types.KnowledgeBase{
+		ID: kbID, TenantID: 7, CreatorID: principal.ID, Name: "Wiki lookup recovery",
+		Type: types.KnowledgeBaseTypeDocument, SummaryModelID: "summary", EmbeddingModelID: "embed",
+		IndexingStrategy: types.IndexingStrategy{WikiEnabled: true},
 	}
-	return svc, db
+	input := apprepo.WithIndependentKnowledgeInput(actor)
+	input = apprepo.WithIndependentKnowledgeBaseNameInput(input, "", kb.Name)
+	require.NoError(t, f.store.CreateKnowledgeBaseWithInput(input, kb))
+	actor, err = f.store.AuthorizeCurrentKnowledgeInputWrite(actor, kb)
+	require.NoError(t, err)
+	repo := f.s.repo
+	lookup := &wikiRecoveryLookup{KnowledgeRepository: repo, lookup: repo.GetKnowledgeByIDOnly}
+	f.s.repo = lookup
+	groups := NewGroupAccessService(apprepo.NewGroupAccessRepository(db))
+	ConfigureGroupAccessUserEligibility(groups, &userService{userRepo: apprepo.NewUserRepository(db)})
+	svc := &wikiIngestService{
+		kbService: f.s.kbService, modelService: wikiLookupModelService{}, chunkRepo: f.s.chunkRepo,
+		knowledgeRepo: repo, knowledgeSvc: f.s, groupAccess: groups,
+		pendingRepo: apprepo.NewTaskPendingOpsRepository(db), task: &wikiGuardTaskQueue{}, redisClient: rdb,
+		spanTracker: NewSpanTracker(apprepo.NewKnowledgeSpanRepository(db), db),
+	}
+	return &wikiLookupRecoveryFixture{wikiIngestService: svc, lookup: lookup, actor: actor, store: f.store}, db
 }
 
-func seedWikiLookupTask(t *testing.T, svc *wikiIngestService, db *gorm.DB, kbID, knowledgeID string) *asynq.Task {
+func seedWikiLookupTask(
+	t *testing.T, svc *wikiLookupRecoveryFixture, db *gorm.DB, kbID, knowledgeID string,
+) *asynq.Task {
 	t.Helper()
-	require.NoError(t, db.Exec(`INSERT INTO knowledges
-		(id, tenant_id, knowledge_base_id, parse_status, pending_subtasks_count) VALUES (?, 7, ?, ?, 1)`,
-		knowledgeID, kbID, types.ParseStatusFinalizing).Error)
-	op, err := newWikiIngestPendingOp(context.Background(), 7, kbID, knowledgeID)
+	const body = "Wiki source with no parsed chunks"
+	k := &types.Knowledge{
+		ID: knowledgeID, TenantID: 7, KnowledgeBaseID: kbID, Type: types.KnowledgeTypeManual,
+		Channel: "web", Source: "manual", Title: knowledgeID,
+		EnableStatus: "enabled", ParseStatus: types.ParseStatusProcessing,
+		Metadata:       types.JSON(`{"manual":{"content":"Wiki source with no parsed chunks"}}`),
+		CustomMetadata: types.JSON(`{}`),
+	}
+	original, err := svc.store.CreateKnowledgeWithInput(apprepo.WithIndependentKnowledgeInput(svc.actor), k, body)
 	require.NoError(t, err)
-	require.NoError(t, svc.pendingRepo.Enqueue(context.Background(), op))
+	build := apprepo.WithKnowledgeBuildInputProof(svc.actor, svc.store, original)
+	require.NoError(t, db.Create(&types.KnowledgeProcessingSpan{
+		KnowledgeID: k.ID, Attempt: 1, SpanID: "root", Kind: types.SpanKindRoot,
+	}).Error)
+	op, err := newWikiIngestPendingOp(build, 7, kbID, knowledgeID, 1)
+	require.NoError(t, err)
+	seeder := svc.pendingRepo.(interfaces.TaskPendingOpsFinalizingSeeder)
+	seeded, err := seeder.SeedKnowledgeFinalizingWithPendingOp(build, knowledgeID, 1, op)
+	require.NoError(t, err)
+	require.True(t, seeded)
 	payload, err := json.Marshal(WikiIngestPayload{TenantID: 7, KnowledgeBaseID: kbID})
 	require.NoError(t, err)
 	return asynq.NewTask(types.TypeWikiIngest, payload)
@@ -222,14 +242,15 @@ func TestWikiIngestRetainsInterruptedLookupAndRecovers(t *testing.T) {
 			task := seedWikiLookupTask(t, svc, db, "kb-1", "k-1")
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			lookup := svc.knowledgeSvc.(*wikiKnowledgeLookupStub)
+			lookup := svc.lookup
 			lookup.lookup = func(ctx context.Context, id string) (*types.Knowledge, error) {
 				cancel()
 				return svc.knowledgeRepo.GetKnowledgeByIDOnly(ctx, id)
 			}
 			require.NoError(t, svc.ProcessWikiIngest(ctx, task))
 			var pending types.TaskPendingOp
-			require.NoError(t, db.First(&pending).Error, "interrupted source must stay queued")
+			err := db.Where("task_type = ?", wikiTaskType).First(&pending).Error
+			require.NoError(t, err, "interrupted source must stay queued")
 			assert.Equal(t, 1, pending.FailCount)
 			assert.Nil(t, pending.ClaimedAt, "next batch must be able to reclaim immediately")
 			kn, err := svc.knowledgeRepo.GetKnowledgeByIDOnly(context.Background(), "k-1")
@@ -252,6 +273,32 @@ func TestWikiIngestRetainsInterruptedLookupAndRecovers(t *testing.T) {
 			assert.Zero(t, kn.PendingSubtasksCount)
 		})
 	}
+}
+
+func TestInterruptedWikiMapRechecksPermissionBeforeRetry(t *testing.T) {
+	svc, db := newWikiLookupRecoveryService(t, "kb-1", nil)
+	task := seedWikiLookupTask(t, svc, db, "kb-1", "doc")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	svc.lookup.lookup = func(context.Context, string) (*types.Knowledge, error) {
+		err := db.Model(&types.User{}).Where("id = ?", types.CallerFromContext(svc.actor).UserID).
+			Update("is_active", false).Error
+		if err != nil {
+			return nil, err
+		}
+		cancel()
+		return nil, context.Canceled
+	}
+
+	require.ErrorIs(t, svc.ProcessWikiIngest(ctx, task), ErrResourceAccessDenied)
+	var pending types.TaskPendingOp
+	require.NoError(t, db.Where("task_type = ?", wikiTaskType).First(&pending).Error)
+	require.Zero(t, pending.FailCount)
+	require.Empty(t, svc.task.(*wikiGuardTaskQueue).tasks)
+	k, err := svc.knowledgeRepo.GetKnowledgeByIDOnly(context.Background(), "doc")
+	require.NoError(t, err)
+	require.Equal(t, types.ParseStatusFinalizing, k.ParseStatus)
+	require.Equal(t, 1, k.PendingSubtasksCount)
 }
 
 func TestWikiMapClosesSpanAfterLookupCancellation(t *testing.T) {
@@ -283,7 +330,7 @@ func TestWikiLookupFailureDoesNotBlockHealthySibling(t *testing.T) {
 	svc, db := newWikiLookupRecoveryService(t, "kb-1", nil)
 	seedWikiLookupTask(t, svc, db, "kb-1", "unreadable")
 	task := seedWikiLookupTask(t, svc, db, "kb-1", "healthy")
-	lookup := svc.knowledgeSvc.(*wikiKnowledgeLookupStub)
+	lookup := svc.lookup
 	lookup.lookup = func(ctx context.Context, id string) (*types.Knowledge, error) {
 		if id == "unreadable" {
 			return nil, errors.New("temporary read failure")
@@ -292,7 +339,7 @@ func TestWikiLookupFailureDoesNotBlockHealthySibling(t *testing.T) {
 	}
 	require.NoError(t, svc.ProcessWikiIngest(context.Background(), task))
 	var ops []types.TaskPendingOp
-	require.NoError(t, db.Find(&ops).Error)
+	require.NoError(t, db.Where("task_type = ?", wikiTaskType).Find(&ops).Error)
 	require.Len(t, ops, 1)
 	assert.Equal(t, "unreadable", ops[0].DedupKey)
 	healthy, err := svc.knowledgeRepo.GetKnowledgeByIDOnly(context.Background(), "healthy")
@@ -302,10 +349,9 @@ func TestWikiLookupFailureDoesNotBlockHealthySibling(t *testing.T) {
 
 func TestWikiPersistentLookupFailureExhaustsRetryBudget(t *testing.T) {
 	svc, db := newWikiLookupRecoveryService(t, "kb-1", nil)
-	require.NoError(t, db.AutoMigrate(&types.TaskDeadLetter{}))
 	svc.deadLetterRepo = apprepo.NewTaskDeadLetterRepository(db)
 	task := seedWikiLookupTask(t, svc, db, "kb-1", "unreadable")
-	svc.knowledgeSvc.(*wikiKnowledgeLookupStub).lookup = func(context.Context, string) (*types.Knowledge, error) {
+	svc.lookup.lookup = func(context.Context, string) (*types.Knowledge, error) {
 		return nil, errors.New("persistent read failure")
 	}
 	for range wikiMaxFailRetries + 1 {

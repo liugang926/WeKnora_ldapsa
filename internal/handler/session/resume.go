@@ -310,11 +310,13 @@ func decodeResumableRequest(snapshot []byte, req *types.ResumableAgentRequest) e
 }
 
 func (h *Handler) writeRunResumedEvent(ctx context.Context, sessionID, messageID, promptID string) {
+	lineage, _ := types.NewCompleteSourceLineage() // The marker carries only the admitted prompt ID.
 	if err := h.streamManager.AppendEvent(ctx, sessionID, messageID, interfaces.StreamEvent{
-		ID:        "resumed-" + promptID,
-		Type:      types.ResponseTypeRunResumed,
-		Timestamp: time.Now(),
-		Data:      map[string]interface{}{"pending_id": promptID},
+		SourceLineage: lineage,
+		ID:            "resumed-" + promptID,
+		Type:          types.ResponseTypeRunResumed,
+		Timestamp:     time.Now(),
+		Data:          map[string]interface{}{"pending_id": promptID},
 	}); err != nil {
 		logger.Warnf(ctx, "append run_resumed of message %s: %v", messageID, err)
 	}
@@ -336,7 +338,7 @@ func (h *Handler) CollaborationEvents(ctx context.Context,
 	m *types.Message,
 	bus *event.EventBus,
 ) func(context.Context) error {
-	stream := h.setupStreamHandler(ctx, s.ID, m.ID, m.RequestID, s.TenantID, time.Now(), m, bus)
+	stream := h.setupStreamHandler(ctx, s.ID, m.ID, m.RequestID, s.TenantID, time.Now(), m, bus, nil)
 	return stream.publishCompletion
 }
 

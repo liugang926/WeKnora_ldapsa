@@ -19,18 +19,7 @@ func (r *gitLabKnowledgeRepo) GetKnowledgeTags(context.Context, []string) (map[s
 }
 
 func TestCreateKnowledgeFromFileGitLabPreservesSourcePaths(t *testing.T) {
-	db := setupKnowledgeSharedAccessDB(t)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = sqlDB.Close() })
-	repo := &gitLabKnowledgeRepo{KnowledgeRepository: repository.NewKnowledgeRepository(db)}
-	svc := &knowledgeService{
-		repo:      repo,
-		kbService: &createKnowledgeFileKBServiceStub{kb: &types.KnowledgeBase{ID: "kb-1"}},
-		fileSvc:   &createKnowledgeFileServiceStub{},
-		task:      &createKnowledgeTaskEnqueuerStub{},
-	}
-	ctx := newCreateKnowledgeFileContext()
+	f, ds := connectorFileFixture(t, types.ConnectorTypeGitLab)
 	create := func(channel, source, file string) (*types.Knowledge, error) {
 		t.Helper()
 		metadata := map[string]string{}
@@ -38,31 +27,28 @@ func TestCreateKnowledgeFromFileGitLabPreservesSourcePaths(t *testing.T) {
 			metadata["datasource_id"] = source
 			metadata["external_id"] = "gitlab:instance:1:main:" + file
 		}
-		return svc.CreateKnowledgeFromFile(ctx, "kb-1", newMultipartFileHeader(t, "README.md", "# same content"),
+		header := newMultipartFileHeader(t, "README.md", "# same content")
+		return f.s.CreateKnowledgeFromFile(f.ctx, ds.KnowledgeBaseID, header,
 			metadata, nil, "docs-main/"+file, nil, channel, nil)
 	}
 
-	root, err := create(types.ConnectorTypeGitLab, "ds-1", "README.md")
-	require.NoError(t, err)
-	ds := &types.DataSource{ID: "ds-1", TenantID: 1, KnowledgeBaseID: "kb-1", Type: types.ConnectorTypeGitLab}
-	item := &types.FetchedItem{
-		ExternalID: "gitlab:instance:1:main:a/b/c/d/e/README.md",
-		FileName:   "docs-main/a/b/c/d/e/README.md",
-		Content:    []byte("# same content"),
+	importPath := func(source *types.DataSource, path string) *types.Knowledge {
+		t.Helper()
+		return importNewConnectorFile(t, f, source, &types.FetchedItem{
+			ExternalID: "gitlab:instance:1:main:" + path,
+			FileName:   "docs-main/" + path,
+			Content:    []byte("# same content"),
+		})
 	}
-	result := &types.SyncResult{}
-	(&DataSourceService{knowledgeService: svc}).applyFetchedItem(ctx, ds, item, nil, result)
-	require.Equal(t, 1, result.Created, "identical content at a different repository path must still be imported")
-	require.Zero(t, result.Skipped)
-	require.Zero(t, result.Failed)
-	nested, err := repo.FindByDataSourceExternalID(ctx, ds.TenantID, ds.KnowledgeBaseID, ds.ID, item.ExternalID)
-	require.NoError(t, err)
-	require.NotNil(t, nested)
+	root := importPath(ds, "README.md")
+	nested := importPath(ds, "a/b/c/d/e/README.md")
 	require.NotEqual(t, root.ID, nested.ID)
 	require.Equal(t, "docs-main/a/b/c/d/e", nested.FolderPath)
 
-	otherSource, err := create(types.ConnectorTypeGitLab, "ds-2", "README.md")
-	require.NoError(t, err, "another data source must retain its own file")
+	other := *ds
+	other.ID = "ds-2"
+	require.NoError(t, f.db.Create(&other).Error)
+	otherSource := importPath(&other, "README.md")
 	require.NotEqual(t, root.ID, otherSource.ID)
 
 	duplicate, err := create(types.ConnectorTypeGitLab, "ds-1", "a/b/c/d/e/README.md")

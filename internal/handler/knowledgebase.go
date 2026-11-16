@@ -47,12 +47,13 @@ type KnowledgeBaseHandler struct {
 	// fileService and storageResolver back the optional `resource_urls=public`
 	// mode on hybrid-search. Both may be nil in tests, in which case only the
 	// default handle mode is available.
-	fileService     interfaces.FileService
-	storageResolver interfaces.StorageBackendResolver
-	groupAccess     interfaces.GroupAccessService
-	dataSourceRepo  interfaces.DataSourceRepository
-	sourceSnapshots access.NextcloudLineageSnapshotLookup
-	contentLeases   nextcloudHTTPReadLeaseStore
+	fileService         interfaces.FileService
+	storageResolver     interfaces.StorageBackendResolver
+	ResourceURLResolver storageurl.RequestResolver
+	groupAccess         interfaces.GroupAccessService
+	dataSourceRepo      interfaces.DataSourceRepository
+	sourceSnapshots     access.NextcloudLineageSnapshotLookup
+	contentLeases       nextcloudHTTPReadLeaseStore
 }
 
 // NewKnowledgeBaseHandler creates a new knowledge base handler instance
@@ -137,7 +138,7 @@ func (h *KnowledgeBaseHandler) resolveResourceRewriter(c *gin.Context) (*storage
 		}
 		return nil, apperrors.NewBadRequestError(err.Error())
 	}
-	return storageurl.NewRequestRewriter(ctx, mode, h.fileService, h.storageResolver), nil
+	return storageurl.NewRequestRewriter(ctx, mode, h.fileService, h.storageResolver, h.ResourceURLResolver), nil
 }
 
 // buildKBResponse turns a knowledge base into a JSON-ready response shape,

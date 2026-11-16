@@ -67,13 +67,14 @@ func userMessageContaining(messages []chat.Message, needle string) string {
 
 func TestBackgroundNoticeIsInjectedBeforeTheRoundAndRecordedOnItsStep(t *testing.T) {
 	model := &mockChat{responses: []mockResponse{answer("done")}}
-	engine := newTestEngine(t, model)
+	engine := newWorkspaceTestEngine(t, model)
 	engine.SetBackgroundRun(&fakeBackgroundRun{roundStart: []background.Delivery{
 		{Text: "build (sj_1) succeeded.", AckIDs: []string{"sj_1"}},
 	}})
 
 	state := &types.AgentState{}
-	_, err := engine.executeLoop(context.Background(), state, "q", emptyMessages(), nil, "sess", "msg")
+	turnCtx := types.WithRAGSourceLineage(context.Background(), engine.turnLineage)
+	_, err := engine.executeLoop(turnCtx, state, "q", emptyMessages(), nil, "sess", "msg")
 	require.NoError(t, err)
 
 	want := "<background_notices>\nbuild (sj_1) succeeded.\n</background_notices>"
@@ -86,13 +87,14 @@ func TestBackgroundNoticeIsInjectedBeforeTheRoundAndRecordedOnItsStep(t *testing
 
 func TestBackgroundReminderKeepsTheLoopGoing(t *testing.T) {
 	model := &mockChat{responses: []mockResponse{answer("first"), answer("second")}}
-	engine := newTestEngine(t, model)
+	engine := newWorkspaceTestEngine(t, model)
 	engine.SetBackgroundRun(&fakeBackgroundRun{beforeFinal: []background.Delivery{
 		{Text: "Background work you started in this turn is still running: build (sj_1)."},
 	}})
 
 	state := &types.AgentState{}
-	_, err := engine.executeLoop(context.Background(), state, "q", emptyMessages(), nil, "sess", "msg")
+	turnCtx := types.WithRAGSourceLineage(context.Background(), engine.turnLineage)
+	_, err := engine.executeLoop(turnCtx, state, "q", emptyMessages(), nil, "sess", "msg")
 	require.NoError(t, err)
 
 	require.Len(t, model.calls, 2)
@@ -116,13 +118,14 @@ func TestBackgroundSeenIDsRideOnTheToolStep(t *testing.T) {
 		}}},
 		answer("done"),
 	}}
-	engine := newTestEngine(t, model)
+	engine := newWorkspaceTestEngine(t, model)
 	engine.toolRegistry = agenttools.NewToolRegistry()
 	engine.toolRegistry.RegisterTool(newCountingTool("probe"))
 	engine.SetBackgroundRun(&fakeBackgroundRun{seen: [][]string{{"sj_9"}}})
 
 	state := &types.AgentState{}
-	_, err := engine.executeLoop(context.Background(), state, "q", emptyMessages(), nil, "sess", "msg")
+	turnCtx := types.WithRAGSourceLineage(context.Background(), engine.turnLineage)
+	_, err := engine.executeLoop(turnCtx, state, "q", emptyMessages(), nil, "sess", "msg")
 	require.NoError(t, err)
 
 	require.Len(t, state.RoundSteps, 2)

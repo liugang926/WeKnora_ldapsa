@@ -37,6 +37,23 @@ func (c *resolverResourceCatalog) ResolvePath(ctx context.Context, ref string) (
 	return resource.PhysicalPath, resource, nil
 }
 
+func (c *resolverResourceCatalog) ListResourceKnowledgeOwners(
+	_ context.Context, tenantID uint64, ref string,
+) ([]*types.Knowledge, bool, error) {
+	resource := c.resources[ref]
+	return nil, resource != nil && resource.TenantID == tenantID, nil
+}
+
+func (c *resolverResourceCatalog) GetResourceSourceProvenance(
+	_ context.Context, tenantID uint64, ref string,
+) (string, error) {
+	resource := c.resources[ref]
+	if resource == nil || resource.TenantID != tenantID {
+		return types.ResourceProvenanceUnknown, errors.New("resource not found in workspace")
+	}
+	return resource.SourceProvenance, nil
+}
+
 func (c *resolverResourceCatalog) CreateAccessGrant(context.Context, string, time.Duration) (string, error) {
 	return "resource-grant", nil
 }
@@ -71,9 +88,11 @@ func TestResourceURLsUseBoundStorageDespiteGlobalDefault(t *testing.T) {
 			catalog := &resolverResourceCatalog{resources: map[string]*types.StoredResource{}}
 			for i, backendID := range []string{"oss-a", "oss-b", "oss-a"} {
 				ref := types.BuildResourcePath(fmt.Sprintf("Handle%016d", i))
+				path := fmt.Sprintf("storage://%s/oss://bucket-%s/7/exports/%d.png", backendID, backendID, i)
 				catalog.resources[ref] = &types.StoredResource{
 					TenantID: 7, StorageBackendID: backendID, Provider: "oss",
-					PhysicalPath: fmt.Sprintf("storage://%s/oss://bucket-%s/7/exports/%d.png", backendID, backendID, i),
+					SourceProvenance: types.ResourceProvenanceOrdinary,
+					PhysicalPath:     path,
 				}
 			}
 			global := &stubFileService{}
@@ -115,7 +134,8 @@ func TestResourceURLsUseOwnerTenantAndPreserveShortLinks(t *testing.T) {
 			catalog := &resolverResourceCatalog{resources: map[string]*types.StoredResource{
 				ref: {
 					TenantID: 9, StorageBackendID: "owner-oss", Provider: "oss",
-					PhysicalPath: "storage://owner-oss/oss://bucket/9/image.png",
+					SourceProvenance: types.ResourceProvenanceOrdinary,
+					PhysicalPath:     "storage://owner-oss/oss://bucket/9/image.png",
 				},
 			}}
 			owner := &types.Tenant{ID: 9}
@@ -182,6 +202,45 @@ func TestResourceURLResolutionFailureDoesNotFallBackToGlobal(t *testing.T) {
 			require.Zero(t, global.calls)
 		})
 	}
+}
+
+func TestGuardedResourceURLRechecksCachedAccessAndBackend(t *testing.T) {
+	t.Setenv("APP_EXTERNAL_URL", "")
+	const ref = "resource://AbCdEfGhIjKlMnOpQrStUv"
+	catalog := &resolverResourceCatalog{resources: map[string]*types.StoredResource{
+		ref: {
+			TenantID: 7, StorageBackendID: "local-images", Provider: "local",
+			PhysicalPath: "local://7/exports/a.png", SourceProvenance: types.ResourceProvenanceOrdinary,
+		},
+	}}
+	const signedURL = "https://files.example/image"
+	driver := &stubFileService{getFileURL: func(context.Context, string) (string, error) { return signedURL, nil }}
+	active := true
+	storage := &resolverStorageService{resolve: func(
+		context.Context, *types.Tenant, string, string,
+	) (interfaces.FileService, string, error) {
+		if !active {
+			return nil, "", errors.New("storage backend disabled")
+		}
+		return filesvc.NewResourceCatalogFileService(driver, catalog), "local", nil
+	}}
+	allowed := true
+	resolver := NewFileServiceResolver(&types.Tenant{ID: 7}, nil, storage).WithResources(catalog, nil).
+		WithAuthorization(func(context.Context, string) error {
+			if !allowed {
+				return errors.New("access revoked")
+			}
+			return nil
+		})
+	w := NewRewriter(resolver, "TEST")
+	ctx := context.Background()
+	require.Equal(t, signedURL+" "+signedURL, w.String(ctx, ref+" "+ref))
+	require.Equal(t, 1, driver.calls)
+	allowed = false
+	require.Equal(t, ref, w.Ref(ctx, ref))
+	allowed, active = true, false
+	require.Equal(t, ref, w.Ref(ctx, ref))
+	require.Equal(t, 1, driver.calls)
 }
 
 func TestExplicitStorageBackendFailureDoesNotFallBackToGlobal(t *testing.T) {

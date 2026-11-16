@@ -26,6 +26,14 @@ type stubResourceFileService struct {
 	interfaces.FileService
 }
 
+func stubRequestResolver(
+	_ context.Context, files interfaces.FileService, _ interfaces.StorageBackendResolver,
+) storageurl.Resolver {
+	return files.(*stubResourceFileService)
+}
+
+func (s *stubResourceFileService) ResolveFileService(string) interfaces.FileService { return s }
+
 func (s *stubResourceFileService) GetFileURL(context.Context, string) (string, error) {
 	return "https://cdn.example.com/signed.png", nil
 }
@@ -42,7 +50,7 @@ func (s *stubResourceFileService) GetFile(context.Context, string) (io.ReadClose
 
 func publicStreamRewriter() *storageurl.StreamRewriter {
 	return storageurl.NewStreamRewriter(storageurl.NewRequestRewriter(
-		context.Background(), storageurl.ModePublic, &stubResourceFileService{}, nil))
+		context.Background(), storageurl.ModePublic, &stubResourceFileService{}, nil, stubRequestResolver))
 }
 
 func newTestGinContext(t *testing.T, query string) (*gin.Context, *httptest.ResponseRecorder) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -68,11 +69,12 @@ type Runner func(context.Context, Work) (Result, error)
 
 // Runtime schedules durable child work and recovers waiting parent executions.
 type Runtime struct {
-	Store       *Store
-	Run         Runner
-	WakeParent  func(context.Context, *Binding, []byte) error
-	Reconcile   func(context.Context, Scope) error
-	ParentInput func(context.Context, Scope, string) (bool, error)
+	Store        *Store
+	CaptureInput func(context.Context, Scope, string) (*InputOrigin, error)
+	Run          Runner
+	WakeParent   func(context.Context, *Binding, []byte) error
+	Reconcile    func(context.Context, Scope) error
+	ParentInput  func(context.Context, Scope, string) (bool, error)
 	// Prune bounds durable storage; it runs every PruneInterval.
 	Prune         func(context.Context) error
 	PruneInterval time.Duration
@@ -97,6 +99,40 @@ func New(store *Store, run Runner) *Runtime {
 	}
 }
 
+func (r *Runtime) captureInput(ctx context.Context, scope Scope) (*InputOrigin, error) {
+	if r.CaptureInput == nil {
+		return nil, nil
+	}
+	g, err := r.Store.Read(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	return r.CaptureInput(ctx, scope, parentInputMessage(g))
+}
+
+func parentInputMessage(g *Group) string {
+	if g.ParentMessageID != "" {
+		return g.ParentMessageID
+	}
+	return g.Scope.ID
+}
+
+func recordInput(g *Group, m *Member, input *InputOrigin) error {
+	if input == nil {
+		return nil
+	}
+	if input.ParentMessage != parentInputMessage(g) {
+		return ErrConflict
+	}
+	for _, existing := range m.InputOrigins {
+		if reflect.DeepEqual(existing, *input) {
+			return nil
+		}
+	}
+	m.InputOrigins = append(m.InputOrigins, *input)
+	return nil
+}
+
 // Spawn idempotently enqueues a new child task in the parent group.
 func (r *Runtime) Spawn(ctx context.Context, s Scope, key, name, agentID, config, query string) (string, error) {
 	if key == "" || len(key) > 512 || len(config) > 65536 || len(agentID) > 64 || !taskName.MatchString(name) ||
@@ -104,8 +140,12 @@ func (r *Runtime) Spawn(ctx context.Context, s Scope, key, name, agentID, config
 		len(query) > 16000 {
 		return "", errors.New("invalid task name, request id or task (maximum 16000 bytes)")
 	}
+	input, err := r.captureInput(ctx, s)
+	if err != nil {
+		return "", err
+	}
 	id, runID, session := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	err := r.Store.Change(ctx, s, func(g *Group) error {
+	err = r.Store.Change(ctx, s, func(g *Group) error {
 		if v := g.Requests[key]; v != "" {
 			id = v
 			return nil
@@ -122,17 +162,12 @@ func (r *Runtime) Spawn(ctx context.Context, s Scope, key, name, agentID, config
 		if err := reserveInput(g, len(query)+len(config)); err != nil {
 			return err
 		}
-		g.Members = append(
-			g.Members,
-			&Member{
-				ID:         id,
-				Name:       name,
-				AgentID:    agentID,
-				SessionID:  session,
-				ConfigJSON: config,
-				Runs:       []*Run{{ID: runID, State: "queued", Query: query}},
-			},
-		)
+		child := &Member{ID: id, Name: name, AgentID: agentID, SessionID: session, ConfigJSON: config}
+		if err := recordInput(g, child, input); err != nil {
+			return err
+		}
+		child.Runs = []*Run{newQueuedRun(runID, query, s, child)}
+		g.Members = append(g.Members, child)
 		g.Requests[key] = id
 		return nil
 	})
@@ -149,9 +184,13 @@ func (r *Runtime) Send(
 	if key == "" || len(key) > 512 || strings.TrimSpace(query) == "" || len(query) > 16000 {
 		return "", errors.New("message is empty or too large")
 	}
+	input, err := r.captureInput(ctx, s)
+	if err != nil {
+		return "", err
+	}
 	newRunID := uuid.NewString()
 	id := newRunID
-	err := r.Store.Change(ctx, s, func(g *Group) error {
+	err = r.Store.Change(ctx, s, func(g *Group) error {
 		id = newRunID
 		if v := g.Requests[key]; v != "" {
 			id = v
@@ -165,6 +204,13 @@ func (r *Runtime) Send(
 			return err
 		}
 		run := current(m)
+		// Only a producer can extend an already verified history. Never reseal
+		// a missing or substituted parent receipt just because new guidance arrived.
+		if input != nil || len(m.InputOrigins) > 0 {
+			if input == nil || len(m.InputOrigins) == 0 || !run.MatchesInput(s, m) {
+				return ErrScope
+			}
+		}
 		if expected != "" && expected != run.ID {
 			return ErrConflict
 		}
@@ -183,13 +229,17 @@ func (r *Runtime) Send(
 		if err := reserveInput(g, len(query)); err != nil {
 			return err
 		}
+		if err := recordInput(g, m, input); err != nil {
+			return err
+		}
 		if followup && !active(run) {
 			if m.Inherited && currentTurnMemberCount(g) >= 16 {
 				return errors.New("maximum 16 child agents per task")
 			}
 			m.Inherited = false
-			m.Runs = append(m.Runs, &Run{ID: id, State: "queued", Query: query})
+			m.Runs = append(m.Runs, newQueuedRun(id, query, s, m))
 		} else {
+			run.InputDigest = run.inputDigest(s, m)
 			g.NextSequence++
 			kind := "message"
 			if followup {
@@ -656,6 +706,14 @@ func (r *Runtime) execute(serverCtx context.Context, w Work) {
 		if v.ID != w.Run.ID || v.Owner != w.Run.Owner || v.State != "running" || time.Now().After(v.Lease) {
 			return ErrConflict
 		}
+		// A failed check must not publish the worker's answer or start a new
+		// followup from substituted origins at the finishing boundary.
+		if r.CaptureInput != nil && (len(m.InputOrigins) == 0 || !v.MatchesInput(w.Scope, m)) {
+			v.State, v.Result = "failed", Result{Error: ErrScope.Error()}
+			publish(g, m, v)
+			settle(g)
+			return nil
+		}
 		if result.Suspended && err == nil && g.Status == "active" && !v.CancelRequested && v.PromptID != "" {
 			v.State = "waiting"
 			v.Owner = ""
@@ -695,7 +753,8 @@ func (r *Runtime) execute(serverCtx context.Context, w Work) {
 			}
 		}
 		if len(followups) > 0 && g.Status == "active" && !v.CancelRequested && len(m.Runs) < 8 {
-			m.Runs = append(m.Runs, &Run{ID: uuid.NewString(), State: "queued", Query: strings.Join(followups, "\n\n")})
+			next := newQueuedRun(uuid.NewString(), strings.Join(followups, "\n\n"), w.Scope, m)
+			m.Runs = append(m.Runs, next)
 		}
 		// Plain messages remain available to subsequent turns. Followup messages
 		// have now been converted into work and must not create another turn.
@@ -724,21 +783,27 @@ func truncate(s string, n int) string {
 
 // CheckOwner validates that a child execution still owns its live lease.
 func (r *Runtime) CheckOwner(ctx context.Context, w Work) error {
+	_, _, err := r.OwnedRun(ctx, w)
+	return err
+}
+
+// OwnedRun returns the current, fenced work record for a worker. The caller
+// must use the returned identities when admitting messages or other material.
+func (r *Runtime) OwnedRun(ctx context.Context, w Work) (*Member, *Run, error) {
 	g, err := r.Store.Read(ctx, w.Scope)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	m, err := member(g, w.Member.ID)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	v := current(m)
-	if g.Status != "active" || v.State != "running" || v.CancelRequested || v.ID != w.Run.ID ||
-		v.Owner != w.Run.Owner ||
-		time.Now().After(v.Lease) {
-		return ErrConflict
+	if g.Scope != w.Scope || g.Status != "active" || v == nil || v.State != "running" || v.CancelRequested ||
+		v.ID != w.Run.ID || v.Owner != w.Run.Owner || time.Now().After(v.Lease) {
+		return nil, nil, ErrConflict
 	}
-	return nil
+	return m, v, nil
 }
 
 func currentTurnMemberCount(g *Group) int {

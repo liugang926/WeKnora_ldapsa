@@ -58,6 +58,7 @@ func TestSearchKnowledge_PublicResourceURLs(t *testing.T) {
 		sessionService:         &stubSearchSessionService{},
 		searchKnowledgeService: &stubSearchKnowledgeService{},
 		fileService:            &stubResourceFileService{},
+		ResourceURLResolver:    stubRequestResolver,
 	}
 	r.POST("/knowledge-search", h.SearchKnowledge)
 

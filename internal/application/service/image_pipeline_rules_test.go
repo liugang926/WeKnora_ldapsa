@@ -160,11 +160,15 @@ func TestImagePipelineValidationMatchesExecution(t *testing.T) {
 				model := &stubVLM{}
 				out := types.JSONMap{}
 				err := svc.processImage(context.Background(), &types.ImageMultimodalPayload{
+					TenantID: 1, KnowledgeBaseID: "kb-1", KnowledgeID: "k-1",
 					ImageURL: "local://test.png", ImagePipelineID: id, ImagePipelineParams: tc.params,
 				}, model, types.VLMConfig{}, noopSpanTracker{}, out)
 				require.NoError(t, err)
 				require.Len(t, model.prompts, tc.wantCalls)
 				require.Len(t, repo.created, tc.wantCalls)
+				for _, chunk := range repo.created {
+					require.Equal(t, int(types.ChunkStatusIndexed), chunk.Status)
+				}
 			})
 		}
 	}

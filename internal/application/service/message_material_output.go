@@ -227,6 +227,11 @@ func CheckMessageMaterialOutputBoundary(ctx context.Context) error {
 	if ctx == nil || ctx.Err() != nil {
 		return access.ErrNextcloudPublicationUnavailable
 	}
+	if worker, ok := ctx.Value(delegatedWorkerInputKey{}).(*delegatedWorkerInput); ok {
+		if err := worker.check(ctx); err != nil {
+			return err
+		}
+	}
 	slot, ok := ctx.Value(messageMaterialOutputKey{}).(*messageMaterialOutputSlot)
 	if !ok {
 		return access.ErrNextcloudPublicationUnavailable

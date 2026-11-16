@@ -131,15 +131,16 @@ func TestQuickAnswerFallbackTruncationSurvivesCompletion(t *testing.T) {
 			stream := &imageCompletionStream{}
 			h := &Handler{messageService: messages, streamManager: stream}
 			bus := event.NewEventBus()
-			msg := &types.Message{ID: "m", SessionID: "s", Role: "assistant", Content: content, IsFallback: true}
+			msg := &types.Message{ID: "m", SessionID: "s", Role: "assistant", IsFallback: true}
 			appendQuickAnswerReasoning(msg, "reasoning")
 			markQuickAnswerTruncated(msg)
 			ctx := types.WithExecutionTenant(context.Background(), 1)
-			handler := h.setupStreamHandler(ctx, "s", "m", "req", 1, time.Now(), msg, bus)
+			handler := h.setupStreamHandler(ctx, "s", "m", "req", 1, time.Now(), msg, bus, nil)
 			require.NoError(t, bus.Emit(ctx, event.Event{
-				ID: "fallback", Type: event.EventAgentFinalAnswer,
+				ID: "fallback", Type: event.EventAgentFinalAnswer, SourceLineage: literalLiveSSEFixtureLineage(t),
 				Data: event.AgentFinalAnswerData{Content: content, Done: true, IsFallback: true, Truncated: true},
 			}))
+			msg.Content = handler.finalAnswer
 			require.NotEmpty(t, stream.events)
 			require.Equal(t, true, stream.events[0].Data["truncated"])
 			require.Equal(t, true, stream.events[0].Data["is_fallback"])

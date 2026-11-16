@@ -42,6 +42,7 @@ type FileServiceResolver struct {
 	cache           map[fileServiceKey]interfaces.FileService
 	owners          map[uint64]*types.Tenant
 	authorize       func(context.Context, string) error
+	httpPublication bool
 }
 
 // NewFileServiceResolver builds a resolver for tenant. defaultSvc is the
@@ -116,7 +117,7 @@ func (r *FileServiceResolver) ResolveFileService(filePath string) interfaces.Fil
 			return nil
 		}
 	}
-	return r.resolveStorage(r.tenant, backendID, provider, backendID == "")
+	return r.resolveStorage(r.tenant, backendID, provider, backendID == "" && !r.httpPublication)
 }
 
 func (r *FileServiceResolver) resolveResource(reference string) interfaces.FileService {
@@ -173,6 +174,11 @@ func (r *FileServiceResolver) resolveStorage(
 	if r.storageResolver != nil && tenant != nil {
 		svc, _, err := r.storageResolver.ResolveFileService(r.ctx, tenant, backendID, provider, LocalStorageBaseDir())
 		if err == nil && svc != nil {
+			if r.httpPublication {
+				svc = requestPublicationService{
+					FileService: svc, resolver: r, tenant: tenant, backendID: backendID, provider: provider,
+				}
+			}
 			r.cache[cacheKey] = svc
 			return svc
 		}
@@ -187,6 +193,30 @@ func (r *FileServiceResolver) resolveStorage(
 		r.cache[cacheKey] = svc
 	}
 	return svc
+}
+
+// Rendering can block while the file provider allocates a grant. Only release
+// the capability if the requester and the selected backend can still use it.
+type requestPublicationService struct {
+	interfaces.FileService
+	resolver  *FileServiceResolver
+	tenant    *types.Tenant
+	backendID string
+	provider  string
+}
+
+func (s requestPublicationService) GetFileURL(ctx context.Context, ref string) (string, error) {
+	url, err := s.FileService.GetFileURL(ctx, ref)
+	if err != nil {
+		return "", err
+	}
+	if err := s.resolver.authorize(s.resolver.ctx, ref); err != nil {
+		return "", err
+	}
+	if _, err := s.resolver.storageResolver.ResolveBackend(ctx, s.tenant, s.backendID, s.provider); err != nil {
+		return "", err
+	}
+	return url, nil
 }
 
 // BuildFileServiceForProvider selects the FileService for a storage provider.

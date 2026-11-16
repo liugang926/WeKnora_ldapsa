@@ -107,9 +107,10 @@ func TestLiteMultimodalShortfallLetsLastImageFinalize(t *testing.T) {
 func TestEnqueueImageMultimodalTasksLiteReturnsPostProcessEnqueueError(t *testing.T) {
 	queueErr := errors.New("queue unavailable")
 	enqueuer := &failingEnqueuer{err: queueErr}
-	svc := &knowledgeService{task: enqueuer}
 	knowledge, kb, images, chunks := slotReleaseFixture(2)
 	knowledge.ID = "lite-nothing-enqueued"
+	repo := &metadataUpdateKnowledgeRepo{}
+	svc := &knowledgeService{task: enqueuer, repo: repo}
 	useLiteCounter(t, knowledge.ID)
 	// A cancelled context ends the in-place retry after the first attempt.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -118,6 +119,9 @@ func TestEnqueueImageMultimodalTasksLiteReturnsPostProcessEnqueueError(t *testin
 	err := svc.enqueueImageMultimodalTasks(ctx, knowledge, kb, images, chunks, nil)
 
 	require.ErrorContains(t, err, queueErr.Error())
+	require.NotNil(t, repo.knowledge)
+	assert.Equal(t, types.ParseStatusFailed, repo.knowledge.ParseStatus)
+	assert.Equal(t, "post_process_enqueue_failed", repo.knowledge.ErrorMessage)
 	_, ok := liteCounter(knowledge.ID)
 	assert.False(t, ok, "the seeded counter is cleared when no image task exists")
 }
