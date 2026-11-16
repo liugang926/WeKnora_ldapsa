@@ -11,11 +11,11 @@
 ## 运行一次评估
 
 1. 准备符合下方格式、已脱敏且获准用于所选模型的 Parquet 数据集，或使用内置 `default` 样本。自定义数据集挂载于 `EVALUATION_DATASET_DIR/<dataset_id>/`；`dataset_id` 只允许字母、数字、下划线和短横线。默认每次最多 100 题，可由部署管理员设置 `EVALUATION_MAX_QUESTIONS`（1–10000）；这只是单次调用量上限，不是货币费用预算。
-2. 明确选择 Embedding、对话模型和重排模型，通过 `POST /api/v1/evaluation` 创建任务。可选参考知识库用于复制配置，评估会使用单独的知识库；指定参考知识库时，`embedding_id` 必须与其现有 Embedding 一致。
+2. 明确选择 Embedding、对话模型和重排模型，通过 `POST /api/v1/evaluation` 创建任务。评估使用单独的临时知识库。指定参考知识库时，临时库沿用其 Embedding 模型，显式提供的 `embedding_id` 须与其一致。
 3. 记录返回的任务 ID，通过 `GET /api/v1/evaluation?task_id=...` 查询状态和进度。
 4. 任务成功后比较检索与生成指标；失败时先检查任务错误，再调整配置并重新运行。
 
-创建与查询任务均需要 Admin 权限；API Key 还需评估能力或 full-access。
+创建与查询任务均需要 Admin 权限；API Key 还需 `run_evaluations` 能力或 full-access。
 
 ## 数据集格式
 
@@ -59,7 +59,7 @@ type QAPair struct {
 }
 ```
 
-自定义数据集需按上述 Schema 生成同名 Parquet 文件，由部署人员以只读目录挂载。完整语料都会被索引，包括没有关联 qrel 的干扰段落；稀疏 passage ID 会映射为稳定的连续 ID，避免大 ID 导致内存耗尽。空 qrel 可表示无答案问题，但当前聚合 Recall 对该类问题记 0，不能据此评价拒答质量。服务只记录题数与段落数，不把问题原文写入评估日志。
+自定义数据集需按上述 Schema 生成同名 Parquet 文件，由部署人员以只读目录挂载。完整语料都会被索引，包括没有关联 qrel 的干扰段落；稀疏 passage ID 会映射为稳定的连续 ID，避免大 ID 导致内存耗尽。无关联 passage 的问题不计入检索指标均值；无参考答案的问题不计入生成指标均值。服务只记录题数与段落数，不把问题原文写入评估日志。
 
 ## 结果查询
 
@@ -70,7 +70,7 @@ type QAPair struct {
   "success": true,
   "data": {
     "task": {
-      "id": "evaluation-1-default",
+      "id": "evaluation_1_1758600000000_1a2b3c4d_default",
       "dataset_id": "default",
       "status": 2,
       "total": 100,
@@ -115,6 +115,8 @@ type QAPair struct {
 
 NDCG 核心计算（`metric/ndcg.go`）：
 
+理想排序使用去重后的全部相关文档，最多取前 k 个，不受实际召回数量限制。v0.9.0 修正了少量召回时分母偏小的问题；比较升级前后的结果时，应在同一版本重新运行基线评估。
+
 ```go
 // DCG = sum((2^rel_i - 1) / log2(i+2))，rel 为 0/1
 dcg += (math.Pow(2, float64(relevance)) - 1) / math.Log2(float64(i+2))
@@ -145,6 +147,8 @@ for i, predID := range ids {
 
 BLEU 核心（`metric/bleu.go`）：修正 n-gram 精度的加权几何平均乘以简短惩罚 `bp * exp(sum(w_i * log(p_i)))`。ROUGE 取 F1：`F1 = 2PR / (P + R + 1e-8)`（`metric/rouge_score.go`）。
 
+未开启平滑时，任何权重大于零的 n-gram 精度为零，BLEU 都应为零。v0.9.0 修正了跳过这些零精度项导致分数偏高的问题。
+
 ## 接口与执行参考
 
 ### API
@@ -161,8 +165,8 @@ evaluationRoutes := g.apiKeyGroup(r.Group("/evaluation"), apiKeyRunEvaluations(a
 
 | 方法 | 路径 | 权限 | 说明 |
 | --- | --- | --- | --- |
-| POST | `/api/v1/evaluation` | Admin（API Key 需 `RunEvaluations` 能力） | 创建评估任务，立即返回任务信息 |
-| GET | `/api/v1/evaluation?task_id=...` | Admin（API Key 需 `RunEvaluations` 能力） | 查询任务状态、进度与指标结果；不带任务 ID 时查询当前空间历史 |
+| POST | `/api/v1/evaluation` | Admin（API Key 需 `run_evaluations` 能力或 full-access） | 创建评估任务，立即返回任务信息 |
+| GET | `/api/v1/evaluation?task_id=...` | Admin（API Key 需 `run_evaluations` 能力或 full-access） | 查询任务状态、进度与指标结果；不带任务 ID 时查询当前空间历史 |
 
 #### 创建评估任务
 
@@ -171,7 +175,7 @@ evaluationRoutes := g.apiKeyGroup(r.Group("/evaluation"), apiKeyRunEvaluations(a
 ```go
 type EvaluationRequest struct {
     DatasetID        string `json:"dataset_id"`        // 数据集 ID，默认 "default"
-    KnowledgeBaseID  string `json:"knowledge_base_id"` // 参考知识库（复用其配置）
+    KnowledgeBaseID  string `json:"knowledge_base_id"` // 参考知识库（沿用其 Embedding 模型）
     ChatModelID      string `json:"chat_id"`           // 聊天模型
     RerankModelID    string `json:"rerank_id"`         // 重排模型
     EmbeddingModelID string `json:"embedding_id"`     // 评估知识库使用的 Embedding
@@ -180,15 +184,15 @@ type EvaluationRequest struct {
 
 | 参数 | 必填 | 默认行为 |
 | --- | --- | --- |
-| `dataset_id` | 否 | 缺省使用内置 `default` 数据集（`dataset/samples/`） |
-| `knowledge_base_id` | 否 | 未提供则新建评估专用知识库；提供则复制其配置创建评估 KB |
-| `embedding_id` | 自定义题集必填 | 内置默认样本保留自动选择；复制参考知识库时必须与其 Embedding 一致 |
+| `dataset_id` | 否 | 缺省使用内置 `default` 样本；自定义 ID 选择同名的已挂载数据集 |
+| `knowledge_base_id` | 否 | 提供时在独立评估库中沿用参考库的 Embedding 模型 |
+| `embedding_id` | 自定义题集必填 | 内置默认样本保留自动选择；提供参考库时必须与其 Embedding 一致 |
 | `chat_id` | 自定义题集必填 | 内置默认样本保留自动选择；选定模型同时用于临时入库摘要与最终答复 |
-| `rerank_id` | 自定义题集必填 | 内置默认样本保留自动选择默认 ReRank 模型 |
+| `rerank_id` | 自定义题集必填 | 内置默认样本保留使用默认 ReRank 模型；没有可用模型时跳过重排 |
 
 自定义题集（`dataset_id` 非内置 `default`），以及通过 `EVALUATION_DEFAULT_DATASET_DIR` 替换默认样本的运行，必须显式指定以上三个模型 ID；缺一返回 400。显式选择只能防止模型隐式替换，不代表数据负责人已批准该模型或外发范围。
 
-任务 ID 是带时间戳和随机后缀的唯一值，不应自行拼接。任务对象（`internal/types/evaluation.go`）：
+每次运行生成带毫秒时间戳和随机串的任务 ID，请使用创建响应中的 ID 查询。任务对象（`internal/types/evaluation.go`）：
 
 ```go
 type EvaluationTask struct {
@@ -222,17 +226,16 @@ const (
 
 `internal/application/service/evaluation.go` 中，POST 接口**同步完成准备、异步执行评估**：
 
-1. **知识库准备**：新建（或按参考 KB 配置克隆）评估专用知识库，优先使用显式指定的 Embedding；
+1. **知识库准备**：创建独立评估库，使用选择的 Embedding（提供参考库时须与参考库一致）和对话模型；
 2. **参数装配**：从系统配置装配 `ChatManage` 评估参数——`VectorThreshold`、`KeywordThreshold`、`EmbeddingTopK`、`RerankTopK`、`RerankThreshold`、`MaxRounds`、`SummaryConfig`（MaxTokens / TopK / TopP / RepeatPenalty / Prompt / ContextTemplate 等）、`FallbackResponse`、改写提示词等；
 3. **任务注册**：以唯一任务 ID 写入数据库，状态 `Pending`，立即返回响应；
 4. **后台执行**（goroutine）：将数据集 corpus 灌入评估 KB → 并行评估每个 QA 对 → 汇聚指标 → 清理资源。
 
-并发度取 `max(GOMAXPROCS - 1, 1)`（errgroup 限流）：
+并发度由 `EVALUATION_MAX_CONCURRENCY` 控制，默认 2，允许 1–64：
 
 ```go
 var g errgroup.Group
-metricHook := NewHookMetric(len(dataset))
-g.SetLimit(max(runtime.GOMAXPROCS(0)-1, 1))
+g.SetLimit(workers)
 for i, qaPair := range dataset {
     g.Go(func() error {
         // 1. 克隆 ChatManage 配置
@@ -255,26 +258,24 @@ type MetricInput struct {
 }
 ```
 
-`metric_hook.go` 对每个样本遍历所有已注册指标计算器求分，最终 `Avg()` 对全部样本逐指标取均值，写入 `MetricResult`。
+`metric_hook.go` 按每道题可用的检索和生成标签计算指标，最终 `Avg()` 对各组已评分样本取均值，写入 `MetricResult`。
 
 ::: warning RetrievalIDs 的口径
-`RetrievalIDs` 必须是**数据集里的 passage ID**，不能直接用检索结果的 `ChunkIndex`——后者只是分块在知识库里的序号，与 passage ID 没有对应关系，直接使用会让所有检索指标恒为 0。`recordFinish` 因此把每条检索结果的正文与该样本的 ground truth passage 做双向包含匹配，反查出对应的 pid 并去重。重排结果为空时回退用原始检索结果，避免整条样本记成「什么都没召回」。
-
-语料灌入也必须**同步等待索引完成**（`CreateKnowledgeFromPassageSync`）：异步入库时评估查询会跑在索引建好之前，同样表现为指标恒为 0。另外 passage 列表按 `maxPID + 1` 分配长度，pid 是 0-based 且包含末位。
+入库时会把全部 passage 的 ID 映射为连续序号，再用 `CreateKnowledgeFromPassageSync` 等待语料索引完成。评估时用临时文档 ID 和文本分块的 `ChunkIndex` 还原检索到的 passage。未知或属于其他文档的命中计为不相关；重排结果为空时使用原始检索结果。
 :::
 
 #### 评估流程图
 
 ```mermaid
 flowchart TD
-    A["POST /api/v1/evaluation<br/>(dataset_id, knowledge_base_id, chat_id, rerank_id)"] --> B["创建评估专用知识库<br/>(新建或克隆参考 KB 配置)"]
+    A["POST /api/v1/evaluation<br/>(dataset_id, knowledge_base_id, embedding_id, chat_id, rerank_id)"] --> B["创建评估专用知识库<br/>(选定 Embedding 和对话模型)"]
     B --> C["装配 ChatManage 评估参数<br/>(阈值 / TopK / Summary 配置)"]
     C --> D["持久化唯一任务 ID<br/>状态 Pending"]
     D --> E["立即返回任务信息"]
     D --> F["goroutine 后台执行, 状态 Running"]
     F --> G["加载 Parquet 数据集<br/>queries / corpus / qrels / answers / qas"]
     G --> H["corpus 灌入评估知识库"]
-    H --> I["errgroup 并行处理 QA 对<br/>并发 = max(CPU-1, 1)"]
+    H --> I["errgroup 并行处理 QA 对<br/>并发由 EVALUATION_MAX_CONCURRENCY 控制"]
     I --> J["每个问题跑 KnowledgeQAByEvent<br/>检索 + 重排 + 生成"]
     J --> K["记录 MetricInput<br/>(RetrievalIDs vs GT, 生成文本 vs 参考答案)"]
     K --> L["MetricList.Avg 汇聚 12 项指标均值"]
@@ -292,7 +293,7 @@ flowchart TD
 | 评估服务 | `internal/application/service/evaluation.go` |
 | 指标注册与汇聚 | `internal/application/service/metric_hook.go` |
 | 指标实现 | `internal/application/service/metric/`（`precision.go`、`recall.go`、`ndcg.go`、`mrr.go`、`map.go`、`bleu.go`、`rouge.go`、`rouge_score.go`、`common.go`） |
-| 数据集加载 | `internal/application/service/dataset.go`、`internal/handler/dataset.go` |
+| 数据集加载 | `internal/application/service/dataset.go` |
 | 类型定义 | `internal/types/evaluation.go`、`internal/types/dataset.go` |
 | 内置样例数据集 | `dataset/samples/`（Parquet 文件） |
-| 路由注册 | `internal/router/router.go` 的 `RegisterEvaluationRoutes` |
+| 路由注册 | `internal/router/routes_infra.go` 的 `RegisterEvaluationRoutes` |

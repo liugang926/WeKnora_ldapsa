@@ -165,7 +165,7 @@ func TestHistorySearchActualHTTPTransactionAuthorityFactory(t *testing.T) {
 		c.Request = c.Request.WithContext(currentReader)
 		c.Next()
 	})
-	router.POST("/messages/search", NewMessageHandler(reader, nil, nil).SearchMessages)
+	router.POST("/messages/search", NewMessageHandler(reader, nil, nil, repository.NewAgentPromptRepository(db)).SearchMessages)
 	search := func() (*httptest.ResponseRecorder, types.MessageSearchResult) {
 		encoded, err := json.Marshal(
 			map[string]any{"query": query, "mode": "keyword", "limit": 20, "session_ids": []string{session.ID}},

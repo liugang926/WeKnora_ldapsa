@@ -101,7 +101,13 @@ func attachPostProcessOriginalInputs(
 
 func postProcessOriginalTask(t *testing.T, f *enrichmentTestFixture) *asynq.Task {
 	t.Helper()
+	return postProcessOriginalTaskForAttempt(t, f, 0)
+}
+
+func postProcessOriginalTaskForAttempt(t *testing.T, f *enrichmentTestFixture, attempt int) *asynq.Task {
+	t.Helper()
 	payload, err := json.Marshal(types.KnowledgePostProcessPayload{
+		Attempt:  attempt,
 		TenantID: 7, KnowledgeBaseID: f.k.KnowledgeBaseID, KnowledgeID: f.k.ID,
 		OriginalInput: repository.KnowledgeBuildInputProofFromContext(f.build),
 		Initiator:     types.TaskInitiatorFromContext(f.build),

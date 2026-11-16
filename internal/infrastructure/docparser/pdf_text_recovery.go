@@ -2,8 +2,8 @@ package docparser
 
 import (
 	"context"
-	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -43,10 +43,17 @@ func (r *pdfTextRecoveryReader) Read(ctx context.Context, req *types.ReadRequest
 	// Preserve DocReader's image references and their markdown placements. If
 	// there are no images, the richer text can replace the truncated text.
 	if len(result.ImageRefs) > 0 {
-		result.MarkdownContent = strings.TrimSpace(result.MarkdownContent) + "\n\n" +
-			strings.TrimSpace(alternateResult.MarkdownContent)
+		// Source blocks use rune offsets into the exact parser output.
+		offset := utf8.RuneCountInString(result.MarkdownContent) + 2
+		result.MarkdownContent += "\n\n" + alternateResult.MarkdownContent
+		for _, block := range alternateResult.SourceBlocks {
+			block.Start += offset
+			block.End += offset
+			result.SourceBlocks = append(result.SourceBlocks, block)
+		}
 	} else {
 		result.MarkdownContent = alternateResult.MarkdownContent
+		result.SourceBlocks = alternateResult.SourceBlocks
 	}
 	if result.Metadata == nil {
 		result.Metadata = make(map[string]string)

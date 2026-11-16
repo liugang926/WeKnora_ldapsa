@@ -3,9 +3,13 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/mattn/go-sqlite3"
 	"gorm.io/gorm"
 )
 
@@ -43,7 +47,29 @@ func (s *KnowledgeInputProvenanceStore) ConsumeSteerIntoMessage(
 	input *types.SteerMaterialInput,
 	runID, generation, request string,
 ) (*types.Message, *types.SteerConsumptionProof, error) {
-	return s.consumeSteerIntoMessage(ctx, input, runID, generation, request, false)
+	// A known rolled-back transaction can repeat the exact admission and
+	// current-head checks. Never replay an ambiguous commit or a policy error.
+	for attempt := 0; ; attempt++ {
+		message, proof, err := s.consumeSteerIntoMessage(ctx, input, runID, generation, request, false)
+		if !steerTransactionConflict(err) {
+			return message, proof, err
+		}
+		if ctx.Err() != nil {
+			return nil, nil, ctx.Err()
+		}
+		if attempt == 1 {
+			return nil, nil, fmt.Errorf("%w: %w", types.ErrSteerWriteDeferred, err)
+		}
+	}
+}
+
+func steerTransactionConflict(err error) bool {
+	var sqliteErr sqlite3.Error
+	if errors.As(err, &sqliteErr) {
+		return sqliteErr.Code == sqlite3.ErrBusy || sqliteErr.Code == sqlite3.ErrLocked
+	}
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && (pgErr.Code == "40001" || pgErr.Code == "40P01")
 }
 
 // ConsumeSteerIntoFollowUp returns the consume steer into follow up result.

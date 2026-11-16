@@ -29,6 +29,8 @@ export const EMPLOYEE_HIDDEN_MENU_PATHS = new Set([
   'artifacts',
   'agents',
   'organizations',
+  'automations',
+  'toolbox',
   'settings',
 ])
 

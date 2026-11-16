@@ -8,6 +8,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/datasource/connector/dingtalk"
 	"github.com/Tencent/WeKnora/internal/types"
 	"gorm.io/gorm"
@@ -49,9 +50,7 @@ func (s *KnowledgeInputProvenanceStore) AdmitDingTalkLocalReparse(
 		before.KnowledgeBaseID != proposed.KnowledgeBaseID {
 		return nil, ErrKnowledgeInputChanged
 	}
-	// Resolve current actor/group authority before opening the data transaction:
-	// group/share services use their own pool. Workers recheck this captured actor.
-	authorized, err := s.AuthorizeCurrentKnowledgeInputWrite(ctx, expectedKB)
+	actor, err := captureKnowledgeActorSelector(ctx, "")
 	if err != nil {
 		return nil, err
 	}
@@ -88,6 +87,25 @@ func (s *KnowledgeInputProvenanceStore) AdmitDingTalkLocalReparse(
 			clause.Locking{Strength: "SHARE"}),
 			actual.TenantID,
 			actual.KnowledgeBaseID)
+		if err != nil {
+			return err
+		}
+		authority := s.templateAuthority(tx)
+		if authority == nil || authority.db != tx {
+			return types.ErrSourceLineageUnknown
+		}
+		authorized, err := authority.restoreCurrentKnowledgeActor(ctx, actor, kb.TenantID)
+		if err != nil {
+			return err
+		}
+		if isLocalReparseGroupEditor(authorized, kb) {
+			if !access.HasKBGrant(ctx, kb.ID, kb.TenantID, types.OrgRoleEditor) {
+				return access.ErrForbidden
+			}
+			authorized, err = authority.authorizeKBResourceWrite(authorized, kb, true)
+		} else {
+			authorized, err = authority.authorizeKnowledgeActorWrite(authorized, kb)
+		}
 		if err != nil {
 			return err
 		}
@@ -252,4 +270,57 @@ func isDingTalkLocalReparseAdmission(tx *gorm.DB, a *knowledgeInputAdmission) (b
 		return false, ErrKnowledgeInputChanged
 	}
 	return true, nil
+}
+
+func isLocalReparseGroupEditor(ctx context.Context, kb *types.KnowledgeBase) bool {
+	caller := types.CallerFromContext(ctx)
+	principal, ok := types.PrincipalFromContext(ctx)
+	return ok && principal.Type == types.PrincipalWebUser && principal.ID == caller.UserID &&
+		caller.TenantID == kb.TenantID && caller.Role == types.TenantRoleViewer
+}
+
+// authorizeAdmittedKnowledgeActorWrite allows a scoped editor to perform only
+// the local reparse generation currently attached to this document.
+func (s *KnowledgeInputProvenanceStore) authorizeAdmittedKnowledgeActorWrite(
+	ctx context.Context, kb *types.KnowledgeBase, a *knowledgeInputAdmission,
+) (context.Context, error) {
+	if !isLocalReparseGroupEditor(ctx, kb) {
+		return s.authorizeKnowledgeActorWrite(ctx, kb)
+	}
+	db := s.db.WithContext(ctx)
+	local, err := isDingTalkLocalReparseAdmission(db, a)
+	if err != nil {
+		return ctx, err
+	}
+	if !local {
+		return ctx, access.ErrForbidden
+	}
+	var material knowledgeInputMaterialReceipt
+	if err := db.Where("row_kind = 'knowledge' AND row_id = ?", a.KnowledgeID).Take(&material).Error; err != nil {
+		return ctx, err
+	}
+	if material.AdmissionID != a.AdmissionID {
+		return ctx, ErrKnowledgeInputChanged
+	}
+	return s.authorizeKBResourceWrite(ctx, kb, true)
+}
+
+// restoreLocalReparseProducer ties a derived write to the original worker's
+// persisted actor. The queued receipt alone cannot transfer user authority.
+func (s *KnowledgeInputProvenanceStore) restoreLocalReparseProducer(
+	ctx context.Context, kb *types.KnowledgeBase, proof *types.KnowledgeBuildInputProof,
+) (context.Context, error) {
+	if proof == nil || proof.TenantID != kb.TenantID || proof.KnowledgeBaseID != kb.ID {
+		return ctx, ErrKnowledgeInputChanged
+	}
+	fresh, err := s.RestoreKnowledgeBuildActor(ctx, proof)
+	if err != nil {
+		return ctx, err
+	}
+	current, _ := types.PrincipalFromContext(ctx)
+	restored, _ := types.PrincipalFromContext(fresh)
+	if current != restored || types.CallerFromContext(ctx) != types.CallerFromContext(fresh) {
+		return ctx, ErrKnowledgeInputChanged
+	}
+	return fresh, nil
 }

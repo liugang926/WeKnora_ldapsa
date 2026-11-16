@@ -1,5 +1,6 @@
 <template>
-  <SettingsModalShell :visible="visible" :title="$t('general.settings')" @close="modalShell.requestClose">
+  <SettingsModalShell :visible="visible" :title="$t('general.settings')" overlay-class="all-settings-overlay"
+    @close="modalShell.requestClose">
     <template #nav>
       <template v-for="group in navGroups" :key="group.key">
         <div class="nav-group-title">{{ group.label }}</div>
@@ -37,7 +38,7 @@
               <path d="M5.5 10h4M5.5 12.5h2.5" stroke="currentColor" stroke-width="1.2"
                 stroke-linecap="round" />
             </svg>
-            <BrowserIcon v-else-if="item.key === 'browserconnection'" class="nav-icon" width="17" height="17" />
+            <ResourceIcon v-else-if="item.key === 'assistant'" type="assistant" :size="17" class="nav-icon" />
             <span v-else-if="item.emoji" class="nav-icon nav-icon-emoji">{{ item.emoji }}</span>
             <t-icon v-else :name="item.icon" class="nav-icon" />
             <span class="nav-label">{{ item.label }}</span>
@@ -61,6 +62,7 @@
     </template>
     <div class="content-wrapper" :class="{
       'content-wrapper--wide': currentSection === 'members',
+      'content-wrapper--resource-list': ['models', 'mymemory', 'platform-api-keys', 'model-catalog', 'members', 'sandbox'].includes(currentSection),
       'content-wrapper--full': SYSTEM_ADMIN_SECTIONS.has(currentSection) || isIntegrationSection(currentSection),
     }">
       <!-- 角色不允许访问当前 section（deep-link 进来 / 跨空间切换后角色降级）—— 优先于具体 section 渲染。
@@ -108,9 +110,19 @@
           <ChatHistorySettings />
         </div>
 
+        <!-- 默认配置（空间级默认模型与搜索引擎） -->
+        <div v-if="currentSection === 'defaults'" class="section">
+          <DefaultSettings />
+        </div>
+
         <!-- 长期记忆（空间级开关） -->
         <div v-if="currentSection === 'memory'" class="section">
           <MemoryWorkspaceSettings />
+        </div>
+
+        <!-- 助手（个人偏好 + 空间名称与权限上限） -->
+        <div v-if="currentSection === 'assistant'" class="section">
+          <AssistantSettings />
         </div>
 
         <!-- 我的记忆（个人记忆管理） -->
@@ -143,11 +155,6 @@
           <SandboxSettings />
         </div>
 
-        <!-- 技能目录：登记后可装到多份沙箱，智能体只从当前沙箱的就绪集合选用 -->
-        <div v-if="currentSection === 'skills'" class="section">
-          <SkillSettings :initial-sandbox-id="currentSubSection" />
-        </div>
-
         <!-- 系统信息 -->
         <div v-if="currentSection === 'system'" class="section">
           <SystemInfo />
@@ -165,6 +172,10 @@
         <!-- 钉钉企业 SSO：系统管理员可见（与 directory 同组） -->
         <div v-if="currentSection === 'dingtalk-auth'" class="section">
           <DingTalkAuthSettings />
+        </div>
+
+        <div v-if="currentSection === 'model-catalog'" class="section">
+          <ModelCatalog />
         </div>
 
         <!-- 系统管理员可见的任务队列运行状态 -->
@@ -186,8 +197,6 @@
           <UserProfile />
         </div>
 
-        <div v-if="currentSection === 'browserconnection'" class="section"><BrowserConnectionSettings /></div>
-
         <!-- 空间信息 -->
         <div v-if="currentSection === 'tenant'" class="section">
           <TenantInfo />
@@ -201,11 +210,6 @@
         <!-- 发布集成 -->
         <div v-if="isIntegrationSection(currentSection)" class="section">
           <IntegrationSettingsSection :tab="integrationTabFromSection(currentSection)" />
-        </div>
-
-        <!-- MCP 服务 -->
-        <div v-if="currentSection === 'mcp'" class="section">
-          <McpSettings />
         </div>
       </template>
     </div>
@@ -222,26 +226,27 @@ import { useDeploymentCapabilitiesStore } from '@/stores/deploymentCapabilities'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useModalShell } from '@/composables/useModalShell'
+import { useAssistantPageContext } from '@/composables/useAssistantPageContext'
 import SettingsModalShell from '@/components/SettingsModalShell.vue'
+import ResourceIcon from '@/components/icons/ResourceIcon.vue'
 import SystemInfo from './SystemInfo.vue'
 import TenantInfo from './TenantInfo.vue'
 import UserProfile from './UserProfile.vue'
 import GeneralSettings from './GeneralSettings.vue'
-import BrowserConnectionSettings from './BrowserConnectionSettings.vue'
-import BrowserIcon from '@/components/icons/BrowserIcon.vue'
 import ModelSettings from './ModelSettings.vue'
+import ModelCatalog from '../system/ModelCatalog.vue'
 import OllamaSettings from './OllamaSettings.vue'
-import McpSettings from './McpSettings.vue'
 import WebSearchSettings from './WebSearchSettings.vue'
 import ChatHistorySettings from './ChatHistorySettings.vue'
 import MemorySettings from './MemorySettings.vue'
 import EnvVarSettings from './EnvVarSettings.vue'
 import MemoryWorkspaceSettings from './MemoryWorkspaceSettings.vue'
+import DefaultSettings from './DefaultSettings.vue'
+import AssistantSettings from './AssistantSettings.vue'
 import VectorStoreSettings from './VectorStoreSettings.vue'
 import ParserEngineSettings from './ParserEngineSettings.vue'
 import StorageBackendSettings from './StorageBackendSettings.vue'
 import SandboxSettings from './SandboxSettings.vue'
-import SkillSettings from './SkillSettings.vue'
 import WeKnoraCloudSettings from './WeKnoraCloudSettings.vue'
 import TenantMembers from './TenantMembers.vue'
 import SystemSettings from '@/views/system/SystemSettings.vue'
@@ -261,8 +266,9 @@ import {
   SETTINGS_SECTION_MIN_ROLE,
   SYSTEM_ADMIN_SETTINGS_SECTIONS,
 } from '@/config/settingsAccess'
-import { SETTINGS_SECTION_CAPABILITY } from '@/config/deploymentCapabilities'
-import { SKILL_ICON } from '@/types/mention'
+import { SETTINGS_SECTION_CAPABILITY, skillSettingsSupported } from '@/config/deploymentCapabilities'
+import { isToolboxSection, toolboxLocation } from '@/config/toolbox'
+import { hostSkillsOnly } from '@/utils/skillTarget'
 import {
   buildSettingsRouteQuery,
   integrationSectionKey,
@@ -277,7 +283,16 @@ const router = useRouter()
 const uiStore = useUIStore()
 const authStore = useAuthStore()
 const deploymentCapabilities = useDeploymentCapabilitiesStore()
-const { t } = useI18n()
+const { t, te } = useI18n()
+const hostSkills = computed(() => hostSkillsOnly(
+  deploymentCapabilities.isSupported('settings.sandbox.remote'),
+  deploymentCapabilities.isSupported('settings.sandbox.host'),
+))
+function envNavLabel(): string {
+  const hostKey = 'envVarSettings.host.title'
+  if (hostSkills.value && te(hostKey)) return t(hostKey)
+  return t('envVarSettings.title')
+}
 
 const currentSection = ref<string>('general')
 const currentSubSection = ref<string>('')
@@ -334,6 +349,9 @@ const isSectionSupported = (key: string): boolean => {
       INTEGRATION_TAB_CAPABILITY[integrationTabFromSection(key)],
     )
   }
+  if (key === 'skills' || key === 'envvars') {
+    return skillSettingsSupported(deploymentCapabilities.capabilities)
+  }
   return deploymentCapabilities.isSupported(SETTINGS_SECTION_CAPABILITY[key])
 }
 
@@ -372,24 +390,24 @@ const navItems = computed(() => {
     { key: 'evaluation', icon: 'chart-bar', label: 'RAG Evaluation' },
     { key: 'websearch', icon: 'search', label: t('settings.webSearchConfig') },
     { key: 'chathistory', icon: 'chat', label: t('chatHistorySettings.title') },
+    { key: 'defaults', icon: 'setting-1', label: t('defaultSettings.title') },
     { key: 'memory', icon: 'bulletpoint', label: t('memoryWorkspaceSettings.title') },
     { key: 'vectorstore', icon: 'data-base', label: t('settings.vectorStoreEngine') },
     { key: 'parser', icon: 'file-search', label: t('settings.parserEngine') },
     { key: 'storage', icon: 'cloud', label: t('settings.storageEngine') },
     { key: 'sandbox', icon: 'code', label: t('settings.sandbox.title') },
-    { key: 'skills', icon: SKILL_ICON, label: t('settings.skills.title') },
-    { key: 'mcp', icon: 'tools', label: t('settings.mcpService') },
     { key: 'system', icon: 'info-circle', label: t('settings.versionInfo') },
     { key: 'system-global', icon: 'server', label: t('settings.system') },
     { key: 'directory', icon: 'usergroup', label: t('directoryAdmin.title') },
     { key: 'dingtalk-auth', icon: 'user-circle', label: t('dingtalkAdmin.title') },
+    { key: 'model-catalog', icon: 'control-platform', label: t('modelCatalog.title') },
     { key: 'runtime-queues', icon: 'queue', label: t('settings.taskQueue') },
     { key: 'platform-api-keys', icon: 'secured', label: t('platformApiKeys.title') },
     { key: 'system-audit-log', icon: 'history', label: t('system.globalSettings.audit.tabLabel') },
     { key: 'userprofile', icon: 'user', label: t('userProfile.title') },
-    { key: 'browserconnection', icon: 'laptop', label: t('localBrowser.settingsTitle') },
     { key: 'mymemory', icon: 'bookmark', label: t('memorySettings.title') },
-    { key: 'envvars', icon: 'key', label: t('envVarSettings.title') },
+    { key: 'assistant', icon: 'assistant', label: t('assistantSettings.title') },
+    { key: 'envvars', icon: 'key', label: envNavLabel() },
     { key: 'tenant', icon: 'user-circle', label: t('settings.tenantInfo') },
     { key: 'members', icon: 'usergroup', label: t('tenantMember.title') },
     ...integrationItems,
@@ -414,12 +432,12 @@ const navGroups = computed<NavGroup[]>(() => {
     {
       key: 'account',
       label: t('settings.navGroups.account'),
-      items: pickItems(['general', 'userprofile', 'browserconnection', 'mymemory', 'envvars']),
+      items: pickItems(['general', 'userprofile', 'assistant', 'mymemory', 'envvars']),
     },
     {
       key: 'workspace',
       label: t('settings.navGroups.workspace'),
-      items: pickItems(['tenant', 'members', 'chathistory', 'memory']),
+      items: pickItems(['tenant', 'members', 'defaults', 'chathistory', 'memory']),
     },
     {
       key: 'models_runtime',
@@ -439,15 +457,13 @@ const navGroups = computed<NavGroup[]>(() => {
         'parser',
         'storage',
         'sandbox',
-        'skills',
         'websearch',
-        'mcp',
       ]),
     },
     {
       key: 'system_administration',
       label: t('settings.navGroups.systemAdministration'),
-      items: pickItems(['system-global', 'directory', 'dingtalk-auth', 'runtime-queues', 'platform-api-keys', 'system-audit-log']),
+      items: pickItems(['system-global', 'directory', 'dingtalk-auth', 'model-catalog', 'runtime-queues', 'platform-api-keys', 'system-audit-log']),
     },
     {
       key: 'platform',
@@ -494,7 +510,16 @@ const handleSubMenuClick = (parentKey: string, childKey: string) => {
 
 // 控制弹窗显示
 const visible = computed(() => {
-  return route.path === '/platform/settings' || uiStore.showSettingsModal
+  return (authStore.hasRole('admin') || authStore.isSystemAdmin) && (route.path === '/platform/settings' || uiStore.showSettingsModal)
+})
+
+useAssistantPageContext(() => {
+  if (!visible.value) return null
+  const panel = typeof route.query.panel === 'string' ? route.query.panel : ''
+  const section = currentSection.value === 'system-global' && panel
+    ? `system-global-${panel}`
+    : currentSection.value
+  return { page: 'settings', section }
 })
 
 // 关闭弹窗
@@ -504,21 +529,36 @@ const handleClose = () => {
     document.activeElement.blur()
   }
   uiStore.closeSettings()
-  // 如果当前路由是设置页，返回上一页
+  // Only go back when Vue Router knows the previous route is inside the app.
   if (route.path === '/platform/settings') {
     const sec = route.query.section
-    if (sec === 'system-global' || sec === 'directory' || sec === 'dingtalk-auth' || sec === 'runtime-queues' || sec === 'platform-api-keys' || sec === 'system-audit-log') {
+    if (sec === 'system-global' || sec === 'directory' || sec === 'dingtalk-auth' || sec === 'model-catalog' || sec === 'runtime-queues' || sec === 'platform-api-keys' || sec === 'system-audit-log') {
       router.push('/platform/knowledge-bases')
     } else {
-      router.back()
+      const back = router.options.history.state.back
+      if (typeof back === 'string' && back.startsWith('/platform/')) {
+        router.back()
+      } else {
+        router.push('/platform/knowledge-bases')
+      }
     }
   }
+}
+
+// Existing in-product shortcuts can still call openSettings; moved tools
+// always navigate to the toolbox, with the requested sandbox selection intact.
+const redirectToToolbox = (section: string, subSection?: string | null) => {
+  if (!isToolboxSection(section)) return false
+  uiStore.closeSettings()
+  void router.push(toolboxLocation(section, subSection || undefined))
+  return true
 }
 
 // 监听初始导航设置
 watch(() => uiStore.settingsInitialSection, (section) => {
   if (section && visible.value) {
     const normalizedSection = normalizeSettingsSection(section)
+    if (redirectToToolbox(normalizedSection, uiStore.settingsInitialSubSection)) return
     if (deploymentCapabilities.loaded && !isSectionSupported(normalizedSection)) {
       MessagePlugin.warning(t('settings.capabilityUnavailable'))
       currentSection.value = navItems.value[0]?.key || 'general'
@@ -541,21 +581,11 @@ watch(() => uiStore.settingsInitialSection, (section) => {
           }
         }, 300)
       }
-    } else if (normalizedSection === 'skills') {
-      // Sandbox config id from the agent editor / sandbox cards. Skills has
-      // no nav children, so this is the only way to preselect the target image.
-      currentSubSection.value = uiStore.settingsInitialSubSection || ''
     } else {
       currentSubSection.value = ''
     }
   }
 }, { immediate: true })
-
-watch(() => uiStore.settingsInitialSubSection, (sub) => {
-  if (uiStore.settingsInitialSection === 'skills' && visible.value) {
-    currentSubSection.value = sub || ''
-  }
-})
 
 watch(
   () => [visible.value, route.path, route.query.section, deploymentCapabilities.loaded] as const,
@@ -578,9 +608,7 @@ watch(
       return
     }
     currentSection.value = normalizedSection
-    currentSubSection.value = normalizedSection === 'skills'
-      ? (uiStore.settingsInitialSubSection || '')
-      : ''
+    currentSubSection.value = ''
     syncSettingsRoute(normalizedSection)
   },
   { immediate: true },
@@ -608,6 +636,7 @@ const handleSettingsNav = (e: CustomEvent) => {
   const { section, subsection } = e.detail
   if (section) {
     const normalizedSection = normalizeSettingsSection(section)
+    if (redirectToToolbox(normalizedSection, subsection)) return
     if (deploymentCapabilities.loaded && !isSectionSupported(normalizedSection)) {
       MessagePlugin.warning(t('settings.capabilityUnavailable'))
       currentSection.value = navItems.value[0]?.key || 'general'
@@ -642,6 +671,13 @@ onUnmounted(() => {
   window.removeEventListener('settings-nav', handleSettingsNav as EventListener)
 })
 </script>
+
+<style lang="less">
+.settings-modal-shell.all-settings-overlay > .settings-modal {
+  max-width: 1280px;
+  height: 900px;
+}
+</style>
 
 <style lang="less" scoped>
 /* 遮罩层 */
@@ -715,28 +751,36 @@ onUnmounted(() => {
 
 /* 右侧内容区域 */
 .content-wrapper {
-  // Bumped from 600 to 760 when the modal grew from 900→1080 (see
-  // .settings-modal). Without this, single-column panes (General,
-  // Tenant, API key, …) leave a wide right-hand gutter inside the
-  // wider modal. 760 keeps comfortable reading-width on long
-  // descriptions without the form fields stretching to the full
-  // panel width — which would look stranger than a small gutter.
-  max-width: 760px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   padding: 40px 48px;
 
-  /* 成员 / 审计表格列多，600px 会把操作列挤到贴边；铺满右侧内容列更稳。 */
+  /* 表格页面缩小内边距，为多列内容留出空间。 */
   &--wide {
-    max-width: none;
-    width: 100%;
     padding: 32px 36px 40px;
-    box-sizing: border-box;
   }
 
   &--full {
-    max-width: none;
-    width: 100%;
     padding: 30px 34px 40px;
-    box-sizing: border-box;
+  }
+
+  &--resource-list {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    padding: 20px 28px 0;
+
+    > .section {
+      flex: 1;
+      min-height: 0;
+    }
+
+    @media (max-width: 720px) {
+      padding: 16px 16px 0;
+    }
   }
 }
 

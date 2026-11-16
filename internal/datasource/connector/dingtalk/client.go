@@ -25,6 +25,15 @@ const (
 	maxResponseBytes = 16 << 20
 	maxPages         = 1000
 	maxAttempts      = 3
+
+	// downloadTimeout is deliberately longer than apiTimeout: the JSON calls
+	// are small, while an uploaded document can be several megabytes.
+	downloadTimeout = 5 * time.Minute
+
+	// maxDocumentBytes bounds a single uploaded file transfer. DingTalk lists a
+	// "size" per node that does not match the stored object, so the cap is
+	// enforced on the transfer itself instead of on listing metadata.
+	maxDocumentBytes = 64 << 20
 )
 
 type config struct {
@@ -85,14 +94,65 @@ type node struct {
 	HasChildren       bool   `json:"hasChildren"`
 }
 
+// binaryDocumentTypes maps the extension of an uploaded DingTalk file to the
+// MIME type WeKnora stores it under. Only formats WeKnora can parse are listed;
+// native ALIDOC files have their own online read APIs and are absent on
+// purpose, as are media files that would be pointless to index as text.
+var binaryDocumentTypes = map[string]string{
+	"doc": "application/msword", "ppt": "application/vnd.ms-powerpoint", "xls": "application/vnd.ms-excel", "txt": "text/plain", "md": "text/markdown", "csv": "text/csv",
+	"docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	"pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	"xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	"pdf":  "application/pdf",
+}
+
 func (n node) isFolder() bool {
 	return strings.EqualFold(n.Type, "FOLDER")
 }
 
-func (n node) isDocument() bool {
+// isOnlineDocument reports whether the node is a native DingTalk document whose
+// blocks can be read through the doc suites API.
+func (n node) isOnlineDocument() bool {
 	return strings.EqualFold(n.Type, "FILE") &&
 		strings.EqualFold(n.Category, "ALIDOC") &&
 		strings.EqualFold(n.Extension, "adoc")
+}
+
+// binaryContentType returns the MIME type of an uploaded file node. Uploaded
+// files are listed as DOCUMENT; ALIDOC covers DingTalk's own document family,
+// which is never downloaded as a file.
+func (n node) binaryContentType() (string, bool) {
+	if !strings.EqualFold(n.Type, "FILE") || !strings.EqualFold(n.Category, "DOCUMENT") {
+		return "", false
+	}
+	contentType, ok := binaryDocumentTypes[strings.ToLower(strings.TrimSpace(n.Extension))]
+	return contentType, ok
+}
+
+// isBinaryDocument reports whether the node is an uploaded file this connector
+// can download and hand to WeKnora's own parsers.
+func (n node) isBinaryDocument() bool {
+	_, ok := n.binaryContentType()
+	return ok
+}
+
+// isDocument reports whether the connector has a read path for the node at all:
+// a native adoc document through the blocks API, or an uploaded file through
+// the storage download API. Whether a given data source takes it is
+// isIngestible's answer, because an upload is guarded by its own switch.
+func (n node) isDocument() bool {
+	return n.isOnlineDocument() || n.isWorkbook() || n.isBinaryDocument()
+}
+
+// isIngestible reports whether this data source ingests the node: a read path
+// must exist and the switch guarding it must be on. Validate, the resource
+// picker and both sync modes select nodes through this one predicate, so a
+// switch that is off is off in every one of them.
+func (n node) isIngestible(settings documentSettings) bool {
+	if n.isOnlineDocument() || n.isWorkbook() {
+		return true
+	}
+	return settings.IncludeUploadedFiles && n.isBinaryDocument()
 }
 
 func (n node) title() string {
@@ -122,9 +182,14 @@ func (n node) modifiedAt() time.Time {
 type dingTalkAPI interface {
 	listWorkspaces(context.Context) ([]workspace, error)
 	listNodes(context.Context, string) ([]node, error)
+	listNodesPage(ctx context.Context, parentNodeID, pageToken string) ([]node, string, error)
 	documentBlocks(context.Context, string) ([]json.RawMessage, error)
 	workbookMarkdown(context.Context, node) (string, error)
 	downloadWikiNode(context.Context, string, string) ([]byte, error)
+	// verifyDocumentDownload proves an uploaded file is downloadable without
+	// transferring its body, so validation stays cheap for multi-megabyte files.
+	verifyDocumentDownload(context.Context, string) error
+	downloadDocument(context.Context, string) ([]byte, error)
 }
 
 type client struct {
@@ -133,11 +198,13 @@ type client struct {
 	// minInterval spaces authenticated API calls apart so parallel data
 	// source syncs sharing one app key stay under DingTalk's QPS limit.
 	// Zero disables the throttle (tests).
-	minInterval time.Duration
-	appKey      string
-	appSecret   string
-	http        *http.Client
-	sleep       func(context.Context, time.Duration) error
+	minInterval   time.Duration
+	appKey        string
+	appSecret     string
+	http          *http.Client
+	fileHTTP      *http.Client
+	downloadLimit int64
+	sleep         func(context.Context, time.Duration) error
 
 	// creds is shared by every data source configured with the same
 	// appKey/appSecret: one access token and one API throttle budget per
@@ -179,7 +246,24 @@ func newClient(cfg *config) *client {
 		creds:       dingTalkCredentialsFor(cfg.ClientID, cfg.ClientSecret),
 		http:        datasource.NewConnectorHTTPClient(apiTimeout),
 		sleep:       sleepContext,
+		fileHTTP:    datasource.NewConnectorHTTPClient(downloadTimeout),
 	}
+}
+
+// transferHTTP returns the client used for byte transfers.
+func (c *client) transferHTTP() *http.Client {
+	if c.fileHTTP != nil {
+		return c.fileHTTP
+	}
+	return c.http
+}
+
+// maxDownloadBytes returns the effective per-document size cap.
+func (c *client) maxDownloadBytes() int64 {
+	if c.downloadLimit > 0 {
+		return c.downloadLimit
+	}
+	return maxDocumentBytes
 }
 
 type accessTokenResponse struct {
@@ -393,25 +477,12 @@ func (c *client) listNodes(ctx context.Context, parentNodeID string) ([]node, er
 	seenTokens := make(map[string]struct{})
 
 	for page := 0; page < maxPages; page++ {
-		query := url.Values{
-			"maxResults":   {"50"},
-			"operatorId":   {c.operator},
-			"parentNodeId": {parentNodeID},
+		nodes, next, err := c.listNodesPage(ctx, parentNodeID, nextToken)
+		if err != nil {
+			return nil, err
 		}
-		if nextToken != "" {
-			query.Set("nextToken", nextToken)
-		}
-		var response struct {
-			Nodes     []node `json:"nodes"`
-			NextToken string `json:"nextToken"`
-		}
-		if err := c.doJSON(
-			ctx, http.MethodGet, "/v2.0/wiki/nodes?"+query.Encode(), nil, true, &response,
-		); err != nil {
-			return nil, fmt.Errorf("list DingTalk nodes: %w", err)
-		}
-		all = append(all, response.Nodes...)
-		nextToken = strings.TrimSpace(response.NextToken)
+		all = append(all, nodes...)
+		nextToken = next
 		if nextToken == "" {
 			return all, nil
 		}
@@ -421,6 +492,30 @@ func (c *client) listNodes(ctx context.Context, parentNodeID string) ([]node, er
 		seenTokens[nextToken] = struct{}{}
 	}
 	return nil, fmt.Errorf("DingTalk node pagination exceeded %d pages", maxPages)
+}
+
+// listNodesPage requests a single page of children, so one call is one HTTP
+// request plus the client's own retries. An empty next token marks the last
+// page.
+func (c *client) listNodesPage(ctx context.Context, parentNodeID, pageToken string) ([]node, string, error) {
+	query := url.Values{
+		"maxResults":   {"50"},
+		"operatorId":   {c.operator},
+		"parentNodeId": {parentNodeID},
+	}
+	if pageToken != "" {
+		query.Set("nextToken", pageToken)
+	}
+	var response struct {
+		Nodes     []node `json:"nodes"`
+		NextToken string `json:"nextToken"`
+	}
+	if err := c.doJSON(
+		ctx, http.MethodGet, "/v2.0/wiki/nodes?"+query.Encode(), nil, true, &response,
+	); err != nil {
+		return nil, "", fmt.Errorf("list DingTalk nodes: %w", err)
+	}
+	return response.Nodes, strings.TrimSpace(response.NextToken), nil
 }
 
 func (c *client) documentBlocks(ctx context.Context, documentID string) ([]json.RawMessage, error) {
@@ -454,6 +549,204 @@ func (c *client) documentBlocks(ctx context.Context, documentID string) ([]json.
 		}
 	}
 	return nil, fmt.Errorf("DingTalk document block pagination exceeded %d pages", maxPages)
+}
+
+// dentryRef identifies one file inside 钉盘. Wiki node IDs are UUIDs, but the
+// storage APIs accept only the numeric spaceId/dentryId pair, so every upload
+// is translated first. Response shape:
+//
+//	{"dentryId":"<numeric>","spaceId":"<numeric>","dentryUuid":"<uuid>"}
+type dentryRef struct {
+	DentryID   string `json:"dentryId"`
+	SpaceID    string `json:"spaceId"`
+	DentryUUID string `json:"dentryUuid"`
+}
+
+// resolveDentry maps a wiki node UUID to its 钉盘 storage identifiers.
+func (c *client) resolveDentry(ctx context.Context, documentID string) (dentryRef, error) {
+	query := url.Values{"operatorId": {c.operator}}
+	path := "/v2.0/doc/dentries/" + url.PathEscape(documentID) +
+		"/queryDentryId?" + query.Encode()
+
+	var ref dentryRef
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, true, &ref); err != nil {
+		return dentryRef{}, fmt.Errorf("resolve DingTalk document location: %w", err)
+	}
+	ref.DentryID = strings.TrimSpace(ref.DentryID)
+	ref.SpaceID = strings.TrimSpace(ref.SpaceID)
+	if ref.DentryID == "" || ref.SpaceID == "" {
+		return dentryRef{}, errors.New("DingTalk returned no storage location for the document")
+	}
+	return ref, nil
+}
+
+// downloadTarget is a short-lived pre-signed URL for one document version.
+type downloadTarget struct {
+	URL     string
+	Headers map[string]string
+}
+
+type downloadInfoResponse struct {
+	Protocol            string `json:"protocol"`
+	HeaderSignatureInfo *struct {
+		Headers           map[string]string `json:"headers"`
+		ResourceURLs      []string          `json:"resourceUrls"`
+		ExpirationSeconds int64             `json:"expirationSeconds"`
+	} `json:"headerSignatureInfo"`
+}
+
+// requestDownloadURL asks the storage API for a pre-signed download URL.
+// preferIntranet stays false so the URL is reachable from outside DingTalk's
+// own network.
+func (c *client) requestDownloadURL(ctx context.Context, ref dentryRef) (downloadTarget, error) {
+	query := url.Values{"unionId": {c.operator}}
+	path := "/v1.0/storage/spaces/" + url.PathEscape(ref.SpaceID) +
+		"/dentries/" + url.PathEscape(ref.DentryID) + "/downloadInfos/query?" + query.Encode()
+	body := map[string]interface{}{
+		"option": map[string]interface{}{"version": 1, "preferIntranet": false},
+	}
+
+	var response downloadInfoResponse
+	if err := c.doJSON(ctx, http.MethodPost, path, body, true, &response); err != nil {
+		return downloadTarget{}, fmt.Errorf("query DingTalk download URL: %w", err)
+	}
+	info := response.HeaderSignatureInfo
+	if info == nil || len(info.ResourceURLs) == 0 {
+		return downloadTarget{}, fmt.Errorf(
+			"DingTalk returned no download URL for the document (protocol %q)",
+			strings.TrimSpace(response.Protocol))
+	}
+	target := downloadTarget{
+		URL:     strings.TrimSpace(info.ResourceURLs[0]),
+		Headers: info.Headers,
+	}
+	if target.URL == "" {
+		return downloadTarget{}, errors.New("DingTalk returned an empty download URL")
+	}
+	return target, nil
+}
+
+// verifyDocumentDownload proves an uploaded file is reachable end to end
+// without transferring its body: the node must resolve to a storage location
+// and yield a pre-signed URL. Validate uses this so credentials can be checked
+// without downloading several megabytes per attempt.
+func (c *client) verifyDocumentDownload(ctx context.Context, documentID string) error {
+	ref, err := c.resolveDentry(ctx, documentID)
+	if err != nil {
+		return err
+	}
+	_, err = c.requestDownloadURL(ctx, ref)
+	return err
+}
+
+// downloadDocument fetches the raw bytes of an uploaded document. The pre-signed
+// URL is versioned and short lived, so it is re-requested whenever a transfer
+// attempt fails in a way a fresh signature could fix.
+func (c *client) downloadDocument(ctx context.Context, documentID string) ([]byte, error) {
+	ref, err := c.resolveDentry(ctx, documentID)
+	if err != nil {
+		return nil, err
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			if err := c.wait(ctx, retryDelay(attempt-1)); err != nil {
+				return nil, err
+			}
+		}
+		target, err := c.requestDownloadURL(ctx, ref)
+		if err != nil {
+			return nil, err
+		}
+		data, retryable, err := c.fetchSigned(ctx, target)
+		if err == nil {
+			return data, nil
+		}
+		lastErr = err
+		if !retryable || isContextError(err) {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+// fetchSigned transfers a document body from a pre-signed URL. It reports
+// whether the failure is worth retrying with a freshly signed URL.
+func (c *client) fetchSigned(ctx context.Context, target downloadTarget) ([]byte, bool, error) {
+	fileCtx, cancelFile := context.WithTimeout(ctx, wikiNodeFileDownloadTimeout)
+	defer cancelFile()
+	req, err := http.NewRequestWithContext(fileCtx, http.MethodGet, target.URL, nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("create DingTalk download request: %w", err)
+	}
+	for name, value := range target.Headers {
+		req.Header.Set(name, value)
+	}
+	// The signature covers the object as stored. Asking for an identity
+	// encoding keeps a proxy from re-encoding the bytes into an unparseable
+	// document.
+	req.Header.Set("Accept-Encoding", "identity")
+
+	resp, err := c.transferHTTP().Do(req)
+	if err != nil {
+		if fileCtx.Err() != nil && ctx.Err() == nil {
+			return nil, false, errors.New("DingTalk file transfer timed out")
+		}
+		return nil, fileCtx.Err() == nil, fmt.Errorf("download DingTalk document: %w", redactRequestError(err))
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		// Object-store failures are small XML bodies. Only a bounded prefix is
+		// read, and decodeAPIError never echoes the body verbatim.
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		retryable := isTransient(resp.StatusCode) ||
+			resp.StatusCode == http.StatusUnauthorized ||
+			resp.StatusCode == http.StatusForbidden ||
+			resp.StatusCode == http.StatusNotFound
+		return nil, retryable, fmt.Errorf(
+			"download DingTalk document: %w", decodeAPIError(resp.StatusCode, detail))
+	}
+
+	limit := c.maxDownloadBytes()
+	if resp.ContentLength > limit {
+		return nil, false, fmt.Errorf(
+			"%w: %d bytes announced, limit is %d bytes",
+			errDocumentTooLarge, resp.ContentLength, limit)
+	}
+	data, err := readLimited(resp.Body, limit)
+	if err != nil {
+		if errors.Is(err, errDocumentTooLarge) {
+			return nil, false, fmt.Errorf("download DingTalk document: %w", err)
+		}
+		if fileCtx.Err() != nil && ctx.Err() == nil {
+			return nil, false, errors.New("DingTalk file transfer timed out")
+		}
+		return nil, true, fmt.Errorf("read DingTalk document: %w", err)
+	}
+	return data, false, nil
+}
+
+// errDocumentTooLarge marks a document whose transfer passed the configured
+// size cap. The size is a property of the stored object rather than a transient
+// failure — a freshly signed URL returns the very same bytes — so a caller must
+// not retry it.
+var errDocumentTooLarge = errors.New("document exceeds the download limit")
+
+// readLimited reads at most limit bytes and fails when the body is longer, so
+// an over-sized document is reported instead of silently truncated. The failure
+// wraps errDocumentTooLarge so the streaming guard and the announced-length
+// guard report the same, recognisable error.
+func readLimited(body io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("%w of %d bytes", errDocumentTooLarge, limit)
+	}
+	return data, nil
 }
 
 type apiError struct {

@@ -54,6 +54,8 @@ type TemporaryDocumentService interface {
 		documentIDs []string,
 		query string,
 	) (*types.TemporaryDocumentPromptResult, error)
+	DescribeForAgent(ctx context.Context, tenantID uint64, sessionID string,
+		documentIDs []string) (*types.TemporaryDocumentPromptResult, error)
 	Process(ctx context.Context, task *asynq.Task) error
 	CleanupExpired(ctx context.Context) error
 }

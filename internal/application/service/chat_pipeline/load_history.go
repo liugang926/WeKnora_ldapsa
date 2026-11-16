@@ -67,6 +67,7 @@ func (p *PluginLoadHistory) OnEvent(ctx context.Context,
 	if err := AccountHistory(ctx, historyList); err != nil {
 		return sourceLineagePluginError(err)
 	}
+	chatManage.HistoryLoaded = true
 
 	pipelineInfo(ctx, "LoadHistory", "output", map[string]interface{}{
 		"session_id":     chatManage.SessionID,

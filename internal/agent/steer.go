@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -154,6 +155,11 @@ func (e *AgentEngine) drainSteerMessages(
 				types.MentionedItemsFromRaw(evt["mentioned_items"]),
 				getString(evt, "channel"),
 			)
+			if errors.Is(err, types.ErrSteerWriteDeferred) {
+				// Leave this item and all successors in their original order.
+				// The next boundary polls and authenticates the pending item again.
+				return injected
+			}
 			if err != nil {
 				logger.Debugf(ctx, "[Agent] Steer material rejected: %v", e.rememberLineageFailure(err))
 				return injected
@@ -189,7 +195,7 @@ func (e *AgentEngine) drainSteerMessages(
 				types.MentionedItemsFromRaw(evt["mentioned_items"]), getString(evt, "channel"))
 			if userMessageID == "" {
 				logger.Warnf(ctx, "[Agent] Steer persist failed for %s, leaving event pending", steerID)
-				continue
+				break
 			}
 			lineage = independentAgentInput()
 		} else {
@@ -204,6 +210,7 @@ func (e *AgentEngine) drainSteerMessages(
 			Role: "user", Content: types.SteerMessageContent(content), SourceLineage: lineage,
 		})
 		state.PendingSteerMessages = append(state.PendingSteerMessages, userMessageID)
+		e.recordSteerMessage(userMessageID, content)
 		err = e.emitEvent(ctx, event.Event{
 			ID:        generateEventID("injected"),
 			Type:      event.EventUserMessageInjected,

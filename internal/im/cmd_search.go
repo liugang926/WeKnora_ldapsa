@@ -95,10 +95,14 @@ func (c *SearchCommand) Execute(ctx context.Context, cmdCtx *CommandContext, arg
 		}
 	}
 
-	results, err := c.sessionService.SearchKnowledge(ctx, kbIDs, nil, nil, query)
+	retrieval, err := c.sessionService.SearchKnowledge(ctx, kbIDs, nil, nil, query, nil)
 	if err != nil {
 		return nil, fmt.Errorf("search knowledge: %w", err)
 	}
+	if retrieval == nil {
+		return nil, fmt.Errorf("search knowledge returned no response")
+	}
+	results := retrieval.Results
 
 	if len(results) == 0 {
 		return &CommandResult{
@@ -116,6 +120,9 @@ func (c *SearchCommand) Execute(ctx context.Context, cmdCtx *CommandContext, arg
 	sb.WriteString(fmt.Sprintf("🔍 **搜索「%s」** — 找到 %d 条结果\n\n", query, len(results)))
 
 	for i, r := range shown {
+		if r == nil {
+			return nil, fmt.Errorf("search knowledge returned an empty result")
+		}
 		// Trim content to a readable length.
 		content := []rune(r.Content)
 		suffix := ""
@@ -142,5 +149,31 @@ func (c *SearchCommand) Execute(ctx context.Context, cmdCtx *CommandContext, arg
 		sb.WriteString(fmt.Sprintf("_（仅显示前 %d 条，共 %d 条）_", searchMaxResults, len(results)))
 	}
 
-	return &CommandResult{Content: sb.String()}, nil
+	result := &CommandResult{Content: sb.String()}
+	if scope, ok := types.IMChannelScopeFromContext(ctx); ok {
+		sourceKBs := map[string]bool{}
+		for _, hit := range shown {
+			if err := scope.Check(ctx, scope.KnowledgeBases[hit.KnowledgeBaseID], types.GroupResourceTypeKnowledgeBase, hit.KnowledgeBaseID, types.ResourceActionRead); err != nil {
+				return nil, err
+			}
+			sourceKBs[hit.KnowledgeBaseID] = true
+			// Older search rows may have no lineage receipt. The search target
+			// and every known contributing KB must still belong to this channel.
+			lineage := types.NormalizeWeKnoraACLSourceLineage(hit.SourceLineage)
+			if lineage == nil {
+				continue
+			}
+			for _, source := range lineage.Sources {
+				sourceKBs[source.KnowledgeBaseID] = true
+				if err := scope.Check(ctx, source.TenantID, types.GroupResourceTypeKnowledgeBase, source.KnowledgeBaseID, types.ResourceActionRead); err != nil {
+					return nil, err
+				}
+			}
+		}
+		for kbID := range sourceKBs {
+			result.sourceKBs = append(result.sourceKBs, kbID)
+		}
+		sort.Strings(result.sourceKBs)
+	}
+	return result, nil
 }

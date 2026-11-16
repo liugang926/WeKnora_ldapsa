@@ -54,7 +54,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: paradedb/paradedb:v0.22.6-pg17@sha256:58bf87d2a6f1e72f56590b0f0ae1467e82c3f99ca203dde646672c8ac13148b2
+        image: paradedb/paradedb:v0.25.11-pg17@sha256:78d65750f0f88a56548526201bcab9910f83b90fe929cdbf979890f3f80b0f95
         env:
           POSTGRES_PASSWORD: fixture-only
           POSTGRES_DB: directory_test

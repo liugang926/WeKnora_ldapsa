@@ -8,7 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/sandbox"
+	"github.com/Tencent/WeKnora/internal/sandbox/admission"
+	"github.com/Tencent/WeKnora/internal/sandbox/allocation"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,14 +31,20 @@ type fakeForkSandboxPort struct {
 	snapshotCtxErr error
 	deleted        []string
 	deleteErr      error
+	beginErr       error
+	beginCalls     int
+	workspace      *fakeWorkspaceFork
+	calls          *[]string
+	hasActiveCtxs  []context.Context
 }
 
 func (f *fakeForkSandboxPort) BoundSandboxID(context.Context, string) (string, bool) {
 	return f.boundID, f.bound
 }
 
-func (f *fakeForkSandboxPort) HasActiveTurn(context.Context, string) (bool, error) {
+func (f *fakeForkSandboxPort) HasActiveTurn(ctx context.Context, _ string) (bool, error) {
 	f.hasActiveCalls++
+	f.hasActiveCtxs = append(f.hasActiveCtxs, ctx)
 	if f.activeTurnErr != nil {
 		return false, f.activeTurnErr
 	}
@@ -65,21 +75,109 @@ func (f *fakeForkSandboxPort) DeleteForkSnapshot(_ context.Context, _, snapshotI
 	return f.deleteErr
 }
 
+func (f *fakeForkSandboxPort) BeginWorkspaceFork(context.Context, string) (sandbox.WorkspaceFork, error) {
+	noteForkCall(f.calls, "Begin")
+	f.beginCalls++
+	if f.beginErr != nil {
+		return nil, f.beginErr
+	}
+	if f.workspace == nil {
+		f.workspace = &fakeWorkspaceFork{id: f.boundID}
+	}
+	if f.workspace.id == "" {
+		f.workspace.id = f.boundID
+	}
+	f.workspace.calls = f.calls
+	return f.workspace, nil
+}
+
+// fakeWorkspaceFork is an open shared-machine fork the service drives.
+type fakeWorkspaceFork struct {
+	id              string
+	ctx             context.Context
+	cancel          context.CancelCauseFunc
+	reachable       map[string]bool
+	copyErr         error
+	loseLeaseOnCopy bool
+	copied          int
+	copyTarget      string
+	copySHA         string
+	copyCandidates  []string
+	removed         []string
+	released        int
+	calls           *[]string
+}
+
+func (f *fakeWorkspaceFork) SandboxID() string { return f.id }
+
+func (f *fakeWorkspaceFork) Context() context.Context {
+	if f.ctx == nil {
+		return context.Background()
+	}
+	return f.ctx
+}
+
+func (f *fakeWorkspaceFork) Copy(targetSessionID, sha string, candidates []string) (map[string]bool, error) {
+	noteForkCall(f.calls, "Copy")
+	f.copied++
+	f.copyTarget = targetSessionID
+	f.copySHA = sha
+	f.copyCandidates = append([]string(nil), candidates...)
+	if f.loseLeaseOnCopy && f.cancel != nil {
+		f.cancel(admission.ErrLeaseLost)
+	}
+	if f.copyErr != nil {
+		return nil, f.copyErr
+	}
+	if f.reachable == nil {
+		return map[string]bool{}, nil
+	}
+	out := make(map[string]bool, len(f.reachable))
+	for k, v := range f.reachable {
+		out[k] = v
+	}
+	return out, nil
+}
+
+func (f *fakeWorkspaceFork) Remove(targetSessionID string) error {
+	noteForkCall(f.calls, "Remove")
+	f.removed = append(f.removed, targetSessionID)
+	return nil
+}
+
+func (f *fakeWorkspaceFork) Release() {
+	noteForkCall(f.calls, "Release")
+	f.released++
+}
+
+func noteForkCall(calls *[]string, name string) {
+	if calls == nil {
+		return
+	}
+	*calls = append(*calls, name)
+}
+
 // fakeSessionStore is the narrow session port SessionForkService needs.
 type fakeSessionStore struct {
-	source           *types.Session
-	created          *types.Session
-	copiedMessages   []*types.Message
-	copiedOrigIDs    []string
-	origIDsFrom      *fakeMessageStore
-	getErr           error
-	updatedBootstrap *types.ForkBootstrap
-	bootstrapCleared bool
-	clearErr         error
-	updateErr        error
-	unconsumed       []*types.Session
-	createErr        error
-	leases           []*types.ForkSnapshotLease
+	source            *types.Session
+	created           *types.Session
+	copiedMessages    []*types.Message
+	copiedOrigIDs     []string
+	origIDsFrom       *fakeMessageStore
+	getErr            error
+	updatedBootstrap  *types.ForkBootstrap
+	bootstrapCleared  bool
+	clearErr          error
+	updateErr         error
+	unconsumed        []*types.Session
+	createErr         error
+	leases            []*types.ForkSnapshotLease
+	calls             *[]string
+	assignCalls       int
+	assignCtx         context.Context
+	assigned          *types.SessionSandboxAssignment
+	assignedMachine   *types.SandboxUserMachine
+	lastAssignSession string
 }
 
 func newFakeSessionStore(src *types.Session) *fakeSessionStore {
@@ -196,6 +294,38 @@ func (f *fakeSessionStore) ListStaleForkSnapshotLeases(
 	return out, nil
 }
 
+func (f *fakeSessionStore) CreateForkedWithAssignment(
+	ctx context.Context, session *types.Session, messages []*types.Message,
+	assignment *types.SessionSandboxAssignment, machine *types.SandboxUserMachine,
+) error {
+	noteForkCall(f.calls, "CreateForkedWithAssignment")
+	f.assignCalls++
+	f.assignCtx = ctx
+	if session != nil {
+		f.lastAssignSession = session.ID
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if f.createErr != nil {
+		return f.createErr
+	}
+	f.created = session
+	f.copiedMessages = append([]*types.Message(nil), messages...)
+	if assignment != nil {
+		copied := *assignment
+		f.assigned = &copied
+	}
+	if machine != nil {
+		copied := *machine
+		f.assignedMachine = &copied
+	}
+	if f.origIDsFrom != nil {
+		f.copiedOrigIDs = append([]string(nil), f.origIDsFrom.lastListedIDs...)
+	}
+	return nil
+}
+
 func (f *fakeSessionStore) CreateForked(ctx context.Context, session *types.Session, messages []*types.Message) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -228,6 +358,8 @@ type fakeMessageStore struct {
 	deleteFromFailTimes int
 	tombstoned          []types.ArtifactRef
 	liveArtifacts       []types.MessageArtifactRecord
+	calls               *[]string
+	lastListCtx         context.Context
 }
 
 func (f *fakeMessageStore) readForkAlgorithmMaterial(
@@ -291,8 +423,10 @@ func (f *fakeMessageStore) GetMessagesBySession(
 }
 
 func (f *fakeMessageStore) ListMessagesBySessionUpTo(
-	_ context.Context, sessionID string, boundary time.Time, boundaryID string,
+	ctx context.Context, sessionID string, boundary time.Time, boundaryID string,
 ) ([]*types.Message, error) {
+	noteForkCall(f.calls, "ListMessagesBySessionUpTo")
+	f.lastListCtx = ctx
 	var out []*types.Message
 	for _, m := range f.messages {
 		if m == nil || m.SessionID != sessionID {
@@ -489,7 +623,7 @@ func checkpointedTurn(userID, assistantID, sandboxID, sha string, offset time.Du
 	}
 }
 
-func newForkFixture(t *testing.T, port *fakeForkSandboxPort, messages []*types.Message) (
+func newForkFixture(t *testing.T, port SessionForkSandboxPort, messages []*types.Message) (
 	*SessionForkService, *fakeSessionStore, *fakeMessageStore,
 ) {
 	t.Helper()
@@ -502,6 +636,17 @@ func newForkFixture(t *testing.T, port *fakeForkSandboxPort, messages []*types.M
 	return NewSessionForkService(sessions, msgs, port), sessions, msgs
 }
 
+// hostForkSandboxPort is a fork sandbox that does not version the workspace.
+// Host backends share the user's real directory across sessions, so fork must
+// copy messages only — never snapshot or roll the tree back.
+type hostForkSandboxPort struct {
+	fakeForkSandboxPort
+}
+
+func (h *hostForkSandboxPort) VersionsWorkspace(context.Context, string) bool {
+	return false
+}
+
 // --- tests -----------------------------------------------------------------
 
 func TestForkHappyPathTakesSnapshotAndCopiesHistory(t *testing.T) {
@@ -511,6 +656,7 @@ func TestForkHappyPathTakesSnapshotAndCopiesHistory(t *testing.T) {
 	}
 	port := &fakeForkSandboxPort{boundID: "sbx-1", bound: true, snapshotID: "snap-1"}
 	svc, sessions, _ := newForkFixture(t, port, append(turn, forkPoint))
+	sessions.source.OwnerAuthSource = "web"
 
 	got, err := svc.Fork(context.Background(), 1, "u1", "src", "u-msg-2", "")
 
@@ -525,6 +671,7 @@ func TestForkHappyPathTakesSnapshotAndCopiesHistory(t *testing.T) {
 	require.Equal(t, "u-msg-2", created.ForkedFromMessageID)
 	require.Equal(t, "cfg-1", created.SandboxConfigID, "必须继承 sandbox_config_id，否则可能落到别的 backend")
 	require.Equal(t, "原会话（分支）", created.Title)
+	require.Equal(t, "web", created.OwnerAuthSource)
 	require.NotNil(t, created.ForkBootstrap)
 	require.Equal(t, "snap-1", created.ForkBootstrap.SnapshotID)
 	require.Equal(t, "sha1", created.ForkBootstrap.CommitSHA)
@@ -1029,4 +1176,389 @@ func TestForkClearsLeaseAfterPersistSucceeds(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, port.deleted)
 	require.Empty(t, sessions.leases, "session.fork_bootstrap now owns the snapshot")
+}
+
+func TestForkOnHostCopiesMessagesWithoutWorkspaceRollback(t *testing.T) {
+	turn := checkpointedTurn("u-msg-1", "a-msg-1", "host-1", "sha1", 0)
+	forkPoint := &types.Message{
+		ID: "u-msg-2", SessionID: "src", Role: "user", CreatedAt: forkBase.Add(10 * time.Second),
+	}
+	port := &hostForkSandboxPort{fakeForkSandboxPort: fakeForkSandboxPort{
+		boundID: "host-1", bound: true, snapshotID: "snap-should-not-fire",
+	}}
+	svc, sessions, _ := newForkFixture(t, port, append(turn, forkPoint))
+
+	got, err := svc.Fork(context.Background(), 1, "u1", "src", "u-msg-2", "")
+
+	require.NoError(t, err)
+	require.False(t, got.Degraded, "host fork is message-only by design, not a degraded remote fork")
+	require.Empty(t, got.Reason)
+	require.Zero(t, port.snapshotCalls)
+	require.Nil(t, sessions.created.ForkBootstrap)
+	require.Equal(t, []string{"u-msg-1", "a-msg-1"}, sessions.copiedFromIDs())
+}
+
+func TestForkOnHostDoesNotDegradeWhenPrecedingTurnHasNoCheckpoint(t *testing.T) {
+	messages := []*types.Message{
+		{ID: "u-msg-1", SessionID: "src", Role: "user", CreatedAt: forkBase},
+		{ID: "a-msg-1", SessionID: "src", Role: "assistant", CreatedAt: forkBase.Add(time.Second)},
+		{ID: "u-msg-2", SessionID: "src", Role: "user", CreatedAt: forkBase.Add(10 * time.Second)},
+	}
+	port := &hostForkSandboxPort{}
+	svc, sessions, _ := newForkFixture(t, port, messages)
+
+	got, err := svc.Fork(context.Background(), 1, "u1", "src", "u-msg-2", "")
+
+	require.NoError(t, err)
+	require.False(t, got.Degraded)
+	require.Empty(t, got.Reason)
+	require.Equal(t, []string{"u-msg-1", "a-msg-1"}, sessions.copiedFromIDs())
+}
+
+// A branch of a project session keeps operating on the same project.
+func TestForkInheritsHostWorkspaceDir(t *testing.T) {
+	turn := checkpointedTurn("u-msg-1", "a-msg-1", "sbx-1", "sha1", 0)
+	forkPoint := &types.Message{
+		ID: "u-msg-2", SessionID: "src", Role: "user", CreatedAt: forkBase.Add(10 * time.Second),
+	}
+	port := &fakeForkSandboxPort{boundID: "sbx-1", bound: true, snapshotID: "snap-1"}
+	svc, sessions, _ := newForkFixture(t, port, append(turn, forkPoint))
+	sessions.source.HostWorkspaceDir = "/Users/dev/My Project"
+
+	_, err := svc.Fork(context.Background(), 1, "u1", "src", "u-msg-2", "")
+
+	require.NoError(t, err)
+	require.NotNil(t, sessions.created)
+	require.Equal(t, "/Users/dev/My Project", sessions.created.HostWorkspaceDir)
+}
+
+type forkMarkerKey struct{}
+
+func userModeForkAssignment() allocation.Assignment {
+	return allocation.Assignment{
+		SessionID: "src", ConfigTenantID: 1, ConfigID: "cfg-1",
+		Machine: allocation.UserMachine{
+			OwnerTenantID: 1, OwnerID: "u1", ConfigTenantID: 1, ConfigID: "cfg-1",
+		},
+	}
+}
+
+type fakeForkAllocations struct {
+	assignment allocation.Assignment
+	found      bool
+	err        error
+}
+
+func (f *fakeForkAllocations) Lookup(context.Context, string) (allocation.Assignment, bool, error) {
+	if f.err != nil {
+		return allocation.Assignment{}, false, f.err
+	}
+	return f.assignment, f.found, nil
+}
+
+func (f *fakeForkAllocations) ForkAssignment(
+	source allocation.Assignment, targetSessionID string,
+) allocation.Assignment {
+	child := source
+	child.SessionID = targetSessionID
+	child.ReleasedAt = nil
+	return child
+}
+
+func (f *fakeForkAllocations) Digest(m allocation.UserMachine) string {
+	return m.Digest("weknora")
+}
+
+func newSharedMachineFork(
+	t *testing.T, port *fakeForkSandboxPort, messages []*types.Message,
+) (*SessionForkService, *fakeSessionStore, *fakeMessageStore, *[]string) {
+	t.Helper()
+	calls := []string{}
+	port.calls = &calls
+	if port.workspace != nil {
+		port.workspace.calls = &calls
+	}
+	svc, sessions, msgs := newForkFixture(t, port, messages)
+	sessions.calls = &calls
+	msgs.calls = &calls
+	sessions.source.OwnerAuthSource = "web"
+	svc.WithAllocations(&fakeForkAllocations{assignment: userModeForkAssignment(), found: true})
+	return svc, sessions, msgs, &calls
+}
+
+func userForkPoint() *types.Message {
+	return &types.Message{
+		ID: "u-msg-2", SessionID: "src", Role: "user", CreatedAt: forkBase.Add(10 * time.Second),
+	}
+}
+
+func TestForkOnSharedMachineCopiesAndInheritsAssignment(t *testing.T) {
+	turn := checkpointedTurn("u-msg-1", "a-msg-1", "sb-1", "sha1", 0)
+	port := &fakeForkSandboxPort{
+		boundID: "sb-1", bound: true, snapshotID: "snap-should-not-run",
+		workspace: &fakeWorkspaceFork{id: "sb-1", reachable: map[string]bool{"sha1": true}},
+	}
+	svc, sessions, _, calls := newSharedMachineFork(t, port, append(turn, userForkPoint()))
+
+	got, err := svc.Fork(context.Background(), 1, "u1", "src", "u-msg-2", "")
+
+	require.NoError(t, err)
+	require.False(t, got.Degraded)
+	require.Empty(t, got.Reason)
+	require.Zero(t, port.snapshotCalls)
+	require.NotNil(t, sessions.assigned)
+	require.Equal(t, got.SessionID, sessions.assigned.SessionID)
+	require.NotEqual(t, "src", sessions.assigned.SessionID)
+	machine, ok := userModeForkAssignment().UserMachine()
+	require.True(t, ok)
+	require.Equal(t, machine.Digest("weknora"), sessions.assigned.MachineDigest)
+	require.NotNil(t, sessions.assignedMachine)
+	require.Equal(t, sessions.assigned.MachineDigest, sessions.assignedMachine.MachineDigest)
+	require.Equal(t, "u1", sessions.assignedMachine.OwnerID)
+	require.Nil(t, sessions.assignedMachine.EmptySince)
+	require.Equal(t, "web", sessions.created.OwnerAuthSource)
+	require.Nil(t, sessions.created.ForkBootstrap)
+	require.Equal(t, []string{
+		"Begin", "ListMessagesBySessionUpTo", "Copy", "CreateForkedWithAssignment", "Release",
+	}, *calls)
+}
+
+func TestForkOnSharedMachineKeepsOnlyReachableMatchingCheckpoints(t *testing.T) {
+	history := []*types.Message{
+		{ID: "u1", SessionID: "src", Role: "user", CreatedAt: forkBase},
+		{
+			ID: "a1", SessionID: "src", Role: "assistant", CreatedAt: forkBase.Add(time.Second), IsCompleted: true,
+			SandboxCheckpoint: &types.SandboxCheckpoint{SandboxID: "sb-1", CommitSHA: "sha1"},
+		},
+		{ID: "u2", SessionID: "src", Role: "user", CreatedAt: forkBase.Add(2 * time.Second)},
+		{
+			ID: "a2", SessionID: "src", Role: "assistant", CreatedAt: forkBase.Add(3 * time.Second), IsCompleted: true,
+			SandboxCheckpoint: &types.SandboxCheckpoint{SandboxID: "sb-old", CommitSHA: "sha2"},
+		},
+		{ID: "u3", SessionID: "src", Role: "user", CreatedAt: forkBase.Add(4 * time.Second)},
+		{
+			ID: "a3", SessionID: "src", Role: "assistant", CreatedAt: forkBase.Add(5 * time.Second), IsCompleted: true,
+			SandboxCheckpoint: &types.SandboxCheckpoint{SandboxID: "sb-1", CommitSHA: "sha3"},
+		},
+		{ID: "u-fork", SessionID: "src", Role: "user", CreatedAt: forkBase.Add(6 * time.Second)},
+	}
+	port := &fakeForkSandboxPort{
+		workspace: &fakeWorkspaceFork{id: "sb-1", reachable: map[string]bool{"sha3": true, "sha1": true}},
+	}
+	svc, sessions, _, _ := newSharedMachineFork(t, port, history)
+
+	got, err := svc.Fork(context.Background(), 1, "u1", "src", "u-fork", "")
+
+	require.NoError(t, err)
+	require.False(t, got.Degraded)
+	require.Len(t, sessions.copiedMessages, 6)
+	require.Equal(t, "sha1", sessions.copiedMessages[1].SandboxCheckpoint.CommitSHA)
+	require.Equal(t, "sb-1", sessions.copiedMessages[1].SandboxCheckpoint.SandboxID)
+	require.Nil(t, sessions.copiedMessages[3].SandboxCheckpoint)
+	require.Equal(t, "sha3", sessions.copiedMessages[5].SandboxCheckpoint.CommitSHA)
+	require.Equal(t, []string{"sha1", "sha2", "sha3"}, port.workspace.copyCandidates)
+	require.Equal(t, "sha3", port.workspace.copySHA)
+}
+
+func TestForkOnSharedMachineReplacedSandboxDegrades(t *testing.T) {
+	turn := checkpointedTurn("u-msg-1", "a-msg-1", "sb-old", "sha-old", 0)
+	port := &fakeForkSandboxPort{
+		workspace: &fakeWorkspaceFork{id: "sb-1", reachable: map[string]bool{"sha-old": true}},
+	}
+	svc, sessions, _, calls := newSharedMachineFork(t, port, append(turn, userForkPoint()))
+
+	got, err := svc.Fork(context.Background(), 1, "u1", "src", "u-msg-2", "")
+
+	require.NoError(t, err)
+	require.True(t, got.Degraded)
+	require.Equal(t, ForkDegradeSandboxReplaced, got.Reason)
+	require.Zero(t, port.workspace.copied)
+	require.NotContains(t, *calls, "Copy")
+	require.Contains(t, *calls, "Release")
+	for _, m := range sessions.copiedMessages {
+		require.Nil(t, m.SandboxCheckpoint)
+	}
+}
+
+func TestForkOnSharedMachineCopyFailureDegrades(t *testing.T) {
+	turn := checkpointedTurn("u-msg-1", "a-msg-1", "sb-1", "sha1", 0)
+	port := &fakeForkSandboxPort{
+		workspace: &fakeWorkspaceFork{id: "sb-1", copyErr: errors.New("disk full")},
+	}
+	svc, sessions, _, calls := newSharedMachineFork(t, port, append(turn, userForkPoint()))
+
+	got, err := svc.Fork(context.Background(), 1, "u1", "src", "u-msg-2", "")
+
+	require.NoError(t, err)
+	require.True(t, got.Degraded)
+	require.Equal(t, ForkDegradeCopyFailed, got.Reason)
+	require.NotContains(t, *calls, "Remove")
+	require.Empty(t, port.workspace.removed)
+	for _, m := range sessions.copiedMessages {
+		require.Nil(t, m.SandboxCheckpoint)
+	}
+}
+
+func TestForkOnSharedMachineRemovesTheCopyWhenCommitFails(t *testing.T) {
+	turn := checkpointedTurn("u-msg-1", "a-msg-1", "sb-1", "sha1", 0)
+	port := &fakeForkSandboxPort{
+		workspace: &fakeWorkspaceFork{id: "sb-1", reachable: map[string]bool{"sha1": true}},
+	}
+	svc, sessions, _, calls := newSharedMachineFork(t, port, append(turn, userForkPoint()))
+	sessions.createErr = errors.New("db down")
+
+	got, err := svc.Fork(context.Background(), 1, "u1", "src", "u-msg-2", "")
+
+	require.Nil(t, got)
+	require.Error(t, err)
+	require.Equal(t, []string{sessions.lastAssignSession}, port.workspace.removed)
+	require.NotEmpty(t, sessions.lastAssignSession)
+	require.Equal(t, []string{"Remove", "Release"}, (*calls)[len(*calls)-2:])
+}
+
+func TestForkOnSharedMachineBusySourceIsRefused(t *testing.T) {
+	turn := checkpointedTurn("u-msg-1", "a-msg-1", "sb-1", "sha1", 0)
+	port := &fakeForkSandboxPort{beginErr: sandbox.ErrSessionWorkspaceBusy}
+	svc, sessions, _, _ := newSharedMachineFork(t, port, append(turn, userForkPoint()))
+
+	got, err := svc.Fork(context.Background(), 1, "u1", "src", "u-msg-2", "")
+
+	require.Nil(t, got)
+	require.ErrorIs(t, err, ErrForkSourceBusy)
+	require.Zero(t, sessions.assignCalls)
+}
+
+func TestForkOnSharedMachineRechecksTheTurnInsideTheWindow(t *testing.T) {
+	turn := checkpointedTurn("u-msg-1", "a-msg-1", "sb-1", "sha1", 0)
+	port := &fakeForkSandboxPort{
+		forceBusyAfter: 2,
+		workspace:      &fakeWorkspaceFork{id: "sb-1"},
+	}
+	svc, sessions, _, calls := newSharedMachineFork(t, port, append(turn, userForkPoint()))
+
+	got, err := svc.Fork(context.Background(), 1, "u1", "src", "u-msg-2", "")
+
+	require.Nil(t, got)
+	require.ErrorIs(t, err, ErrForkSourceBusy)
+	require.Zero(t, port.workspace.copied)
+	require.NotContains(t, *calls, "Copy")
+	require.Zero(t, sessions.assignCalls)
+	require.NotContains(t, *calls, "CreateForkedWithAssignment")
+	require.Contains(t, *calls, "Release")
+	require.Equal(t, 1, port.workspace.released)
+}
+
+func TestForkOnSharedMachineRejectionIsAnErrorNotADegradedBranch(t *testing.T) {
+	turn := checkpointedTurn("u-msg-1", "a-msg-1", "sb-1", "sha1", 0)
+	messages := append(turn, userForkPoint())
+	for _, beginErr := range []error{
+		sandbox.ErrUserAllocationRejected, sandbox.ErrSandboxSessionDeleted, admission.ErrLeaseLost,
+	} {
+		beginErr := beginErr
+		t.Run(beginErr.Error(), func(t *testing.T) {
+			port := &fakeForkSandboxPort{beginErr: beginErr}
+			svc, sessions, _, _ := newSharedMachineFork(t, port, messages)
+			got, err := svc.Fork(context.Background(), 1, "u1", "src", "u-msg-2", "")
+			require.Nil(t, got)
+			require.ErrorIs(t, err, beginErr)
+			require.Zero(t, sessions.assignCalls)
+			require.Nil(t, sessions.created)
+		})
+	}
+}
+
+func TestForkOnSharedMachineLostLeaseBeforeCommitCreatesNothing(t *testing.T) {
+	turn := checkpointedTurn("u-msg-1", "a-msg-1", "sb-1", "sha1", 0)
+	forkCtx, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
+	port := &fakeForkSandboxPort{
+		workspace: &fakeWorkspaceFork{
+			id: "sb-1", ctx: forkCtx, cancel: cancel,
+			reachable: map[string]bool{"sha1": true}, loseLeaseOnCopy: true,
+		},
+	}
+	svc, sessions, _, _ := newSharedMachineFork(t, port, append(turn, userForkPoint()))
+
+	got, err := svc.Fork(context.Background(), 1, "u1", "src", "u-msg-2", "")
+
+	require.Nil(t, got)
+	require.ErrorIs(t, err, admission.ErrLeaseLost)
+	require.Zero(t, sessions.assignCalls)
+	require.Nil(t, sessions.created)
+}
+
+func TestForkOnSharedMachineReadsAndCommitsWithTheForkContext(t *testing.T) {
+	turn := checkpointedTurn("u-msg-1", "a-msg-1", "sb-1", "sha1", 0)
+	marked := context.WithValue(context.Background(), forkMarkerKey{}, "fork-window")
+	port := &fakeForkSandboxPort{
+		workspace: &fakeWorkspaceFork{
+			id: "sb-1", ctx: marked, reachable: map[string]bool{"sha1": true},
+		},
+	}
+	svc, sessions, msgs, _ := newSharedMachineFork(t, port, append(turn, userForkPoint()))
+
+	_, err := svc.Fork(context.Background(), 1, "u1", "src", "u-msg-2", "")
+
+	require.NoError(t, err)
+	require.Equal(t, "fork-window", msgs.lastListCtx.Value(forkMarkerKey{}))
+	require.Equal(t, "fork-window", sessions.assignCtx.Value(forkMarkerKey{}))
+	require.GreaterOrEqual(t, len(port.hasActiveCtxs), 2)
+	require.Equal(t, "fork-window", port.hasActiveCtxs[len(port.hasActiveCtxs)-1].Value(forkMarkerKey{}))
+}
+
+func TestForkOfSessionModeSourceStillSnapshots(t *testing.T) {
+	turn := checkpointedTurn("u-msg-1", "a-msg-1", "sbx-1", "sha1", 0)
+	port := &fakeForkSandboxPort{boundID: "sbx-1", bound: true, snapshotID: "snap-1"}
+	svc, sessions, _ := newForkFixture(t, port, append(turn, userForkPoint()))
+	svc.WithAllocations(&fakeForkAllocations{
+		found: true,
+		assignment: allocation.Assignment{
+			SessionID: "src", ConfigTenantID: 1, ConfigID: "cfg-1",
+		},
+	})
+
+	got, err := svc.Fork(context.Background(), 1, "u1", "src", "u-msg-2", "")
+
+	require.NoError(t, err)
+	require.False(t, got.Degraded)
+	require.Equal(t, 1, port.snapshotCalls)
+	require.Zero(t, port.beginCalls)
+	require.Zero(t, sessions.assignCalls)
+	require.NotNil(t, sessions.created.ForkBootstrap)
+	require.Equal(t, "snap-1", sessions.created.ForkBootstrap.SnapshotID)
+}
+
+func TestForkLiveBackgroundWorkIsBusy(t *testing.T) {
+	turn := checkpointedTurn("u-msg-1", "a-msg-1", "sbx-1", "sha1", 0)
+	forkPoint := &types.Message{
+		ID: "u-msg-2", SessionID: "src", Role: "user", CreatedAt: forkBase.Add(10 * time.Second),
+	}
+	port := &fakeForkSandboxPort{boundID: "sbx-1", bound: true, snapshotID: "snap-1"}
+	svc, sessions, _ := newForkFixture(t, port, append(turn, forkPoint))
+	svc.activity = liveActivityRegistry(t, interfaces.SessionRef{TenantID: 1, SessionID: "src"})
+
+	got, err := svc.Fork(context.Background(), 1, "u1", "src", "u-msg-2", "")
+
+	require.ErrorIs(t, err, ErrForkSourceBusy)
+	require.Nil(t, got)
+	require.Zero(t, port.snapshotCalls)
+	require.Nil(t, sessions.created)
+}
+
+func TestForkDegradesWhenCheckpointWasTakenWhileBackgroundWorkRan(t *testing.T) {
+	turn := checkpointedTurn("u-msg-1", "a-msg-1", "sbx-1", "sha1", 0)
+	turn[1].SandboxCheckpoint.BackgroundActive = true
+	forkPoint := &types.Message{
+		ID: "u-msg-2", SessionID: "src", Role: "user", CreatedAt: forkBase.Add(10 * time.Second),
+	}
+	port := &fakeForkSandboxPort{boundID: "sbx-1", bound: true, snapshotID: "snap-1"}
+	svc, sessions, _ := newForkFixture(t, port, append(turn, forkPoint))
+
+	got, err := svc.Fork(context.Background(), 1, "u1", "src", "u-msg-2", "")
+
+	require.NoError(t, err)
+	require.True(t, got.Degraded)
+	require.Equal(t, ForkDegradeNoCheckpoint, got.Reason)
+	require.Zero(t, port.snapshotCalls)
+	require.Nil(t, sessions.created.ForkBootstrap)
 }

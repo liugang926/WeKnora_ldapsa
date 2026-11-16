@@ -46,7 +46,7 @@ func (e *EventManager) BeginSourceLineage(
 			return e.sourceLineageGuard.Check(ctx, lineage, scope)
 		})
 	}
-	ctx = types.WithRAGSourceLineage(ctx, turn)
+	ctx = context.WithValue(types.WithRAGSourceLineage(ctx, turn), citationReceiptKey{}, &citationReceipts{})
 	if cm == nil || len(cm.Images) > 0 || len(cm.Attachments) > 0 || cm.QuotedContext != "" ||
 		cm.ImageDescription != "" || cm.WebSearchEnabled || cm.DataAnalysisEnabled || len(
 		cm.Entity,
@@ -103,6 +103,16 @@ func AccountResults(ctx context.Context, results []*types.SearchResult) error {
 		}
 		if err := turn.Add(result.SourceLineage); err != nil {
 			return err
+		}
+		for _, child := range result.CitationSources {
+			if child == nil || child.KnowledgeID != result.KnowledgeID ||
+				child.KnowledgeBaseID != result.KnowledgeBaseID ||
+				!verifiedCitation(ctx, result, child) {
+				return types.ErrSourceLineageUnknown
+			}
+			if err := turn.Add(child.SourceLineage); err != nil {
+				return err
+			}
 		}
 	}
 	return turn.Check(ctx)

@@ -18,18 +18,18 @@ func (r *failingReranker) Rerank(context.Context, string, []string) ([]rerank.Ra
 func (r *failingReranker) GetModelName() string { return "failing-reranker" }
 func (r *failingReranker) GetModelID() string   { return "rerank-1" }
 
-type failingRerankModelService struct {
+type strictFailingRerankModelService struct {
 	interfaces.ModelService
 	model rerank.Reranker
 }
 
-func (s *failingRerankModelService) GetRerankModel(context.Context, string) (rerank.Reranker, error) {
+func (s *strictFailingRerankModelService) GetRerankModel(context.Context, string) (rerank.Reranker, error) {
 	return s.model, nil
 }
 
 func TestRerankAPIErrorFailsStrictEvaluationOnly(t *testing.T) {
 	rootCause := errors.New("rerank rate limited")
-	plugin := &PluginRerank{modelService: &failingRerankModelService{
+	plugin := &PluginRerank{modelService: &strictFailingRerankModelService{
 		model: &failingReranker{err: rootCause},
 	}}
 	newChatManage := func() *types.ChatManage {

@@ -10,7 +10,7 @@ if __name__ == '__main__':
     refs = {'APP_IMAGE': 'weknora-production-app:' + sha,
             'UI_IMAGE': 'weknora-production-ui:' + sha,
             'DOCREADER_IMAGE': 'weknora-production-docreader:' + sha,
-            'POSTGRES_IMAGE': 'paradedb/paradedb:v0.22.6-pg17',
+            'POSTGRES_IMAGE': 'paradedb/paradedb:v0.25.11-pg17',
             'REDIS_IMAGE': 'redis:7.4.10-alpine'}
     print(json.dumps({'schema': 1, 'commit': sha, 'tag': tag,
         'deployment_protocol': 2,

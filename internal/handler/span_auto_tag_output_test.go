@@ -51,15 +51,6 @@ func (m autoSpanHTTPModels) GetChatModel(context.Context, string) (chat.Chat, er
 	return m.model, nil
 }
 
-type autoSpanHTTPChunks struct {
-	interfaces.ChunkService
-	rows []*types.Chunk
-}
-
-func (s autoSpanHTTPChunks) ListChunksByKnowledgeID(context.Context, string) ([]*types.Chunk, error) {
-	return s.rows, nil
-}
-
 func TestAutoTagActualAsynqBeginModelEndOriginalSpanHTTP(t *testing.T) {
 	for _, mutation := range []string{
 		"none",
@@ -333,7 +324,7 @@ func TestAutoTagActualAsynqBeginModelEndOriginalSpanHTTP(t *testing.T) {
 				knowledge,
 				tags,
 				collectionHTTPKB{db: db},
-				autoSpanHTTPChunks{rows: []*types.Chunk{chunk}},
+				repository.NewChunkRepository(db),
 				autoSpanHTTPModels{model: model},
 				tracker,
 			)

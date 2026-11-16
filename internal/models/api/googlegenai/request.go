@@ -1,6 +1,6 @@
 // Package googlegenai implements the native Google Gemini generateContent
 // wire protocol (https://ai.google.dev/api/generate-content). Every
-// model-specific deviation is driven by catalog.GoogleGenerativeAISettings;
+// model-specific deviation is driven by api.GoogleGenerativeAISettings;
 // this package contains no vendor names beyond the protocol itself.
 package googlegenai
 
@@ -14,13 +14,12 @@ import (
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/models/api"
-	"github.com/Tencent/WeKnora/internal/models/catalog"
 )
 
-// Config is everything the client needs, already resolved by the catalog.
+// Config is everything the client needs, already resolved by the api.
 type Config struct {
 	Endpoint api.Endpoint
-	Settings catalog.GoogleGenerativeAISettings
+	Settings api.GoogleGenerativeAISettings
 	// ThinkingLevels maps neutral levels to the vendor vocabulary
 	// (thinkingLevel values for Gemini 3, "off" support for budget models).
 	ThinkingLevels api.ThinkingLevelMap
@@ -286,6 +285,11 @@ func (c *Client) buildBody(messages []api.Message, opts *api.Options) (map[strin
 		// messages legitimately produces no turns.
 		contents = []map[string]any{}
 	}
+	// Gemini has no in-sequence instruction role; the envelope identifies
+	// this trailing input as runtime context, rather than new user intent.
+	if opts != nil && opts.RuntimeNotice != "" {
+		contents = append(contents, map[string]any{"role": roleUser, "parts": []part{{"text": opts.RuntimeNotice}}})
+	}
 	body := map[string]any{"contents": contents}
 	if len(system) > 0 {
 		body["systemInstruction"] = map[string]any{
@@ -469,10 +473,10 @@ func (c *Client) thinkingConfig(opts *api.Options) map[string]any {
 	}
 	mode := s.ThinkingMode
 	if mode == "" {
-		mode = catalog.GoogleThinkingBudget
+		mode = api.GoogleThinkingBudget
 	}
 	switch mode {
-	case catalog.GoogleThinkingBudget:
+	case api.GoogleThinkingBudget:
 		switch level {
 		case api.ReasoningOff:
 			if levels.Supports(api.ReasoningOff) {
@@ -493,7 +497,7 @@ func (c *Client) thinkingConfig(opts *api.Options) map[string]any {
 			}
 			return map[string]any{"thinkingBudget": budget, "includeThoughts": s.IncludeThoughts}
 		}
-	case catalog.GoogleThinkingLevel:
+	case api.GoogleThinkingLevel:
 		switch level {
 		case api.ReasoningOff:
 			// Gemini 3 cannot switch thinking off; only send a level when the

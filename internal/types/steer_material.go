@@ -3,6 +3,7 @@ package types
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 )
@@ -171,6 +172,9 @@ type SteerConsumptionProof struct {
 	SessionID, RunMessageID, RunGenerationID, RunRequestID           string
 	PreviousMembershipRevision, ResultMembershipRevision             uint64
 }
+
+// ErrSteerWriteDeferred means the validated input is still queued after write contention.
+var ErrSteerWriteDeferred = errors.New("steer write deferred")
 
 // OriginalSteerSink persists original material while retaining its lineage and read checks.
 //

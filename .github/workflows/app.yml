@@ -19,11 +19,19 @@ on:
       - "migrations/**"
       - "skills/preloaded/**"
       - "testdata/**"
+      - "website-docs/0*/**"
+      - "website-docs/.vitepress/config.mts"
       - "docker/Dockerfile.app"
+      - "scripts/docker-entrypoint.sh"
+      - "scripts/docker-entrypoint_test.sh"
       - "LICENSE"
       - "THIRD_PARTY_NOTICES.md"
       - "licenses/**"
       - "internal/textconv/data/**"
+      - "internal/models/catalog/data/**"
+      - "internal/models/parity/testdata/**"
+      - "internal/models/providers/assets/**"
+      - "scripts/model-catalog/**"
       - "scripts/*license*.sh"
       - "scripts/git-hooks/**"
       - "scripts/test-git-hooks.sh"
@@ -45,11 +53,19 @@ on:
       - "migrations/**"
       - "skills/preloaded/**"
       - "testdata/**"
+      - "website-docs/0*/**"
+      - "website-docs/.vitepress/config.mts"
       - "docker/Dockerfile.app"
+      - "scripts/docker-entrypoint.sh"
+      - "scripts/docker-entrypoint_test.sh"
       - "LICENSE"
       - "THIRD_PARTY_NOTICES.md"
       - "licenses/**"
       - "internal/textconv/data/**"
+      - "internal/models/catalog/data/**"
+      - "internal/models/parity/testdata/**"
+      - "internal/models/providers/assets/**"
+      - "scripts/model-catalog/**"
       - "scripts/*license*.sh"
       - "scripts/git-hooks/**"
       - "scripts/test-git-hooks.sh"
@@ -70,7 +86,7 @@ env:
   GO_VERSION: "1.26"
   GOPROXY: https://proxy.golang.org,direct
   # Keep tests independent of a developer machine's custom log template.
-  LOG_FORMAT: ""
+  WEKNORA_LOG_FORMAT: ""
   BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
 
 jobs:
@@ -102,6 +118,8 @@ jobs:
       - name: Download modules
         run: go mod download
 
+      - name: Test Docker entrypoint permissions
+        run: bash scripts/docker-entrypoint_test.sh
       - name: Verify third-party notices and source bundle
         run: |
           bash ./scripts/check-license-bundle.sh
@@ -130,6 +148,9 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
+
+      - name: Verify generated model catalog
+        run: python3 scripts/model-catalog/generate.py --check
 
       - name: Verify Git hook test coverage
         run: bash ./scripts/test-git-hooks.sh
@@ -175,6 +196,7 @@ jobs:
           # Real source/lease fixtures are sequential work within a package.
           # The service package carries the complete no-tag runtime matrix.
           go test -p 1 -count=1 -timeout=75m "${pkgs[@]}"
+          go test -tags desktop ./internal/container
 
       - name: Build server
         run: go build ./cmd/server
@@ -185,7 +207,7 @@ jobs:
     timeout-minutes: 120
     services:
       postgres:
-        image: paradedb/paradedb:v0.22.6-pg17@sha256:58bf87d2a6f1e72f56590b0f0ae1467e82c3f99ca203dde646672c8ac13148b2
+        image: paradedb/paradedb:v0.25.11-pg17@sha256:78d65750f0f88a56548526201bcab9910f83b90fe929cdbf979890f3f80b0f95
         env:
           POSTGRES_USER: weknora
           POSTGRES_PASSWORD: fixture-only
@@ -284,7 +306,7 @@ jobs:
             pattern: '^TestPostgres(Directory|Normal)'
     services:
       postgres:
-        image: paradedb/paradedb:v0.22.6-pg17@sha256:58bf87d2a6f1e72f56590b0f0ae1467e82c3f99ca203dde646672c8ac13148b2
+        image: paradedb/paradedb:v0.25.11-pg17@sha256:78d65750f0f88a56548526201bcab9910f83b90fe929cdbf979890f3f80b0f95
         env:
           POSTGRES_USER: weknora
           POSTGRES_PASSWORD: fixture-only

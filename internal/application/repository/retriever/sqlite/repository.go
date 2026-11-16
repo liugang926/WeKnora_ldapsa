@@ -2,7 +2,10 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	apprepo "github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/google/uuid"
 	"strings"
 	"sync"
 	"time"
@@ -36,10 +39,17 @@ type sqliteEmbedding struct {
 func (sqliteEmbedding) TableName() string { return "lite_embeddings" }
 
 type sqliteRepository struct {
-	db        *gorm.DB
+	db *gorm.DB
+	// vecMu guards vecTables: concurrent BatchSave and retrieval goroutines
+	// all consult it, and an unguarded map write is a fatal runtime error.
+	vecMu     sync.RWMutex
 	initErr   error
-	vecMutex  sync.Mutex
 	vecTables map[int]bool // tracks which vec0 tables have been created (keyed by dimension)
+	// ftsUnavailable records that the driver was built without the fts5 module
+	// (upstream test runs do not pass -tags sqlite_fts5). Keyword indexing
+	// cannot exist in such a build at all, so its writes are skipped instead of
+	// failing every ingestion; Lite release builds always pass the tag.
+	ftsUnavailable bool
 }
 
 func NewSQLiteRetrieveEngineRepository(db *gorm.DB) interfaces.RetrieveEngineRepository {
@@ -47,9 +57,6 @@ func NewSQLiteRetrieveEngineRepository(db *gorm.DB) interfaces.RetrieveEngineRep
 		Info("[SQLite] Initializing SQLite retriever engine repository with sqlite-vec")
 
 	initErr := db.AutoMigrate(&sqliteEmbedding{})
-	if initErr == nil {
-		initErr = initFTS5(db)
-	}
 
 	repo := &sqliteRepository{
 		db:        db,
@@ -57,22 +64,83 @@ func NewSQLiteRetrieveEngineRepository(db *gorm.DB) interfaces.RetrieveEngineRep
 		vecTables: make(map[int]bool),
 	}
 
+	if err := repo.initFTS5(); err != nil {
+		if errors.Is(err, errFTS5ModuleMissing) {
+			repo.ftsUnavailable = true
+			logger.GetLogger(context.Background()).Warnf(
+				"[SQLite] Keyword index disabled, driver has no fts5 module: %v", err)
+		} else {
+			repo.initErr = err
+			logger.GetLogger(context.Background()).Errorf("[SQLite] Failed to initialize FTS5 index: %v", err)
+		}
+	}
+	if repo.initErr == nil {
+		enableImageChunkIndexes(db)
+	}
+
 	repo.ensureExistingVecTables()
 
 	return repo
 }
 
-func initFTS5(db *gorm.DB) error {
-	return db.Transaction(func(tx *gorm.DB) error {
-		var schema string
-		if e := tx.Raw("SELECT sql FROM sqlite_master WHERE type='table' AND name='lite_embeddings_fts'").
-			Scan(&schema).
-			Error; e != nil {
-			return e
-		}
-		if schema != "" && !strings.Contains(schema, "content='lite_embeddings'") {
-			return nil
-		}
+// enableImageChunkIndexes repairs image OCR/caption rows that were indexed
+// with is_enabled = 0 because the multimodal indexer never set IsEnabled.
+// Retrieval filters on is_enabled, so those rows were never searchable.
+// Only rows whose chunk is itself enabled are touched, which leaves chunks a
+// user disabled alone; after the first run the statement matches nothing.
+func enableImageChunkIndexes(db *gorm.DB) {
+	var protected string
+	if db.Migrator().HasTable("knowledges") {
+		protected = " AND NOT EXISTS (SELECT 1 FROM knowledges k WHERE k.id=lite_embeddings.knowledge_id AND k.channel IN ('nextcloud','dingtalk'))"
+	}
+	result := db.Exec(`UPDATE lite_embeddings SET is_enabled = 1
+		WHERE is_enabled = 0 AND chunk_id IN (
+			SELECT id FROM chunks
+			WHERE chunk_type IN (?, ?) AND is_enabled = 1
+		)`+protected, string(types.ChunkTypeImageOCR), string(types.ChunkTypeImageCaption))
+	if result.Error != nil {
+		logger.GetLogger(context.Background()).Warnf(
+			"[SQLite] Failed to re-enable image chunk indexes: %v", result.Error)
+		return
+	}
+	if result.RowsAffected > 0 {
+		logger.GetLogger(context.Background()).Infof(
+			"[SQLite] Re-enabled %d image OCR/caption index rows", result.RowsAffected)
+	}
+}
+
+// errFTS5ModuleMissing reports a driver built without the fts5 module. The
+// keyword index cannot exist in such a build, which is a property of the build
+// rather than a write that failed at runtime.
+var errFTS5ModuleMissing = errors.New("sqlite driver built without the fts5 module")
+
+// fts5InsertSQL is shared by the initial population and every later keyword
+// index write, so both always build the same row shape.
+const fts5InsertSQL = `INSERT INTO lite_embeddings_fts(
+	rowid, content, source_id, chunk_id, knowledge_id, knowledge_base_id) VALUES(?, ?, ?, ?, ?, ?)`
+
+// initFTS5 prepares the contentless FTS5 keyword index. A failure is returned
+// so it is not mistaken for a working index; the table and its content are
+// built in one transaction, because a half-populated index silently drops
+// keyword recall for every row that was left out.
+func (r *sqliteRepository) initFTS5() error {
+	var sqlStr string
+	err := r.db.Raw(
+		"SELECT sql FROM sqlite_master WHERE type='table' AND name='lite_embeddings_fts'",
+	).Scan(&sqlStr).Error
+	if err != nil {
+		return fmt.Errorf("[SQLite] failed to inspect lite_embeddings_fts: %w", err)
+	}
+	// If the table exists but is not contentless (i.e. uses content='lite_embeddings'), recreate it
+	migrate := sqlStr != "" && strings.Contains(sqlStr, "content='lite_embeddings'")
+	if migrate {
+		logger.GetLogger(context.Background()).Infof(
+			"[SQLite] Migrating FTS5 table to contentless table with manual bigram tokenization")
+	} else if sqlStr != "" {
+		return nil
+	}
+
+	err = r.db.Transaction(func(tx *gorm.DB) error {
 		// Bootstrap cannot act as a Nextcloud worker. Rebuilding old protected
 		// fulltext without a current generation lease must be explicit maintenance.
 		if tx.Migrator().HasTable("knowledges") {
@@ -91,49 +159,112 @@ func initFTS5(db *gorm.DB) error {
 				)
 			}
 		}
-		if schema != "" {
-			if e := tx.Exec("DROP TABLE lite_embeddings_fts").Error; e != nil {
-				return e
+		if migrate {
+			if err := tx.Exec("DROP TABLE IF EXISTS lite_embeddings_fts").Error; err != nil {
+				return err
 			}
 		}
-		if e := tx.Exec(
-			("CREATE VIRTUAL TABLE lite_embeddings_fts USING fts5(content,source_id,chun" +
-				"k_id,knowledge_id,knowledge_base_id,content='',contentless_delete=1,tokeni" +
-				"ze='unicode61')"),
-		).Error; e != nil {
-			return e
+		createSQL := `CREATE VIRTUAL TABLE IF NOT EXISTS lite_embeddings_fts USING fts5(
+			content, source_id, chunk_id, knowledge_id, knowledge_base_id,
+			content='',
+			contentless_delete=1,
+			tokenize='unicode61'
+		)`
+		if err := tx.Exec(createSQL).Error; err != nil {
+			return err
 		}
-		var rows []sqliteEmbedding
-		if e := tx.Find(&rows).Error; e != nil {
-			return e
+		logger.GetLogger(context.Background()).Infof(
+			"[SQLite] Populating contentless FTS5 table from lite_embeddings with bigrams")
+
+		// To populate, we need to read all rows and insert them via Go to apply bigram tokenization
+		type Row struct {
+			ID              uint
+			Content         string
+			SourceID        string
+			ChunkID         string
+			KnowledgeID     string
+			KnowledgeBaseID string
+		}
+		var rows []Row
+		if err := tx.Raw(
+			"SELECT id, content, source_id, chunk_id, knowledge_id, knowledge_base_id FROM lite_embeddings",
+		).Scan(&rows).Error; err != nil {
+			return err
 		}
 		for _, row := range rows {
-			if e := tx.Exec(
-				("INSERT INTO lite_embeddings_fts(rowid,content,source_id,chunk_id,knowledge" +
-					"_id,knowledge_base_id) VALUES(?,?,?,?,?,?)"),
-				row.ID,
-				tokenizeCJKBigram(row.Content),
-				row.SourceID,
-				row.ChunkID,
-				row.KnowledgeID,
-				row.KnowledgeBaseID,
-			).Error; e != nil {
-				return e
+			if err := tx.Exec(fts5InsertSQL, row.ID, tokenizeCJKBigram(row.Content), row.SourceID,
+				row.ChunkID, row.KnowledgeID, row.KnowledgeBaseID).Error; err != nil {
+				return err
 			}
 		}
 		return nil
 	})
+	if err != nil {
+		if strings.Contains(err.Error(), "no such module: fts5") {
+			return fmt.Errorf("%w: %v", errFTS5ModuleMissing, err)
+		}
+		return fmt.Errorf("[SQLite] failed to initialize lite_embeddings_fts: %w", err)
+	}
+	return nil
 }
 
 func vecTableName(dim int) string {
 	return fmt.Sprintf("vec_embeddings_%d", dim)
 }
 
-func (r *sqliteRepository) ensureVecTable(dim int) {
-	r.vecMutex.Lock()
-	defer r.vecMutex.Unlock()
-	if dim <= 0 || r.vecTables[dim] {
-		return
+func (r *sqliteRepository) hasVecTable(dim int) bool {
+	r.vecMu.RLock()
+	defer r.vecMu.RUnlock()
+	return r.vecTables[dim]
+}
+
+func (r *sqliteRepository) markVecTable(dim int) {
+	r.vecMu.Lock()
+	defer r.vecMu.Unlock()
+	r.vecTables[dim] = true
+}
+
+// unmarkVecTable drops the cached "ready" state of a dimension after a write
+// against its table failed, so the next write re-checks the table instead of
+// trusting a marker that no longer describes it.
+func (r *sqliteRepository) unmarkVecTable(dim int) {
+	r.vecMu.Lock()
+	defer r.vecMu.Unlock()
+	delete(r.vecTables, dim)
+}
+
+// verifyVecTable rejects a same-named object that is not a vec0 table. It is
+// needed because CREATE VIRTUAL TABLE IF NOT EXISTS is a silent no-op when any
+// object already occupies the name, and a marker set from that no-op kept the
+// dimension unindexed for the rest of the process lifetime.
+func (r *sqliteRepository) verifyVecTable(tbl string) error {
+	var createSQL string
+	if err := r.db.Raw(
+		`SELECT COALESCE(sql, '') FROM sqlite_master WHERE type = 'table' AND name = ?`, tbl,
+	).Scan(&createSQL).Error; err != nil {
+		return fmt.Errorf("[SQLite] failed to inspect %s: %w", tbl, err)
+	}
+	if createSQL == "" {
+		return fmt.Errorf("[SQLite] %s is missing after CREATE VIRTUAL TABLE", tbl)
+	}
+	if !strings.Contains(strings.ToLower(createSQL), "using vec0") {
+		return fmt.Errorf("[SQLite] %s exists but is not a vec0 table: %s", tbl, createSQL)
+	}
+	return nil
+}
+
+// ensureVecTable makes the vec0 table of a dimension usable and returns an
+// error when it cannot, so callers never write vectors into a table that does
+// not exist. A dimension is only cached as ready once the table was verified.
+func (r *sqliteRepository) ensureVecTable(dim int) error {
+	if dim > 65536 {
+		return fmt.Errorf("invalid vector dimension %d", dim)
+	}
+	if dim <= 0 {
+		return nil
+	}
+	if r.hasVecTable(dim) {
+		return nil
 	}
 	tbl := vecTableName(dim)
 	createSQL := fmt.Sprintf(
@@ -141,21 +272,29 @@ func (r *sqliteRepository) ensureVecTable(dim int) {
 		tbl, dim,
 	)
 	if err := r.db.Exec(createSQL).Error; err != nil {
-		if strings.Contains(err.Error(), "already exists") {
-			r.vecTables[dim] = true
-			return
-		}
-		logger.GetLogger(context.Background()).Errorf("[SQLite] Failed to create vec0 table for dim %d: %v", dim, err)
-		return
+		return fmt.Errorf("[SQLite] failed to create vec0 table %s: %w", tbl, err)
 	}
-	r.vecTables[dim] = true
+	if err := r.verifyVecTable(tbl); err != nil {
+		return err
+	}
+	r.markVecTable(dim)
+	return nil
 }
 
 func (r *sqliteRepository) ensureExistingVecTables() {
 	var dims []int
-	r.db.Model(&sqliteEmbedding{}).Distinct("dimension").Where("dimension > 0").Pluck("dimension", &dims)
+	if err := r.db.Model(&sqliteEmbedding{}).Distinct("dimension").
+		Where("dimension > 0").Pluck("dimension", &dims).Error; err != nil {
+		logger.GetLogger(context.Background()).Warnf(
+			"[SQLite] Failed to list indexed dimensions: %v", err)
+		return
+	}
 	for _, dim := range dims {
-		r.ensureVecTable(dim)
+		// A failure here is not cached: the next write retries and reports it.
+		if err := r.ensureVecTable(dim); err != nil {
+			logger.GetLogger(context.Background()).Errorf(
+				"[SQLite] Failed to prepare vec0 table for dim %d: %v", dim, err)
+		}
 	}
 }
 
@@ -167,31 +306,115 @@ func (r *sqliteRepository) Support() []types.RetrieverType {
 	return []types.RetrieverType{types.KeywordsRetrieverType, types.VectorRetrieverType}
 }
 
-func (r *sqliteRepository) Save(ctx context.Context, info *types.IndexInfo, params map[string]any) error {
-	if info == nil {
-		return fmt.Errorf("nil index info")
-	}
-	row := toSQLiteEmbedding(info)
-	embedding := extractEmbedding(params, info.SourceID)
-	row.Dimension = len(embedding)
-	return r.saveRowsAtomic(ctx, []*types.IndexInfo{info}, []*sqliteEmbedding{row}, [][]float32{embedding})
+func (r *sqliteRepository) Save(ctx context.Context, indexInfo *types.IndexInfo, params map[string]any) error {
+	return r.BatchSave(ctx, []*types.IndexInfo{indexInfo}, params)
 }
 
-func (r *sqliteRepository) BatchSave(ctx context.Context, infos []*types.IndexInfo, params map[string]any) error {
-	if len(infos) == 0 {
+// BatchSave upserts by (source_id, source_type): rows already indexed for a
+// source are replaced together with their FTS and vec0 entries. Callers
+// re-index an edited FAQ entry under its old source ID and expect the new
+// content to win; ON CONFLICT DO NOTHING kept the stale row instead, and the
+// skipped rows also shifted the RETURNING ids GORM assigns back to the slice,
+// attaching vectors and FTS entries to the wrong rows.
+func (r *sqliteRepository) BatchSave(ctx context.Context, indexInfoList []*types.IndexInfo, params map[string]any) error {
+	if r.initErr != nil {
+		return r.initErr
+	}
+	if len(indexInfoList) == 0 {
 		return nil
 	}
-	rows := make([]*sqliteEmbedding, len(infos))
-	embs := make([][]float32, len(infos))
-	for i, info := range infos {
+	type sourceKey struct {
+		id  string
+		typ int
+	}
+	positions := make(map[sourceKey]int, len(indexInfoList))
+	rows := make([]*sqliteEmbedding, 0, len(indexInfoList))
+	embs := make([][]float32, 0, len(indexInfoList))
+	for _, info := range indexInfoList {
 		if info == nil {
 			return fmt.Errorf("nil index info")
 		}
-		rows[i] = toSQLiteEmbedding(info)
-		embs[i] = extractEmbedding(params, info.SourceID)
-		rows[i].Dimension = len(embs[i])
+		row := toSQLiteEmbedding(info)
+		emb := extractEmbedding(params, info.SourceID)
+		if len(emb) > 0 {
+			row.Dimension = len(emb)
+		}
+		// A source repeated inside one batch keeps its last entry, as an
+		// upsert would.
+		key := sourceKey{id: row.SourceID, typ: row.SourceType}
+		if i, ok := positions[key]; ok {
+			if !sameSQLiteIndexOwner(rows[i], row) {
+				return apprepo.ErrNextcloudContentLeaseDenied
+			}
+			rows[i], embs[i] = row, emb
+			continue
+		}
+		positions[key] = len(rows)
+		rows = append(rows, row)
+		embs = append(embs, emb)
 	}
-	return r.saveRowsAtomic(ctx, infos, rows, embs)
+
+	sourceIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		sourceIDs = append(sourceIDs, row.SourceID)
+		// vec0 tables are created outside the transaction below: production
+		// SQLite runs on one connection, which the transaction holds.
+		if err := r.ensureVecTable(row.Dimension); err != nil {
+			return err
+		}
+	}
+	// Replacing a source is one transaction, so a failed insert cannot
+	// leave the source with its old rows deleted and no new ones.
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := apprepo.GuardNextcloudLocalIndexWrites(ctx, tx, indexInfoList); err != nil {
+			return err
+		}
+		var candidates []sqliteEmbedding
+		if err := tx.Where("source_id IN ?", sourceIDs).Find(&candidates).Error; err != nil {
+			return err
+		}
+		existing := make([]sqliteEmbedding, 0, len(candidates))
+		existingIDs := make([]uint, 0, len(candidates))
+		for _, c := range candidates {
+			if i, ok := positions[sourceKey{id: c.SourceID, typ: c.SourceType}]; ok {
+				if !sameSQLiteIndexOwner(&c, rows[i]) {
+					return apprepo.ErrNextcloudContentLeaseDenied
+				}
+				existing = append(existing, c)
+				existingIDs = append(existingIDs, c.ID)
+			}
+		}
+		if len(existing) > 0 {
+			if err := r.deleteRowsAndVecs(tx, existing); err != nil {
+				return err
+			}
+			if err := tx.Where("id IN ?", existingIDs).Delete(&sqliteEmbedding{}).Error; err != nil {
+				return err
+			}
+		}
+
+		if err := tx.Create(rows).Error; err != nil {
+			return err
+		}
+		// Every index row is written in the same transaction as the chunk row:
+		// returning the error rolls the chunk row back instead of committing a
+		// row that neither retrieval path can find.
+		for i, row := range rows {
+			if err := recordSQLiteIndexArtifact(ctx, tx, row); err != nil {
+				return err
+			}
+			if err := r.syncFTS5Insert(tx, row); err != nil {
+				return err
+			}
+			if len(embs[i]) > 0 {
+				if err := r.insertVec(tx, row.ID, row.Dimension, embs[i]); err != nil {
+					r.unmarkVecTable(row.Dimension)
+					return err
+				}
+			}
+		}
+		return nil
+	})
 }
 
 func (r *sqliteRepository) EstimateStorageSize(
@@ -220,35 +443,59 @@ func (r *sqliteRepository) DeleteByKnowledgeIDList(ctx context.Context, ids []st
 
 func (r *sqliteRepository) CopyIndices(
 	ctx context.Context,
-	_ string,
+	sourceKB string,
 	knowledgeMap, chunkMap map[string]string,
 	kbID string,
 	_ int,
 	_ string,
 ) error {
-	return r.copyRowsAtomic(ctx, knowledgeMap, chunkMap, kbID)
+	return r.copyRowsAtomic(ctx, sourceKB, knowledgeMap, chunkMap, kbID)
+}
+
+// copiedSourceID maps a source row's SourceID onto the target chunk the way
+// the Postgres engine does, so the copy can later be deleted or re-indexed by
+// source ID: a chunk row uses the chunk ID and a generated question keeps its
+// "{chunkID}-{questionID}" suffix.
+func copiedSourceID(sourceID, sourceChunkID, targetChunkID string) string {
+	if sourceID == sourceChunkID {
+		return targetChunkID
+	}
+	if questionID, ok := strings.CutPrefix(sourceID, sourceChunkID+"-"); ok {
+		return targetChunkID + "-" + questionID
+	}
+	return uuid.New().String()
 }
 
 func (r *sqliteRepository) BatchUpdateChunkEnabledStatus(ctx context.Context, statuses map[string]bool) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		for id, value := range statuses {
-			if e := r.mutateRowsInTx(ctx, tx, "chunk_id=?", id, map[string]any{"is_enabled": value}); e != nil {
-				return e
-			}
-		}
-		return nil
-	})
+	return updateSQLiteChunkColumn(ctx, r, "is_enabled", statuses)
 }
 
 func (r *sqliteRepository) BatchUpdateChunkTagID(ctx context.Context, tags map[string]string) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		for id, value := range tags {
-			if e := r.mutateRowsInTx(ctx, tx, "chunk_id=?", id, map[string]any{"tag_id": value}); e != nil {
-				return e
+	return updateSQLiteChunkColumn(ctx, r, "tag_id", tags)
+}
+
+func updateSQLiteChunkColumn[T bool | string](ctx context.Context, r *sqliteRepository, column string, values map[string]T) error {
+	if r.initErr != nil {
+		return r.initErr
+	}
+	if apprepo.CheckNextcloudBuildIdentity(ctx, 0, "", "") != nil {
+		// A scoped worker must commit the covered generation as one mutation.
+		return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			for chunk, value := range values {
+				if err := r.mutateRowsInTx(ctx, tx, "chunk_id=?", chunk, map[string]any{column: value}); err != nil {
+					return err
+				}
 			}
+			return nil
+		})
+	}
+	var failures []error
+	for chunk, value := range values {
+		if err := r.mutateRowsAtomic(ctx, "chunk_id=?", chunk, map[string]any{column: value}); err != nil {
+			failures = append(failures, fmt.Errorf("[SQLite] failed to update %s for chunk %s: %w", column, chunk, err))
 		}
-		return nil
-	})
+	}
+	return errors.Join(failures...)
 }
 
 // --- Retrieve ---
@@ -288,6 +535,11 @@ func (r *sqliteRepository) keywordsRetrieve(
 	}
 
 	ftsQuery := sanitizeFTS5Query(params.Query)
+	// Punctuation and symbols can leave no searchable terms after tokenization.
+	// MATCH rejects an empty expression; let hybrid retrieval continue with vectors.
+	if ftsQuery == "" {
+		return nil, nil
+	}
 
 	sql := `
 		SELECT e.id, e.source_id, e.source_type, e.chunk_id,
@@ -360,16 +612,15 @@ func (r *sqliteRepository) keywordsRetrieve(
 	}}, nil
 }
 
-func (r *sqliteRepository) vectorRetrieve(
-	ctx context.Context,
-	params types.RetrieveParams,
-) ([]*types.RetrieveResult, error) {
+func (r *sqliteRepository) vectorRetrieve(ctx context.Context, params types.RetrieveParams) ([]*types.RetrieveResult, error) {
 	if len(params.Embedding) == 0 {
 		return nil, nil
 	}
 
 	dim := len(params.Embedding)
-	r.ensureVecTable(dim)
+	if err := r.ensureVecTable(dim); err != nil {
+		return nil, err
+	}
 
 	queryBlob, err := sqlite_vec.SerializeFloat32(params.Embedding)
 	if err != nil {
@@ -493,6 +744,94 @@ func extractEmbedding(params map[string]any, sourceID string) []float32 {
 	return embMap[sourceID]
 }
 
+// insertVec writes a row's vector through db. The vec0 table for dim must
+// already exist (ensureVecTable), since db may be a transaction. Failures are
+// returned so the caller's transaction rolls back instead of committing a
+// chunk row whose vector row was dropped.
+func (r *sqliteRepository) insertVec(db *gorm.DB, rowID uint, dim int, emb []float32) error {
+	if rowID == 0 {
+		return errors.New("[SQLite] cannot insert a vector row without a row id")
+	}
+	blob, err := sqlite_vec.SerializeFloat32(emb)
+	if err != nil {
+		return fmt.Errorf("[SQLite] failed to serialize embedding of row %d: %w", rowID, err)
+	}
+	tbl := vecTableName(dim)
+	if err := db.Exec(
+		fmt.Sprintf("INSERT INTO %s(rowid, embedding) VALUES (?, ?)", tbl), rowID, blob,
+	).Error; err != nil {
+		return fmt.Errorf("[SQLite] failed to insert vector row %d into %s: %w", rowID, tbl, err)
+	}
+	return nil
+}
+
+// deleteRowsAndVecs removes the vec0 and FTS copies of the given rows. Every
+// failure is returned: deleting only the lite_embeddings rows would leave the
+// retrieval indexes holding rows that no longer exist.
+func (r *sqliteRepository) deleteRowsAndVecs(db *gorm.DB, rows []sqliteEmbedding) error {
+	dimIDs := make(map[int][]uint)
+	for _, row := range rows {
+		if row.Dimension > 0 {
+			dimIDs[row.Dimension] = append(dimIDs[row.Dimension], row.ID)
+		}
+	}
+	for dim, ids := range dimIDs {
+
+		tbl := vecTableName(dim)
+		for _, id := range ids {
+			if err := db.Exec(fmt.Sprintf("DELETE FROM %s WHERE rowid = ?", tbl), id).Error; err != nil {
+				return fmt.Errorf("[SQLite] failed to delete vector row %d from %s: %w", id, tbl, err)
+			}
+		}
+	}
+	if r.ftsUnavailable {
+		return nil
+	}
+	for _, row := range rows {
+		if err := db.Exec("DELETE FROM lite_embeddings_fts WHERE rowid = ?", row.ID).Error; err != nil {
+			return fmt.Errorf("[SQLite] failed to delete keyword index row %d: %w", row.ID, err)
+		}
+	}
+	return nil
+}
+
+// copyVec duplicates a vector row for a copied chunk. It reports an error when
+// the destination table cannot be prepared or the source row has no vector
+// row, so a clone cannot silently end up without vectors.
+func (r *sqliteRepository) copyVec(tx *gorm.DB, srcID, dstID uint, dim int) error {
+	tbl := vecTableName(dim)
+	result := tx.Exec(fmt.Sprintf(
+		"INSERT INTO %s(rowid, embedding) SELECT ?, embedding FROM %s WHERE rowid = ?",
+		tbl, tbl,
+	), dstID, srcID)
+	if result.Error != nil {
+		r.unmarkVecTable(dim)
+		return fmt.Errorf("[SQLite] failed to copy vector row %d -> %d in %s: %w",
+			srcID, dstID, tbl, result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("[SQLite] source row %d has no vector row in %s", srcID, tbl)
+	}
+	return nil
+}
+
+// syncFTS5Insert mirrors a lite_embeddings row into the keyword index. The
+// error is returned so the caller's transaction rolls back instead of leaving
+// the chunk unfindable by both retrieval paths.
+func (r *sqliteRepository) syncFTS5Insert(db *gorm.DB, row *sqliteEmbedding) error {
+	if r.ftsUnavailable {
+		return nil
+	}
+	if row.ID == 0 {
+		return fmt.Errorf("[SQLite] cannot index chunk %s: row has no id", row.SourceID)
+	}
+	if err := db.Exec(fts5InsertSQL, row.ID, tokenizeCJKBigram(row.Content), row.SourceID, row.ChunkID,
+		row.KnowledgeID, row.KnowledgeBaseID).Error; err != nil {
+		return fmt.Errorf("[SQLite] failed to insert keyword index row for %s: %w", row.SourceID, err)
+	}
+	return nil
+}
+
 type whereClause struct {
 	clause string
 	args   []interface{}
@@ -516,6 +855,17 @@ func buildFilterWhere(params types.RetrieveParams, tableAlias string) []whereCla
 		parts = append(parts, whereClause{
 			clause: tableAlias + ".tag_id IN (" + placeholders(len(params.TagIDs)) + ")",
 			args:   toInterfaceSlice(params.TagIDs),
+		})
+	}
+	if len(params.ExcludeGeneratedQuestionKBIDs) > 0 {
+		parts = append(parts, whereClause{
+			clause: fmt.Sprintf(
+				"NOT (%s.knowledge_base_id IN (%s) AND %s)",
+				tableAlias,
+				placeholders(len(params.ExcludeGeneratedQuestionKBIDs)),
+				types.GeneratedQuestionRowPredicate(tableAlias),
+			),
+			args: toInterfaceSlice(params.ExcludeGeneratedQuestionKBIDs),
 		})
 	}
 	return parts
@@ -599,15 +949,25 @@ func sanitizeFTS5Query(q string) string {
 
 	var parts []string
 	for _, f := range fields {
-		if f != "" {
-			parts = append(parts, `"`+f+`"`)
+		if f == "" {
+			continue
 		}
+		term := `"` + strings.ReplaceAll(f, `"`, `""`) + `"`
+		// The index holds CJK text as bigrams, so a lone Han character
+		// (the 股 of "A股") was never a token; match bigrams starting with it.
+		if runes := []rune(f); len(runes) == 1 && unicode.Is(unicode.Han, runes[0]) {
+			term += "*"
+		}
+		parts = append(parts, term)
 	}
 
 	if len(parts) == 0 {
 		return ""
 	}
 
-	// Use OR because we want fuzzy match across multiple bigrams/words
-	return strings.Join(parts, " OR ")
+	// Use OR because we want fuzzy match across multiple bigrams/words.
+	// Only the content column is searched: the FTS table also indexes
+	// source, chunk, knowledge and KB IDs, so a query for "2023" could match
+	// a UUID fragment.
+	return "content : (" + strings.Join(parts, " OR ") + ")"
 }

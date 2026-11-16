@@ -88,6 +88,14 @@ func (s *privacyEmbeddingSpy) BatchEmbedWithPool(
 	return model.BatchEmbed(ctx, texts)
 }
 
+func (*privacyEmbeddingSpy) AcceptsImages() bool      { return true }
+func (*privacyEmbeddingSpy) ImageLimits() ImageLimits { return ImageLimits{} }
+func (s *privacyEmbeddingSpy) BatchEmbedImages(ctx context.Context, images []Image) ([][]float32, error) {
+	s.ctx = ctx
+	s.recording = trace.SpanFromContext(ctx).IsRecording()
+	return [][]float32{{1}}, nil
+}
+
 func TestSourceContentEmbeddingTelemetryBypassPreservesOrdinary(t *testing.T) {
 	var payload strings.Builder
 	var mu sync.Mutex
@@ -103,6 +111,10 @@ func TestSourceContentEmbeddingTelemetryBypassPreservesOrdinary(t *testing.T) {
 		_, err = wrapper.BatchEmbed(ctx, []string{"PRIVATE_SOURCE_BATCH"})
 		require.NoError(t, err)
 		require.True(t, spy.ctx == ctx)
+		_, err = wrapper.BatchEmbedImages(ctx, []Image{{Data: []byte("PRIVATE_SOURCE_IMAGE")}})
+		require.NoError(t, err)
+		require.True(t, spy.ctx == ctx)
+		require.False(t, spy.recording)
 		_, err = wrapper.BatchEmbedWithPool(ctx, wrapper, []string{"PRIVATE_SOURCE_POOL"})
 		require.NoError(t, err)
 		require.True(t, spy.ctx == ctx)

@@ -39,6 +39,7 @@ func TestMessageMaterialActualHTTPProducerReadSingleConnection(t *testing.T) {
 			&types.Chunk{},
 			&types.Session{},
 			&types.Message{},
+			&types.AgentPrompt{},
 		),
 	)
 	require.NoError(t, db.Exec("PRAGMA journal_mode=WAL").Error)
@@ -202,7 +203,7 @@ func TestMessageMaterialActualHTTPProducerReadSingleConnection(t *testing.T) {
 			c.JSON(code, gin.H{"error": c.Errors.Last().Err.Error()})
 		}
 	})
-	router.GET("/messages/:session_id/load", NewMessageHandler(messages, nil, nil).LoadMessages)
+	router.GET("/messages/:session_id/load", NewMessageHandler(messages, nil, nil, repository.NewAgentPromptRepository(db)).LoadMessages)
 	request := func() *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/messages/"+session.ID+"/load?limit=20", nil))
@@ -226,6 +227,7 @@ func TestMessageMaterialActualHTTPProducerReadSingleConnection(t *testing.T) {
 
 func TestMessageMaterialActualControlledSavedHTTPAndCurrentSourceRevoke(t *testing.T) {
 	f := faqAllReadLeaseFixture(t, "personal_revoke_before_write")
+	require.NoError(t, f.db.AutoMigrate(&types.AgentPrompt{}))
 	f.calls.Store(-10000)
 	require.NoError(t, f.db.Exec("ALTER TABLE messages ADD COLUMN artifacts TEXT").Error)
 	for _, file := range []string{
@@ -322,7 +324,7 @@ func TestMessageMaterialActualControlledSavedHTTPAndCurrentSourceRevoke(t *testi
 			c.JSON(code, gin.H{"error": c.Errors.Last().Err.Error()})
 		}
 	})
-	router.GET("/messages/:session_id/load", NewMessageHandler(messages, nil, nil).LoadMessages)
+	router.GET("/messages/:session_id/load", NewMessageHandler(messages, nil, nil, repository.NewAgentPromptRepository(f.db)).LoadMessages)
 	call := func() *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/messages/"+session.ID+"/load", nil))

@@ -10,10 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Tencent/WeKnora/internal/application/repository"
-
 	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	chatpipeline "github.com/Tencent/WeKnora/internal/application/service/chat_pipeline"
 	"github.com/Tencent/WeKnora/internal/application/service/retriever"
 	"github.com/Tencent/WeKnora/internal/config"
@@ -553,7 +552,7 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 		if gSpan == nil {
 			return
 		}
-		if dingLedger != nil && graphSkipReason != "" {
+		if graphSkipReason != "" {
 			s.tracker().SkipSpan(ctx, gSpan, graphSkipReason)
 		} else if handleErr != nil {
 			if sourcePrivate {
@@ -659,6 +658,21 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 			snapshot.Proof.SourceLineage,
 			templateLineage,
 			check)
+		if errors.Is(err, chatpipeline.ErrModelDeclined) {
+			if snapshot.Knowledge.Channel != types.ConnectorTypeNextcloud {
+				graphSkipReason = "model_declined"
+				graphOut["skipped"] = graphSkipReason
+				return nil
+			}
+			// The Nextcloud generation requires a receipt from the graph backend
+			// even for an empty result. Only the guarded extractor can attest
+			// which model request returned this empty result.
+			if graph != nil && graph.WireDigest != "" && graph.SourceLineage.RequireComplete() == nil &&
+				len(graph.Node) == 0 && len(graph.Relation) == 0 {
+				graphOut["model_declined"] = true
+				err = nil
+			}
+		}
 		if err != nil {
 			handleErr = err
 			return err
@@ -854,8 +868,19 @@ func (s *DataTableSummaryService) Handle(ctx context.Context, t *asynq.Task) err
 
 	logger.Infof(ctx, "Processing table extraction for knowledge: %s", payload.KnowledgeID)
 
+	knowledge, err := s.knowledgeService.GetRepository().GetKnowledgeByID(ctx, payload.TenantID, payload.KnowledgeID)
+	if errors.Is(err, repository.ErrKnowledgeNotFound) {
+		logger.Infof(ctx, "Skipping orphaned table summary task: knowledge %s not found in tenant %d",
+			payload.KnowledgeID, payload.TenantID)
+		return nil
+	}
+	if err != nil {
+		logger.Errorf(ctx, "failed to get knowledge: %v", err)
+		return err
+	}
+
 	// 2. 准备所有必需的资源（知识、模型、引擎等）
-	resources, err := s.prepareResources(ctx, payload)
+	resources, err := s.prepareResources(ctx, payload, knowledge)
 	if err != nil {
 		return err
 	}
@@ -921,14 +946,9 @@ type extractionResources struct {
 func (s *DataTableSummaryService) prepareResources(
 	ctx context.Context,
 	payload DataTableSummaryPayload,
+	knowledge *types.Knowledge,
 ) (*extractionResources, error) {
-	// 获取并验证知识文件
-	knowledge, err := s.knowledgeService.GetRepository().GetKnowledgeByID(ctx, payload.TenantID, payload.KnowledgeID)
-	if err != nil {
-		logger.Errorf(ctx, "failed to get knowledge: %v", err)
-		return nil, err
-	}
-
+	// 验证知识文件
 	if knowledge == nil || knowledge.ID != payload.KnowledgeID || knowledge.TenantID != payload.TenantID {
 		return nil, fmt.Errorf("invalid table summary knowledge scope")
 	}
@@ -1314,6 +1334,9 @@ func (s *DataTableSummaryService) generateTableDescription(ctx context.Context, 
 	if err != nil {
 		return "", fmt.Errorf("failed to generate table description: %w", err)
 	}
+	if _, err := validateSummaryOutput(response); err != nil {
+		return "", fmt.Errorf("failed to generate table description: %w", err)
+	}
 
 	if err := requireActualKnowledgeBuildInput(ctx); err != nil {
 		return "", err
@@ -1343,6 +1366,9 @@ func (s *DataTableSummaryService) generateColumnDescriptions(ctx context.Context
 		Thinking:    &thinking,
 	})
 	if err != nil {
+		return "", fmt.Errorf("failed to generate column descriptions: %w", err)
+	}
+	if _, err := validateSummaryOutput(response); err != nil {
 		return "", fmt.Errorf("failed to generate column descriptions: %w", err)
 	}
 

@@ -333,6 +333,15 @@ func (r *knowledgeRepository) PrepareDingTalkGraph(
 	return savedGraph, err
 }
 
+// A truncated or ambiguous model response must be retried, never settled as a skip.
+func validDingTalkGraphSkipReason(reason string) bool {
+	switch reason {
+	case "graph_backend_disabled", "extract_disabled", "model_declined":
+		return true
+	}
+	return false
+}
+
 func (r *knowledgeRepository) MarkDingTalkGraphOutcome(
 	ctx context.Context,
 	p types.ExtractChunkPayload,
@@ -360,8 +369,7 @@ func (r *knowledgeRepository) MarkDingTalkGraphOutcome(
 		state := "terminal_failed"
 		if skipReason != "" {
 			if success ||
-				(skipReason != "graph_backend_disabled" &&
-					skipReason != "extract_disabled") ||
+				!validDingTalkGraphSkipReason(skipReason) ||
 				(op.Op != "planned" &&
 					op.Op != "queued" &&
 					op.Op != "result_prepared") {

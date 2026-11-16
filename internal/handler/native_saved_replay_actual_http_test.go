@@ -249,6 +249,8 @@ func serveNativeSavedReplay(
 		nil, // fork
 		nil, // rewind
 		nil, // groups
+		nil, // Host project directories.
+		nil, // Background work.
 	)
 	gin.SetMode(gin.TestMode)
 	router := gin.New()

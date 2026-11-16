@@ -3,6 +3,8 @@ package tools
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"sort"
 
@@ -44,6 +46,43 @@ func mcpOwnedToolSnapshot(tool *MCPTool) []byte {
 		Definition   *types.MCPTool
 		Instructions string
 	}{tool.service, tool.mcpTool, tool.serverInstructions})
+}
+
+func mcpSourceDigest(tool *MCPTool) string {
+	digest := sha256.Sum256(tool.sourceSnapshot)
+	return hex.EncodeToString(digest[:])
+}
+
+// MCPSourceBindings retains only fingerprints of server-owned definitions.
+// A tool reference alone does not bind the transport or service instructions.
+func (r *ToolRegistry) MCPSourceBindings() map[string]string {
+	if r == nil {
+		return nil
+	}
+	c := r.mcpCatalog()
+	if c == nil {
+		return nil
+	}
+	bindings := map[string]string{}
+	c.sourceDescribed.Range(func(k, v any) bool { bindings[k.(string)] = v.(string); return true })
+	for _, registered := range r.tools {
+		if t, ok := registered.(*MCPRegisteredTool); ok && len(t.sourceSnapshot) > 0 {
+			bindings[mcpToolRef(t.MCPTool)] = mcpSourceDigest(t.MCPTool)
+		}
+	}
+	return bindings
+}
+
+// RestoreMCPSourceBindings receives the checkpoint loaded by the server.
+// Each call verifies the current authorized tool and matches its fingerprint.
+func (r *ToolRegistry) RestoreMCPSourceBindings(bindings map[string]string) {
+	c := r.mcpCatalog()
+	if c == nil {
+		return
+	}
+	for ref, digest := range bindings {
+		c.sourceDescribed.Store(ref, digest)
+	}
 }
 
 func mcpCopyDefinition(def types.FunctionDefinition) types.FunctionDefinition {
@@ -191,6 +230,12 @@ func mcpSourceResult(ctx context.Context, execution *mcpIndependentTransport, re
 	if json.Unmarshal(mcpSourceJSON(result), &copied2) != nil {
 		return nil, ErrToolSourceLineageUnavailable
 	}
+	// Suspend is set only by the local approval gate and is excluded from
+	// public tool JSON. Keep the authenticated control frame across the clone.
+	if result.Suspend != nil {
+		suspended := *result.Suspend
+		copied2.Suspend = &suspended
+	}
 	copied2.SourceLineage = independentToolInput()
 	return &copied2, execErr
 }
@@ -262,7 +307,7 @@ func (t *MCPDiscoverTool) ExecuteSourceLineage(ctx context.Context,
 				if t.catalog.verifyOwnedTool(current, tool) != nil {
 					return nil, ErrToolSourceLineageUnavailable
 				}
-				t.catalog.sourceDescribed.Store(described.ToolRef, append([]byte(nil), tool.sourceSnapshot...))
+				t.catalog.sourceDescribed.Store(described.ToolRef, mcpSourceDigest(tool))
 			}
 		}
 		for _, returned := range described.Tools {
@@ -306,7 +351,7 @@ func (t *MCPCallTool) ExecuteSourceLineage(ctx context.Context,
 		return nil, ErrToolSourceLineageUnavailable
 	}
 	described, ok := t.catalog.sourceDescribed.Load(mcpToolRef(tool))
-	if !ok || !bytes.Equal(described.([]byte), tool.sourceSnapshot) {
+	if !ok || described != mcpSourceDigest(tool) {
 		return nil, ErrToolSourceLineageUnavailable
 	}
 	execution.target = append([]byte(nil), tool.sourceSnapshot...)
@@ -327,6 +372,12 @@ func (t *MCPRegisteredTool) ExecuteSourceLineage(ctx context.Context,
 	}
 	execution := &mcpIndependentTransport{catalog: t.catalog, configs: configs, target: t.sourceSnapshot}
 	current := mcpIndependentContext(ctx, execution)
+	if meta, ok := ToolExecFromContext(ctx); ok && meta.Answered != nil {
+		bound, exists := t.catalog.sourceDescribed.Load(mcpToolRef(t.MCPTool))
+		if !exists || bound != mcpSourceDigest(t.MCPTool) {
+			return nil, ErrToolSourceLineageUnavailable
+		}
+	}
 	if t.catalog.verifyOwnedTool(current, t.MCPTool) != nil {
 		return nil, ErrToolSourceLineageUnavailable
 	}

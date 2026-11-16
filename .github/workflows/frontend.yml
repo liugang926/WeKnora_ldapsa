@@ -6,6 +6,7 @@ on:
     paths:
       - "frontend/**"
       - "scripts/build_frontend_dist.sh"
+      - "scripts/test_embed_nginx.py"
       - ".github/workflows/frontend.yml"
       - ".github/workflows/docker-image.yml"
       - ".github/workflows/app-image-pr.yml"
@@ -14,6 +15,7 @@ on:
     paths:
       - "frontend/**"
       - "scripts/build_frontend_dist.sh"
+      - "scripts/test_embed_nginx.py"
       - ".github/workflows/frontend.yml"
       - ".github/workflows/docker-image.yml"
       - ".github/workflows/app-image-pr.yml"
@@ -74,3 +76,6 @@ jobs:
             --build-arg VITE_FRONTEND_COMMIT="${GITHUB_SHA::7}" \
             -t weknora-ui:ci \
             frontend/
+
+      - name: Test embed and MCP proxy routes
+        run: python3 scripts/test_embed_nginx.py weknora-ui:ci

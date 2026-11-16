@@ -88,29 +88,6 @@ func questionProducerControls(cfg *config.Config, p types.QuestionGenerationPayl
 	}
 }
 
-func imageProducerControls(p types.ImageMultimodalPayload) any {
-	return struct {
-		Tenant                                               uint64
-		KB, KG, Parent, URL, Local, Digest, Language, Source string
-		OCR, Caption                                         bool
-		Attempt, Index                                       int
-	}{
-		p.TenantID,
-		p.KnowledgeBaseID,
-		p.KnowledgeID,
-		p.ChunkID,
-		p.ImageURL,
-		p.ImageLocalPath,
-		p.ImageDigest,
-		p.Language,
-		p.ImageSourceType,
-		p.EnableOCR,
-		p.EnableCaption,
-		p.Attempt,
-		p.ImageIndex,
-	}
-}
-
 func resumeKnowledgeEnrichment(
 	ctx context.Context,
 	reader interfaces.KnowledgeBuildInputReader,

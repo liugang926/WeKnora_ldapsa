@@ -137,3 +137,39 @@ func TestHybridSearchOutputBoundaryRejectsRevokedShare(t *testing.T) {
 	require.NotContains(t, w.Body.String(), "shared secret")
 	assertLeaseReleased(t, db)
 }
+
+type revocableHybridSnapshots struct {
+	access.NextcloudLineageSnapshotLookup
+	checks int
+}
+
+func (s *revocableHybridSnapshots) RecheckNextcloudSourceLineage(context.Context, *types.SourceLineage) (bool, error) {
+	s.checks++
+	return s.checks < 3, nil
+}
+
+func TestHybridSearchRechecksOrdinaryHitDependingOnWithdrawnSource(t *testing.T) {
+	t.Setenv("WEKNORA_NEXTCLOUD_READ_AUTHORITY", "")
+	db := leaseHandlerDB(t)
+	row := leaseHandlerKnowledge(t)
+	lineage, err := types.NewCompleteSourceLineage(types.SourceIdentity{
+		Provider: types.ConnectorTypeNextcloud, TenantID: 7, KnowledgeBaseID: row.KnowledgeBaseID,
+		DataSourceID: "source-1", PairOperationID: "pair", InstanceID: "instance", BindingID: "binding",
+		FileID: "1", ExternalID: "nextcloud:instance:1", KnowledgeID: row.ID, Revision: 1, ETag: "v1",
+	})
+	require.NoError(t, err)
+	snapshots := &revocableHybridSnapshots{}
+	h := &KnowledgeBaseHandler{
+		service: &hybridOutputKBService{
+			kb:      &types.KnowledgeBase{ID: "kb-1", TenantID: 7},
+			results: []*types.SearchResult{{KnowledgeID: "ordinary", KnowledgeBaseID: "kb-1", Content: "hidden expansion", SourceLineage: lineage}},
+		},
+		knowledgeService: &hybridOutputKnowledgeService{row: row},
+		sourceSnapshots:  snapshots, contentLeases: repository.NewNextcloudContentLeaseStore(db),
+	}
+	response := runHybridOutputRequest(t, h)
+	require.GreaterOrEqual(t, snapshots.checks, 3)
+	require.Equal(t, http.StatusForbidden, response.Code)
+	require.NotContains(t, response.Body.String(), "hidden expansion")
+	assertLeaseReleased(t, db)
+}

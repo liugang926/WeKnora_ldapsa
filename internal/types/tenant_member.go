@@ -128,13 +128,13 @@ type Membership struct {
 // the model directly would leak DeletedAt/UpdatedAt and lock the DB
 // schema into the public API. Use this for `/tenants/:id/members` only.
 type TenantMemberResponse struct {
-	UserID      string             `json:"user_id"`
-	Email       string             `json:"email"`
-	Username    string             `json:"username"`
+	UserID      string             `json:"user_id" extensions:"x-agent"`
+	Email       string             `json:"email" extensions:"x-agent"`
+	Username    string             `json:"username" extensions:"x-agent"`
 	DisplayName string             `json:"display_name,omitempty"`
 	Avatar      string             `json:"avatar,omitempty"`
-	Role        TenantRole         `json:"role"`
-	Status      TenantMemberStatus `json:"status"`
+	Role        TenantRole         `json:"role" extensions:"x-agent"`
+	Status      TenantMemberStatus `json:"status" extensions:"x-agent"`
 	InvitedBy   *string            `json:"invited_by,omitempty"`
-	JoinedAt    time.Time          `json:"joined_at"`
+	JoinedAt    time.Time          `json:"joined_at" extensions:"x-agent"`
 }

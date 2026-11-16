@@ -51,7 +51,7 @@ func TestIMLegacySessionOwnerNeverAdopted(t *testing.T) {
 			"_id) VALUES('map',42,'channel','dingtalk','first','chat"+
 			"','thread','session','agent')").Error)
 	msg := &IncomingMessage{Platform: PlatformDingtalk, UserID: "second", ChatID: "chat", ThreadID: "thread"}
-	ctx := withIMIdentity(context.Background(), 42, "channel", msg)
+	ctx := withIMIdentity(context.Background(), ch, msg)
 	owner := imChannelSessionOwner(ch, msg)
 	ctx = types.WithIMChannelScope(ctx,
 		types.IMChannelScope{

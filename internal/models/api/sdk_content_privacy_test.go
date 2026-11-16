@@ -18,7 +18,6 @@ import (
 	"github.com/Tencent/WeKnora/internal/models/api/googlegenai"
 	"github.com/Tencent/WeKnora/internal/models/api/openaicompletions"
 	"github.com/Tencent/WeKnora/internal/models/api/openairesponses"
-	"github.com/Tencent/WeKnora/internal/models/catalog"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
@@ -42,7 +41,7 @@ func sourcePrivacySDKWires() []privacySDKWire {
 			name: "openaicompletions",
 			newClient: func(endpoint api.Endpoint) privacySDKChat {
 				return openaicompletions.New(
-					openaicompletions.Config{Endpoint: endpoint, Settings: catalog.DefaultOpenAICompletions()},
+					openaicompletions.Config{Endpoint: endpoint, Settings: api.DefaultOpenAICompletions()},
 				)
 			},
 			response: ("{\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\"" +
@@ -57,7 +56,7 @@ func sourcePrivacySDKWires() []privacySDKWire {
 			name: "openairesponses",
 			newClient: func(endpoint api.Endpoint) privacySDKChat {
 				return openairesponses.New(
-					openairesponses.Config{Endpoint: endpoint, Settings: catalog.DefaultOpenAIResponses()},
+					openairesponses.Config{Endpoint: endpoint, Settings: api.DefaultOpenAIResponses()},
 				)
 			},
 			response: ("{\"id\":\"controlled-response\",\"status\":\"completed\",\"output\":[{\"ty" +
@@ -80,7 +79,7 @@ func sourcePrivacySDKWires() []privacySDKWire {
 			name: "anthropicmessages",
 			newClient: func(endpoint api.Endpoint) privacySDKChat {
 				return anthropicmessages.New(
-					anthropicmessages.Config{Endpoint: endpoint, Settings: catalog.DefaultAnthropicMessages()},
+					anthropicmessages.Config{Endpoint: endpoint, Settings: api.DefaultAnthropicMessages()},
 				)
 			},
 			response: ("{\"id\":\"controlled-response\",\"type\":\"message\",\"role\":\"assistant" +
@@ -112,7 +111,7 @@ func sourcePrivacySDKWires() []privacySDKWire {
 			name: "googlegenai",
 			newClient: func(endpoint api.Endpoint) privacySDKChat {
 				return googlegenai.New(
-					googlegenai.Config{Endpoint: endpoint, Settings: catalog.DefaultGoogleGenerativeAI()},
+					googlegenai.Config{Endpoint: endpoint, Settings: api.DefaultGoogleGenerativeAI()},
 				)
 			},
 			response: ("{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"L" +

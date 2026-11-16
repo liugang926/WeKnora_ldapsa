@@ -20,6 +20,17 @@ type Neo4jRepository struct {
 	nodePrefix string
 }
 
+const (
+	// graphSearchMaxSeedNodes bounds how many entities a single graph search
+	// expands from. The match is a substring match, so this is the knob that
+	// keeps one vague entity name from pulling in the whole graph.
+	graphSearchMaxSeedNodes = 200
+	// graphSearchMaxRows bounds returned (node, relation) rows as a backstop
+	// for hub entities whose neighbourhood alone is huge.
+	graphSearchMaxRows = 2000
+)
+
+// NewNeo4jRepository creates a new Neo4j repository
 func NewNeo4jRepository(driver neo4j.Driver) interfaces.RetrieveGraphRepository {
 	return &Neo4jRepository{driver: driver, nodePrefix: "ENTITY"}
 }
@@ -315,16 +326,15 @@ func (n *Neo4jRepository) SearchNode(
 		}
 		result, err := tx.Run(ctx, `MATCH (n:`+n.Label(namespace)+`) WHERE ($kg='' OR n.kg=$kg)
 			OPTIONAL MATCH (n)-[r]-(m:`+n.Label(namespace)+`)
-			RETURN n,r,m,startNode(r) AS source,endNode(r) AS target,
-			 ANY(text IN $names WHERE n.name CONTAINS text) AS matched LIMIT $limit`,
-			map[string]any{"kg": namespace.Knowledge, "names": names, "limit": graphReadLimit + 1})
+			RETURN n,r,m,startNode(r) AS source,endNode(r) AS target LIMIT $limit`,
+			map[string]any{"kg": namespace.Knowledge, "limit": graphReadLimit + 1})
 		if err != nil {
 			return nil, err
 		}
-		nodeSeen := map[string]bool{}
-		edgeSeen := map[string]bool{}
+		nodesByID := map[string]*types.GraphNode{}
+		edgesByID := map[string]*types.GraphRelation{}
 		count := 0
-		addNode := func(raw neo4j.Node, matched bool) error {
+		addNode := func(raw neo4j.Node) error {
 			node, err := decodeNode(raw)
 			if err != nil {
 				return err
@@ -342,10 +352,7 @@ func (n *Neo4jRepository) SearchNode(
 			if err != nil {
 				return err
 			}
-			if matched && !nodeSeen[raw.ElementId] {
-				nodeSeen[raw.ElementId] = true
-				graph.Node = append(graph.Node, node)
-			}
+			nodesByID[raw.ElementId] = node
 			return nil
 		}
 		for result.Next(ctx) {
@@ -359,12 +366,7 @@ func (n *Neo4jRepository) SearchNode(
 			if !ok {
 				return nil, types.ErrGraphSourceReceiptUnknown
 			}
-			matchValue, _ := record.Get("matched")
-			matched, ok := matchValue.(bool)
-			if !ok {
-				return nil, types.ErrGraphSourceReceiptUnknown
-			}
-			if err := addNode(raw, matched); err != nil {
+			if err := addNode(raw); err != nil {
 				return nil, err
 			}
 			rv, _ := record.Get("r")
@@ -382,10 +384,10 @@ func (n *Neo4jRepository) SearchNode(
 			if !sok || !tok {
 				return nil, types.ErrGraphSourceReceiptUnknown
 			}
-			if err := addNode(source, matched); err != nil {
+			if err := addNode(source); err != nil {
 				return nil, err
 			}
-			if err := addNode(target, matched); err != nil {
+			if err := addNode(target); err != nil {
 				return nil, err
 			}
 			edge, err := decodeEdge(rel, source, target)
@@ -401,13 +403,36 @@ func (n *Neo4jRepository) SearchNode(
 			if err != nil {
 				return nil, err
 			}
-			if matched && !edgeSeen[rel.ElementId] {
-				edgeSeen[rel.ElementId] = true
-				graph.Relation = append(graph.Relation, edge)
-			}
+			edgesByID[rel.ElementId] = edge
 		}
 		if err := result.Err(); err != nil {
 			return nil, err
+		}
+		// Rank only verified instances. An orphan anywhere in the scope already
+		// failed the provenance scan, including when the seed has no matches.
+		query, params := graphSearchCypher(n.Label(namespace), names)
+		params["kg"] = namespace.Knowledge
+		ranked, err := tx.Run(ctx, query, params)
+		if err != nil {
+			return nil, err
+		}
+		projection, err := decodeGraphSearchResult(ctx, ranked)
+		if err != nil {
+			return nil, err
+		}
+		for _, node := range projection.Node {
+			verified := nodesByID[node.ID]
+			if verified == nil || verified.Name != node.Name || verified.SourceReceipt.KnowledgeID != node.KnowledgeID {
+				return nil, types.ErrGraphSourceReceiptUnknown
+			}
+			graph.Node = append(graph.Node, verified)
+		}
+		for _, edge := range projection.Relation {
+			verified := edgesByID[edge.ID]
+			if verified == nil || verified.SourceID != edge.SourceID || verified.TargetID != edge.TargetID {
+				return nil, types.ErrGraphSourceReceiptUnknown
+			}
+			graph.Relation = append(graph.Relation, verified)
 		}
 		if _, err := types.ValidateGraphMaterial(graph); err != nil {
 			return nil, err
@@ -477,7 +502,7 @@ func decodeNode(raw neo4j.Node) (*types.GraphNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	node := &types.GraphNode{Name: name, Chunks: chunks, Attributes: attributes, SourceReceipt: receipt}
+	node := &types.GraphNode{Name: name, Chunks: chunks, Attributes: attributes, SourceReceipt: receipt, ID: raw.ElementId, KnowledgeID: kg}
 	if err := types.CheckGraphNodeReceipt(types.NameSpace{KnowledgeBase: kb, Knowledge: kg}, node); err != nil {
 		return nil, err
 	}
@@ -520,7 +545,7 @@ func decodeEdge(raw neo4j.Relationship, source, target neo4j.Node) (*types.Graph
 	if err != nil {
 		return nil, err
 	}
-	edge := &types.GraphRelation{Node1: name1, Node2: name2, Type: kind, SourceReceipt: receipt}
+	edge := &types.GraphRelation{Node1: name1, Node2: name2, Type: kind, SourceReceipt: receipt, ID: raw.ElementId, SourceID: source.ElementId, TargetID: target.ElementId}
 	if err := types.CheckGraphRelationReceipt(types.NameSpace{KnowledgeBase: kb, Knowledge: kg}, edge); err != nil {
 		return nil, err
 	}
@@ -534,6 +559,136 @@ func decodeEdge(raw neo4j.Relationship, source, target neo4j.Node) (*types.Graph
 		return nil, types.ErrGraphSourceReceiptUnknown
 	}
 	return edge, nil
+}
+
+// decodeGraphSearchResult keeps document instances distinct and restores the
+// stored direction even when the seed is the target of an undirected match.
+func decodeGraphSearchResult(ctx context.Context, result neo4j.Result) (*types.GraphData, error) {
+	graph := &types.GraphData{}
+	nodeSeen := make(map[string]*types.GraphNode)
+	relationSeen := make(map[string]bool)
+	for result.Next(ctx) {
+		record := result.Record()
+		if record == nil {
+			return nil, fmt.Errorf("graph query returned a nil record")
+		}
+		n, _, err := neo4j.GetRecordValue[neo4j.Node](record, "n")
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode graph seed: %w", err)
+		}
+		m, _, err := neo4j.GetRecordValue[neo4j.Node](record, "m")
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode graph neighbour: %w", err)
+		}
+		r, _, err := neo4j.GetRecordValue[neo4j.Relationship](record, "r")
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode graph relationship: %w", err)
+		}
+		// Keep the matched seed first for evidence ranking, independently of direction.
+		for _, node := range []neo4j.Node{n, m} {
+			if nodeSeen[node.ElementId] != nil {
+				continue
+			}
+			decoded, err := decodeGraphNode(node)
+			if err != nil {
+				return nil, err
+			}
+			nodeSeen[node.ElementId] = decoded
+			graph.Node = append(graph.Node, decoded)
+		}
+		source, target := n, m
+		if r.StartElementId == m.ElementId && r.EndElementId == n.ElementId {
+			source, target = m, n
+		} else if r.StartElementId != n.ElementId || r.EndElementId != m.ElementId {
+			return nil, fmt.Errorf("graph relationship %q does not connect its returned endpoints", r.ElementId)
+		}
+		if r.ElementId == "" {
+			return nil, fmt.Errorf("graph relationship has no element identity")
+		}
+		if !relationSeen[r.ElementId] {
+			relationSeen[r.ElementId] = true
+			graph.Relation = append(graph.Relation, &types.GraphRelation{
+				Node1: nodeSeen[source.ElementId].Name, Node2: nodeSeen[target.ElementId].Name, Type: r.Type,
+				ID: r.ElementId, SourceID: source.ElementId, TargetID: target.ElementId,
+			})
+		}
+	}
+	if err := result.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read graph query results: %w", err)
+	}
+	return graph, nil
+}
+
+func decodeGraphNode(node neo4j.Node) (*types.GraphNode, error) {
+	name, ok := node.Props["name"].(string)
+	if node.ElementId == "" || !ok || name == "" {
+		return nil, fmt.Errorf("graph node %q has no identity or name", node.ElementId)
+	}
+	chunks, ok := node.Props["chunks"].([]any)
+	if !ok && node.Props["chunks"] != nil {
+		return nil, fmt.Errorf("graph node %q has invalid chunks", node.ElementId)
+	}
+	attributes, ok := node.Props["attributes"].([]any)
+	if !ok && node.Props["attributes"] != nil {
+		return nil, fmt.Errorf("graph node %q has invalid attributes", node.ElementId)
+	}
+	knowledgeID, _ := node.Props["kg"].(string)
+	return &types.GraphNode{
+		Name: name, Chunks: listI2listS(chunks), Attributes: listI2listS(attributes),
+		ID: node.ElementId, KnowledgeID: knowledgeID,
+	}, nil
+}
+
+// graphSearchCypher builds the bounded graph-search query and its parameters
+// for one label expression and one set of entity names.
+//
+// The WHERE clause is a substring match, so a short entity name (or one that is
+// a component of many others) matches a large slice of the graph: without a
+// bound this returned 1309 nodes / 1917 relations for a single query, which
+// then exceeded the reranker's per-request limit and made chunk_merge walk the
+// entire set. Three rules keep the caps from deciding the result by accident:
+//
+//   - Only entities that have at least one relationship can seed an expansion —
+//     a relation-less match occupies one of the seed slots and then contributes
+//     nothing.
+//   - Exact name matches rank first, then the shortest names, then alphabetical
+//     order. Ordering by name alone lets an entity whose name *is* the query
+//     fall outside the cap once the substring matches exceed it.
+//   - The seed order is carried into the row LIMIT, so a truncated result keeps the
+//     neighbourhoods of the highest-ranked seeds rather than an arbitrary
+//     subset of the rows.
+//
+// Each edge is expanded only from its earliest seed, so duplicate endpoint
+// matches cannot consume the row cap. Only the bounded seed list is collected;
+// grouping every candidate relationship would require unbounded working memory.
+func graphSearchCypher(labelExpr string, nodes []string) (string, map[string]interface{}) {
+	query := `
+		MATCH (n:` + labelExpr + `)
+		WHERE ANY(nodeText IN $nodes WHERE n.name CONTAINS nodeText)
+		  AND EXISTS { (n)--() } AND ($kg='' OR n.kg=$kg)
+		WITH n,
+		     CASE WHEN n.name IN $nodes THEN 0 ELSE 1 END AS seed_rank,
+		     size(n.name) AS name_len,
+		     n.name AS name
+		ORDER BY seed_rank, name_len, name, n.kg, elementId(n)
+		LIMIT $maxSeedNodes
+		WITH collect(n) AS seeds
+		UNWIND range(0, size(seeds) - 1) AS seed_index
+		WITH seeds[seed_index] AS n, seeds[0..seed_index] AS earlier_seeds, seed_index
+		MATCH (n)-[r]-(m:` + labelExpr + `)
+		WHERE NOT m IN earlier_seeds AND ($kg='' OR m.kg=$kg)
+		WITH n, r, m, seed_index
+		ORDER BY seed_index, elementId(r)
+		LIMIT $maxRows
+		RETURN n, r, m
+	`
+	params := map[string]interface{}{
+		"nodes":        nodes,
+		"kg":           "",
+		"maxSeedNodes": graphSearchMaxSeedNodes,
+		"maxRows":      graphSearchMaxRows,
+	}
+	return query, params
 }
 
 func listI2listS(list []any) []string {

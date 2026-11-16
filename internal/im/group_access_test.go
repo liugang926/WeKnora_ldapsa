@@ -53,8 +53,7 @@ func TestAuthorizeIMAgentUse(t *testing.T) {
 	)
 	ctx := withIMIdentity(
 		context.Background(),
-		tenantID,
-		"channel-1",
+		&IMChannel{TenantID: tenantID, ID: "channel-1"},
 		&IncomingMessage{Platform: PlatformFeishu, UserID: "external-user-1"},
 	)
 

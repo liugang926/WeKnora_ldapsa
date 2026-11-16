@@ -2,6 +2,7 @@ package im
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -48,7 +49,7 @@ func TestIMAuthorizationReloadsChannelAndAgent(t *testing.T) {
 	}
 	svc := &Service{db: db, agentService: &stubIMAgentService{agent: agent}, sessionService: imScopeResolverStub{}}
 	msg := &IncomingMessage{Platform: PlatformDingtalk, UserID: "sender"}
-	ctx := withIMIdentity(context.Background(), 42, "channel", msg)
+	ctx := withIMIdentity(context.Background(), channel, msg)
 	authorized, _, err := svc.authorizeChannelContext(ctx, channel, msg)
 	require.NoError(t, err)
 	scope, ok := types.IMChannelScopeFromContext(authorized)
@@ -94,7 +95,8 @@ func TestIMChannelSessionOwnerIsolation(t *testing.T) {
 
 type imSearchCapture struct {
 	interfaces.SessionService
-	ids []string
+	ids     []string
+	results []*types.SearchResult
 }
 
 func (c *imSearchCapture) SearchKnowledge(
@@ -102,19 +104,18 @@ func (c *imSearchCapture) SearchKnowledge(
 	ids,
 	_ []string,
 	_ []types.TagScope,
-	_ string) ([]*types.SearchResult,
-	error,
-) {
+	_ string,
+	_ *types.KnowledgeSearchOptions,
+) (*types.RetrievalResult, error) {
 	c.ids = ids
-	return nil, nil
+	return &types.RetrievalResult{Results: c.results}, nil
 }
 
 func TestIMSearchUsesExactChannelScopeIncludingShares(t *testing.T) {
 	capture := &imSearchCapture{}
 	command := newSearchCommand(capture, nil)
 	base := withIMIdentity(context.Background(),
-		42,
-		"channel",
+		&IMChannel{TenantID: 42, ID: "channel"},
 		&IncomingMessage{
 			Platform: PlatformDingtalk,
 			UserID:   "sender",
@@ -138,4 +139,31 @@ func TestIMSearchUsesExactChannelScopeIncludingShares(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, capture.ids, len(ids))
 	}
+}
+
+func TestIMSearchRechecksAccessBeforePublishing(t *testing.T) {
+	capture := &imSearchCapture{results: []*types.SearchResult{{KnowledgeBaseID: "own", Content: "ordinary search result"}}}
+	command := newSearchCommand(capture, nil)
+	base := withIMIdentity(context.Background(), &IMChannel{TenantID: 42, ID: "channel"},
+		&IncomingMessage{Platform: PlatformDingtalk, UserID: "sender"})
+	allowed := true
+	ctx := types.WithIMChannelScope(base, types.IMChannelScope{
+		TenantID: 42, AgentID: "agent", KnowledgeBases: map[string]uint64{"own": 42},
+		Verify: func(_ context.Context, _ uint64, kind types.ResourceType, _ string, _ types.ResourceAction) error {
+			if kind == types.GroupResourceTypeKnowledgeBase && !allowed {
+				return errors.New("revoked")
+			}
+			return nil
+		},
+	})
+	reply, err := command.Execute(ctx, &CommandContext{}, []string{"question"})
+	require.NoError(t, err)
+	require.Contains(t, reply.Content, "ordinary search result")
+	require.NoError(t, reply.checkPublication(ctx))
+	allowed = false
+	require.Error(t, reply.checkPublication(ctx))
+	allowed = true
+	capture.results[0].KnowledgeBaseID = "outside"
+	_, err = command.Execute(ctx, &CommandContext{}, []string{"question"})
+	require.Error(t, err)
 }

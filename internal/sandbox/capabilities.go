@@ -14,9 +14,23 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/gorilla/websocket"
+)
+
+var (
+	// ErrSharedSandbox is returned when the session lives on its owner's shared
+	// machine, so destroying its sandbox would destroy every sibling session's
+	// workspace. Delete the session workspace instead.
+	ErrSharedSandbox = errors.New("sandbox: session shares its owner's machine")
+	// ErrSessionWorkspaceBusy is returned when the session's workspace is held
+	// exclusively, or has operations that an exclusive request must not cut off.
+	ErrSessionWorkspaceBusy = errors.New("sandbox: session workspace is busy")
+	// ErrUserAllocationRejected is returned when a stored user-mode assignment's
+	// owner identity is not, or is no longer, eligible to share a machine.
+	ErrUserAllocationRejected = errors.New("sandbox: user-mode allocation rejected for this owner")
 )
 
 // SessionShellExecutor executes ad-hoc shell commands inside a session-
@@ -92,9 +106,17 @@ type SessionCapabilityProvider interface {
 	SessionFileStore() SessionFileStore
 }
 
+// SessionWorkspaceLayoutProvider is implemented by managers that can describe
+// their session workspace. Tools resolve it once per Execute from the
+// session sandbox, not from a tool-instance field.
+type SessionWorkspaceLayoutProvider interface {
+	SessionWorkspaceLayout(ctx context.Context, sessionID string) (WorkspaceLayout, error)
+}
+
 // SessionInstallShellExecutor runs install/maintenance shell commands with
 // their own bootstrap and working-directory scope. Ordinary shell execution
-// stays inside its session sandbox but is not limited to /workspace.
+// stays inside its session sandbox: anywhere in a remote container, and the
+// layout's writable roots on a host workspace.
 type SessionInstallShellExecutor interface {
 	ExecShellCommandWithOptions(
 		ctx context.Context,
@@ -188,11 +210,11 @@ type SessionDesktopProvider interface {
 	SessionDesktopManager() SessionDesktopManager
 }
 
-// SessionTurnHolder marks the start and end of one chat turn on a session's
-// sandbox. While the turn is open, a stale image mark waits: the first
-// resolve of the turn may rebuild, later resolves of the same turn keep the
-// sandbox so /workspace scratch and in-flight execs survive an admin install.
+// SessionTurnHolder marks one chat turn on a session's sandbox.
 type SessionTurnHolder interface {
-	BeginSessionTurn(ctx context.Context, sessionID string) error
-	EndSessionTurn(ctx context.Context, sessionID string) error
+	// BeginSessionTurn opens one turn hold. Run the turn with the returned
+	// context: on a shared machine it carries this hold's admission member,
+	// so the turn's own tool calls do not wait for it, and it ends if the
+	// registration is lost. end closes exactly this hold; call it once.
+	BeginSessionTurn(ctx context.Context, sessionID string) (turnCtx context.Context, end func(), err error)
 }

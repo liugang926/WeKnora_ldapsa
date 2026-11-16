@@ -473,6 +473,7 @@ func (s *steerSink) PersistSteerMaterial(
 		) {
 		return "", nil, nil, nil, access.ErrNextcloudPublicationDenied
 	}
+	defer s.releaseOriginalSteerPoll(steer)
 	if err := held.check(); err != nil {
 		return "", nil, nil, nil, err
 	}
@@ -506,13 +507,7 @@ func (s *steerSink) PersistSteerMaterial(
 	s.originalCloses = append(s.originalCloses, closeRead6)
 	s.lastUserMessageID = message.ID
 	s.injectedIDs[steer] = struct{}{}
-	delete(s.originalInputs, steer)
-	pollCloses := s.originalPollCloses
-	s.originalPollCloses = nil
 	s.mu.Unlock()
-	for _, close := range pollCloses {
-		close()
-	}
 	_, _ = s.streamManager.UpdateSteerEventData(
 		ctx,
 		session,
@@ -527,6 +522,19 @@ func (s *steerSink) PersistSteerMaterial(
 	)
 	lineage, _ := types.UnionSourceLineage(message.SourceLineage)
 	return message.ID, lineage, check, closeRead6, nil
+}
+
+// A deferred write is polled afresh at the next boundary. Release the old
+// selection lease on every consume attempt, including a rolled-back write.
+func (s *steerSink) releaseOriginalSteerPoll(steer string) {
+	s.mu.Lock()
+	delete(s.originalInputs, steer)
+	closes := s.originalPollCloses
+	s.originalPollCloses = nil
+	s.mu.Unlock()
+	for _, closeRead := range closes {
+		closeRead()
+	}
 }
 
 func (s *steerSink) CheckOriginalSteerInputs(context.Context) error {

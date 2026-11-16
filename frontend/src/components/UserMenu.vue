@@ -1,14 +1,14 @@
 <template>
   <div class="user-menu" :class="{ 'user-menu--collapsed': uiStore.sidebarCollapsed }" ref="menuRef">
+    <div class="user-bar">
     <!-- 用户按钮 -->
     <div class="user-button" data-guide="user-menu" @click="toggleMenu">
       <div class="user-avatar">
         <img v-if="userAvatar" :src="userAvatar" :alt="$t('common.avatar')" />
         <span v-else class="avatar-placeholder">{{ userInitial }}</span>
       </div>
-      <template v-if="!uiStore.sidebarCollapsed">
-        <div class="user-info">
-          <!-- 多空间 / superuser：首行空间名，次行显示名称 · 角色。单空间：显示名称 + 账号。 -->
+      <div v-if="!uiStore.sidebarCollapsed" class="user-info">
+          <!-- 多空间 / superuser：首行空间名，次行 username · 角色。单空间：昵称 + 邮箱。 -->
           <template v-if="showTenantIdentityLine">
             <div class="user-tenant-name" :title="activeTenantName">{{ activeTenantName }}</div>
             <div class="user-tenant-meta">
@@ -24,9 +24,27 @@
             <div v-if="userSecondary" class="user-email">{{ userSecondary }}</div>
           </template>
         </div>
-        <t-icon :name="menuVisible ? 'chevron-up' : 'chevron-down'" class="dropdown-icon" />
-      </template>
     </div>
+    <GlobalInvitationBell v-if="!uiStore.sidebarCollapsed" v-slot="{ count, open }">
+      <t-tooltip :content="t('notifications.title')" placement="top">
+        <button type="button" class="user-notify" :class="{ 'is-open': open }"
+          :aria-label="t('notifications.title')" @click.stop>
+          <t-badge :count="count" :max-count="99" size="small" :offset="[2, -2]">
+            <t-icon name="notification" size="16px" />
+          </t-badge>
+        </button>
+      </t-tooltip>
+    </GlobalInvitationBell>
+    </div>
+    <GlobalInvitationBell v-if="uiStore.sidebarCollapsed" v-slot="{ count, open }">
+      <t-tooltip :content="t('notifications.title')" placement="right">
+        <button type="button" class="user-notify" :class="{ 'is-open': open }"
+          :aria-label="t('notifications.title')" @click.stop>
+          <t-icon name="notification" size="16px" />
+          <i v-if="count > 0" class="user-notify__dot" aria-hidden="true" />
+        </button>
+      </t-tooltip>
+    </GlobalInvitationBell>
 
     <!-- 下拉菜单 -->
     <Transition name="dropdown">
@@ -95,10 +113,6 @@
         <div v-if="canManageModels" class="menu-item" @click="handleQuickNav('models')">
           <t-icon name="control-platform" class="menu-icon" />
           <span>{{ $t('settings.modelManagement') }}</span>
-        </div>
-        <div v-if="canManageSkills" class="menu-item" @click="handleQuickNav('skills')">
-          <t-icon :name="SKILL_ICON" class="menu-icon" />
-          <span>{{ $t('settings.skills.title') }}</span>
         </div>
         <div class="menu-divider"></div>
         <div v-if="canAccessSettingsShortcuts" class="menu-item" @click="handleSettings">
@@ -210,9 +224,10 @@ import { useRouter } from 'vue-router'
 import { useUIStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { getCurrentUser, logout as logoutApi, userInfoFromApi } from '@/api/auth'
+import { logout as logoutApi } from '@/api/auth'
 import { useI18n } from 'vue-i18n'
 import CreateTenantDialog from '@/components/CreateTenantDialog.vue'
+import GlobalInvitationBell from '@/components/GlobalInvitationBell.vue'
 import {
   navigateAfterTenantSwitch,
   persistLastActiveTenantPreference,
@@ -224,8 +239,7 @@ import { getRootZoom, rectToCssPx, cssViewportSize } from '@/utils/zoom'
 import { openNewUserGuide } from '@/config/contextualGuides'
 import { SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE } from '@/config/settingsAccess'
 import { isMenuAdminUser } from '@/stores/menuVisibility'
-import { SKILL_ICON } from '@/types/mention'
-
+import { docsUrl } from '@/utils/docsUrl'
 const { t } = useI18n()
 
 const router = useRouter()
@@ -278,13 +292,6 @@ const canManageModels = computed(() =>
     authStore.isSystemAdmin ||
     authStore.hasRole(SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE.models)),
 )
-const canManageSkills = computed(() =>
-  canAccessSettingsShortcuts.value &&
-  (authStore.canAccessAllTenants ||
-    authStore.isSystemAdmin ||
-    authStore.hasRole(SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE.skills)),
-)
-
 const menuRef = ref<HTMLElement>()
 const tenantMenuItemRef = ref<HTMLElement>()
 const menuVisible = ref(false)
@@ -524,7 +531,7 @@ const reopenGuide = () => {
 
 const openDocs = () => {
   menuVisible.value = false
-  window.open('https://github.com/Tencent/WeKnora/tree/main/docs', '_blank')
+  window.open(docsUrl('home'), '_blank')
 }
 
 // 打开 GitHub
@@ -554,42 +561,13 @@ const handleLogout = async () => {
   router.push('/login')
 }
 
-// 加载用户信息
+// 校准用户信息：本次会话已经用 /auth/me 校准过（main.ts 启动、登录流程）
+// 就直接复用 store；只有自动初始化等没走过 /auth/me 的路径才会真的发请求。
+// 落库逻辑（user / tenant / memberships / capabilities）统一在 auth store 里，
+// 这里不再手写一份字段拷贝。
 const loadUserInfo = async () => {
   try {
-    const response = await getCurrentUser()
-    if (response.success && response.data && response.data.user) {
-      const user = response.data.user
-      // 同时更新 authStore 中的用户信息，确保包含 can_access_all_tenants /
-      // is_system_admin 等所有字段。MUST 走 userInfoFromApi 工厂——历史
-      // 上这里手写字段白名单，每加一个 user 字段都要在 5 个 setUser 调用
-      // 点同步，is_system_admin 就因为漏了这一处导致进入 platform 后
-      // user.value 的字段被 mount 时的 loadUserInfo 静默覆盖回 undefined
-      // （同时污染 localStorage），系统管理入口在 hover 工作空间触发
-      // refreshFromAuthMe 后才出现。新增字段请只改 userInfoFromApi。
-      authStore.setUser(userInfoFromApi(user))
-      // 如果返回了空间信息，也更新空间信息；tenantless 用户（/auth/me
-      // 无 tenant）必须显式清空，否则会残留上一账号/上一会话的空间快照。
-      if (response.data.tenant) {
-        authStore.setTenant({
-          id: String(response.data.tenant.id),
-          name: response.data.tenant.name,
-          owner_id: user.id,
-          created_at: response.data.tenant.created_at,
-          updated_at: response.data.tenant.updated_at
-        })
-      } else {
-        authStore.setTenant(null)
-      }
-      const membershipsSync = response.data.memberships
-      if (Array.isArray(membershipsSync)) {
-        authStore.setMemberships(membershipsSync)
-      }
-      const canCreateTenant = response.data.capabilities?.can_create_tenant
-      if (typeof canCreateTenant === 'boolean') {
-        authStore.setCanCreateTenant(canCreateTenant)
-      }
-    }
+    await authStore.ensureAuthMe()
   } catch (error) {
     console.error('Failed to load user info:', error)
   }
@@ -622,10 +600,25 @@ onUnmounted(() => {
   width: 100%;
 
   &--collapsed {
-    .user-button {
+    display: flex;
+    flex-direction: column-reverse;
+    align-items: center;
+    gap: 4px;
+
+    .user-bar {
+      width: auto;
       justify-content: center;
-      padding: 6px 3px;
+    }
+
+    .user-button {
+      flex: none;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      margin: 0 auto;
+      padding: 0;
       gap: 0;
+      border-radius: var(--app-radius-sm);
     }
 
     .user-dropdown {
@@ -638,14 +631,24 @@ onUnmounted(() => {
   }
 }
 
-.user-button {
+.user-bar {
   display: flex;
   align-items: center;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+}
+
+.user-button {
+  display: flex;
+  flex: 1;
+  align-items: center;
   gap: 6px;
+  min-width: 0;
   padding: 8px 6px;
   border-radius: var(--app-radius-md);
   cursor: pointer;
-  transition: all var(--app-motion-base);
+  transition: background-color var(--app-motion-base);
   background: transparent;
 
   &:hover {
@@ -754,11 +757,40 @@ onUnmounted(() => {
   }
 }
 
-.dropdown-icon {
-  font-size: var(--app-text-xl);
-  color: var(--td-text-color-secondary);
+.user-notify {
+  display: inline-flex;
   flex-shrink: 0;
-  transition: transform var(--app-motion-base);
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--td-text-color-placeholder);
+  cursor: pointer;
+
+  &:hover,
+  &.is-open {
+    background: var(--td-bg-color-container-hover);
+    color: var(--td-text-color-primary);
+  }
+}
+
+.user-notify__dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--td-error-color);
+  box-shadow: 0 0 0 1.5px var(--td-bg-color-sidebar);
+}
+
+.user-menu--collapsed .user-notify {
+  position: relative;
 }
 
 .user-dropdown {

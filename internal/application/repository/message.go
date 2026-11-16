@@ -320,7 +320,14 @@ func (r *messageRepository) UpdateMessage(ctx context.Context, message *types.Me
 		}
 		if err := tx.Model(&types.Message{}).Where(
 			"id = ? AND session_id = ?", message.ID, message.SessionID,
-		).Updates(message).Error; err != nil {
+		).Omit("context_checkpoint").Updates(message).Error; err != nil {
+			return err
+		}
+		// Updates skips zero values; written on its own so a resumed or
+		// closed run can clear it.
+		if err := tx.Model(&types.Message{}).Where(
+			"id = ? AND session_id = ?", message.ID, message.SessionID,
+		).Update("run_state", message.RunState).Error; err != nil {
 			return err
 		}
 		// Explicit generated fields include empty values and NULL lineage. The
@@ -386,6 +393,9 @@ func (r *messageRepository) DeleteMessagesFrom(
 		}
 		if len(deleted) == 0 {
 			return nil
+		}
+		if err := invalidateDependentCheckpoints(tx, deleted[0]); err != nil {
+			return err
 		}
 		return scope().Delete(&types.Message{}).Error
 	})
@@ -463,7 +473,7 @@ func (r *messageRepository) SearchMessagesByKeyword(
 		Select(("messages.*, sessions.title as session_title, sessions.title_source_lineage"+
 			" as session_title_source_lineage")).
 		Joins("INNER JOIN sessions ON sessions.id = messages.session_id AND sessions.deleted_at IS NULL").
-		Where("sessions.tenant_id = ?", tenantID).
+		Where("sessions.tenant_id = ? AND sessions.kind = ''", tenantID).
 		Where("messages.deleted_at IS NULL").
 		Where(contentLikeExpr, "%"+escapeLikeKeyword(keyword)+"%", likeEscapeChar)
 
@@ -503,7 +513,7 @@ func (r *messageRepository) OwnedSessionIDs(
 	query := r.db.WithContext(ctx).
 		Table("sessions").
 		Select("id").
-		Where("tenant_id = ?", tenantID).
+		Where("tenant_id = ? AND kind = ''", tenantID).
 		Where("deleted_at IS NULL").
 		Where("id IN ?", sessionIDs)
 	if ownerID != "" {

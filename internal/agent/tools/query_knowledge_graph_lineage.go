@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,6 +13,13 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
+
+// A native graph response can use the ordinary workspace ACL when all
+// relation evidence and returned text belong to ordinary documents. A linked
+// source must be reconstructed by the source-aware snapshot reader instead.
+type aclGraphReadKey struct{}
+
+var errGraphNeedsSourceSnapshot = errors.New("graph evidence requires a source-aware snapshot")
 
 // SetKnowledgeGraphSnapshotReader configures the reader used to hydrate original graph snapshots.
 func (t *QueryKnowledgeGraphTool) SetKnowledgeGraphSnapshotReader(reader interfaces.KnowledgeGraphSnapshotReader) {
@@ -42,7 +50,26 @@ func (t *QueryKnowledgeGraphTool) ExecuteSourceLineage(
 			_ = turn.Add(types.UnknownSourceLineage())
 		}
 	}()
-	if turn == nil || t.graphReader == nil || !t.scopeEnforced || t.scopeKnowledgeService == nil {
+	if turn == nil || !t.scopeEnforced || t.scopeKnowledgeService == nil {
+		return nil, ErrToolSourceLineageUnavailable
+	}
+	if !turn.RequiresCompleteProducerLineage() && t.graphRepo != nil {
+		if err := turn.Check(ctx); err != nil {
+			return nil, err
+		}
+		result, err := t.Execute(context.WithValue(ctx, aclGraphReadKey{}, true), args)
+		if !errors.Is(err, errGraphNeedsSourceSnapshot) {
+			if err != nil || result == nil {
+				return nil, err
+			}
+			result.SourceLineage, err = turn.CheckedSnapshot(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return result, nil
+		}
+	}
+	if t.graphReader == nil {
 		return nil, ErrToolSourceLineageUnavailable
 	}
 	var input QueryKnowledgeGraphInput

@@ -67,6 +67,15 @@ func (r *sessionRepository) CreateForkedFromMaterial(
 	copies []*types.Message,
 	parent *types.MessageMaterialSnapshot,
 ) error {
+	return r.CreateForkedFromMaterialWithAssignment(ctx, session, copies, parent, nil, nil)
+}
+
+// CreateForkedFromMaterialWithAssignment seals copied message origins and the
+// new branch's machine placement in one commit.
+func (r *sessionRepository) CreateForkedFromMaterialWithAssignment(
+	ctx context.Context, session *types.Session, copies []*types.Message, parent *types.MessageMaterialSnapshot,
+	assignment *types.SessionSandboxAssignment, machine *types.SandboxUserMachine,
+) error {
 	if session == nil || parent == nil {
 		return types.ErrSourceLineageUnknown
 	}
@@ -79,6 +88,14 @@ func (r *sessionRepository) CreateForkedFromMaterial(
 		return err
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if assignment != nil {
+			if assignment.SessionID != session.ID {
+				return ErrKnowledgeInputChanged
+			}
+			if err := lockLiveWebUser(tx, session.UserID); err != nil {
+				return err
+			}
+		}
 		actual, err := store.captureMessageMaterialInTx(tx, parent.Request)
 		if err != nil {
 			return err
@@ -141,6 +158,11 @@ func (r *sessionRepository) CreateForkedFromMaterial(
 			normalized.RequestID = original.RequestID
 			normalized.KnowledgeID = original.KnowledgeID
 			normalized.Artifacts = nil
+			// Shared-machine forks discard checkpoints that do not resolve in
+			// the copied workspace. Erasure is the only allowed transformation.
+			if assignment != nil && normalized.SandboxCheckpoint == nil {
+				normalized.SandboxCheckpoint = original.SandboxCheckpoint
+			}
 			if !messageForkCoveredEqual(&normalized, original) {
 				return ErrKnowledgeInputChanged
 			}
@@ -201,6 +223,15 @@ func (r *sessionRepository) CreateForkedFromMaterial(
 			}
 			if err := store.copyForkFieldOriginsInTx(tx, &origin, copy, selected[copyIndex]); err != nil {
 				return err
+			}
+		}
+		if assignment != nil {
+			created, err := InsertSandboxAssignmentTx(tx, assignment, machine)
+			if err != nil {
+				return err
+			}
+			if !created {
+				return ErrKnowledgeInputChanged
 			}
 		}
 		return nil

@@ -110,14 +110,17 @@ run: build
 
 # Run tests
 test:
+	bash scripts/docker-entrypoint_test.sh
 	go test -v ./...
 
-# Vendor catalog: invariants, legacy-behaviour parity and vendor facts.
-# Run this after adding a vendor or editing any models.json.
-.PHONY: model-catalog-check
+# Generate reviewed metadata + protocol overrides, then verify every model.
+.PHONY: model-catalog-generate model-catalog-check
+model-catalog-generate:
+	python3 scripts/model-catalog/generate.py
+
 model-catalog-check:
-	go test ./internal/models/parity/ ./internal/models/vendors/ ./internal/models/catalog/ ./internal/models/api/... \
-		./internal/models/rerank/ ./internal/models/embedding/ ./internal/models/asr/
+	python3 scripts/model-catalog/generate.py --check
+	go test ./internal/models/...
 
 # Vendor catalog: report where our model metadata differs from models.dev.
 # Development aid only — nothing is fetched at runtime and nothing is written
@@ -244,9 +247,18 @@ migrate-goto:
 	./scripts/migrate.sh goto $(version)
 
 # Generate API documentation (Swagger)
+#
+# internal/localsandbox is excluded because cmd/server does not depend on it
+# (its importers are behind the `desktop` build tag). Without the exclude,
+# swag walks into the directory, follows its `const X = core.X` aliases and
+# loads internal/localsandbox/core a second time through go/loader; that
+# second load re-registers every model under its short name without enum
+# values, so definitions lose their package-qualified names and
+# docs/swagger_contract_test.go fails.
 docs:
 	@echo "生成 Swagger API 文档..."
-	swag init -g $(MAIN_PATH)/main.go -o ./docs --parseDependency --parseInternal
+	swag init -g $(MAIN_PATH)/main.go -o ./docs --parseDependency --parseInternal \
+		--exclude ./internal/localsandbox --overridesFile ./docs/swag.overrides
 	@echo "文档已生成到 ./docs 目录"
 	@echo "启动服务后访问 http://localhost:8080/swagger/index.html 查看文档"
 
@@ -270,8 +282,10 @@ deps:
 # google.golang.org/protobuf/reflect/protoregistry.conflictPolicy=warn for qdrant milvus proto conflict
 # GO_BUILD_TAGS adds optional build tags, e.g. GO_BUILD_TAGS=anydoc to link the
 # in-process office document parser (run `make anydoc-lib` first).
+# When .git is absent (e.g. inside a docker build), fall back to the VERSION
+# file so compose-built images still report the base version.
 build-prod:
-	VERSION=$$(git describe --tags --abbrev=0 2>/dev/null || echo "$${VERSION:-unknown}"); \
+	VERSION=$$(git describe --tags --abbrev=0 2>/dev/null || echo "$${VERSION:-$$(cat VERSION 2>/dev/null || echo unknown)}"); \
 	COMMIT_ID=$${COMMIT_ID:-unknown}; \
 	CGO_ENABLED=1 \
 	CGO_CFLAGS="-Wno-deprecated-declarations" \
@@ -367,5 +381,3 @@ dev-app:
 
 dev-frontend:
 	./scripts/dev.sh frontend
-
-

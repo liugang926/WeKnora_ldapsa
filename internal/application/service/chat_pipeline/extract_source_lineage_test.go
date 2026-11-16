@@ -147,3 +147,44 @@ func TestKnowledgeGraphExtractorFreshOutputCheckAndUnknownNeverCallModel(t *test
 		})
 	}
 }
+
+func TestSourceGraphDeclineRequiresTerminalStopAndFreshReceipt(t *testing.T) {
+	input := extractionLineage(t, "77", "old", 1)
+	for _, tc := range []struct {
+		reason  string
+		revoke  bool
+		decline bool
+	}{
+		{"length", false, false},
+		{types.FinishReasonIncomplete, false, false},
+		{"", false, false},
+		{"stop", false, true},
+		{"stop", true, false},
+	} {
+		t.Run(tc.reason, func(t *testing.T) {
+			model := &sourceGraphModel{call: func([]chat.Message, *chat.ChatOptions) (*types.ChatResponse, error) {
+				return &types.ChatResponse{Content: "No entities here.", FinishReason: tc.reason}, nil
+			}}
+			extractor := NewExtractor(model, &types.PromptTemplateStructured{Description: "Extract %s"})
+			checks := 0
+			check := func(context.Context, *types.SourceLineage) error {
+				checks++
+				if checks == 3 && tc.revoke {
+					return errors.New("source revoked")
+				}
+				return nil
+			}
+			graph, err := extractor.ExtractSourceLineage(t.Context(), "private", input, input, check)
+			require.Error(t, err)
+			require.Equal(t, tc.decline, errors.Is(err, ErrModelDeclined))
+			if !tc.decline {
+				require.Nil(t, graph)
+				return
+			}
+			require.Empty(t, graph.Node)
+			require.Empty(t, graph.Relation)
+			require.Equal(t, input, graph.SourceLineage)
+			require.NotEmpty(t, graph.WireDigest)
+		})
+	}
+}

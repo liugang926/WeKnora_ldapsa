@@ -17,6 +17,7 @@ type wikiEnqueueFailureKnowledgeRepo struct {
 	interfaces.KnowledgeRepository
 	knowledge        *types.Knowledge
 	expectedSubtasks int
+	setFinalizingErr error
 }
 
 func (r *wikiEnqueueFailureKnowledgeRepo) GetKnowledgeByIDOnly(
@@ -31,6 +32,9 @@ func (r *wikiEnqueueFailureKnowledgeRepo) SetFinalizing(
 	id string,
 	expectedSubtasks int,
 ) (bool, error) {
+	if r.setFinalizingErr != nil {
+		return false, r.setFinalizingErr
+	}
 	if r.KnowledgeRepository != nil {
 		promoted, err := r.KnowledgeRepository.SetFinalizing(ctx, id, expectedSubtasks)
 		if err != nil || !promoted {
@@ -180,6 +184,7 @@ func newWikiEnqueueTestService(
 	knowledgeID string,
 	pendingRepo *wikiEnqueueFailurePendingRepo,
 	queue *wikiEnqueueFailureTaskQueue,
+	wikiEnabled bool,
 ) (*KnowledgePostProcessService, *wikiEnqueueFailureKnowledgeRepo, *enrichmentTestFixture) {
 	repo := &wikiEnqueueFailureKnowledgeRepo{
 		knowledge: &types.Knowledge{
@@ -196,7 +201,7 @@ func newWikiEnqueueTestService(
 			ID:       "kb-wiki",
 			TenantID: 7,
 			IndexingStrategy: types.IndexingStrategy{
-				WikiEnabled: true,
+				WikiEnabled: wikiEnabled,
 			},
 		}},
 		chunkService: &wikiEnqueueFailureChunkService{chunks: []*types.Chunk{
@@ -252,7 +257,7 @@ func TestKnowledgePostProcessAtomicallySeedsWikiSlot(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			pendingRepo := &wikiEnqueueFailurePendingRepo{seedErr: test.pendingErr}
 			queue := &wikiEnqueueFailureTaskQueue{}
-			service, repo, f := newWikiEnqueueTestService(t, knowledgeID, pendingRepo, queue)
+			service, repo, f := newWikiEnqueueTestService(t, knowledgeID, pendingRepo, queue, true)
 
 			err := service.Handle(f.build, postProcessOriginalTask(t, f))
 
@@ -277,7 +282,7 @@ func TestKnowledgePostProcessRetriesWikiTriggerWithoutDoubleAccounting(t *testin
 	wikiErr := errors.New("redis unavailable")
 	pendingRepo := &wikiEnqueueFailurePendingRepo{}
 	queue := &wikiEnqueueFailureTaskQueue{wikiErr: wikiErr}
-	service, repo, f := newWikiEnqueueTestService(t, knowledgeID, pendingRepo, queue)
+	service, repo, f := newWikiEnqueueTestService(t, knowledgeID, pendingRepo, queue, true)
 	task := postProcessOriginalTask(t, f)
 
 	err := service.Handle(f.build, task)
@@ -302,7 +307,7 @@ func TestKnowledgePostProcessRetriesWikiTriggerWithoutDoubleAccounting(t *testin
 func TestPostProcessRejectsMovedKnowledgeBeforeWikiOrSpanWrites(t *testing.T) {
 	pending := &wikiEnqueueFailurePendingRepo{}
 	queue := &wikiEnqueueFailureTaskQueue{}
-	svc, repo, f := newWikiEnqueueTestService(t, "moved-doc", pending, queue)
+	svc, repo, f := newWikiEnqueueTestService(t, "moved-doc", pending, queue, true)
 	task := postProcessOriginalTask(t, f)
 	repo.knowledge.KnowledgeBaseID = "other-kb"
 	require.ErrorIs(t, svc.Handle(f.build, task), asynq.SkipRetry)

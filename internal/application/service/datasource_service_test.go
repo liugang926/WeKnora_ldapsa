@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	apprepo "github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/datasource"
@@ -121,7 +122,7 @@ func (s *processSyncKBService) ListKnowledgeBasesByTenantID(context.Context, uin
 }
 
 func (s *processSyncKBService) UpdateKnowledgeBase(
-	context.Context, string, string, string, *types.KnowledgeBaseConfig,
+	context.Context, string, string, string, *types.KnowledgeBaseConfig, *types.VLMConfig,
 ) (*types.KnowledgeBase, error) {
 	return nil, nil
 }
@@ -135,6 +136,17 @@ func (s *processSyncKBService) HybridSearch(
 	string,
 	types.SearchParams,
 ) ([]*types.SearchResult, error) {
+	return nil, nil
+}
+
+func (s *processSyncKBService) HybridSearchWithRerank(
+	ctx context.Context, id string, params types.SearchParams,
+) (*types.RetrievalResult, error) {
+	results, err := s.HybridSearch(ctx, id, params)
+	return &types.RetrievalResult{Results: results}, err
+}
+
+func (s *processSyncKBService) ReadChunkImage(context.Context, *types.SearchResult) ([]byte, error) {
 	return nil, nil
 }
 
@@ -639,7 +651,7 @@ func TestAllFetchedItemsFailedError(t *testing.T) {
 		Total:  2,
 		Failed: 2,
 		Errors: []types.SyncItemError{{Message: "doc one: export failed"}},
-	})
+	}, 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "all fetched items failed during sync (2/2)")
 	assert.Contains(t, err.Error(), "doc one: export failed")
@@ -650,7 +662,7 @@ func TestAllFetchedItemsFailedErrorIgnoresPartialFailure(t *testing.T) {
 		Total:   3,
 		Created: 1,
 		Failed:  2,
-	})
+	}, 0)
 	require.NoError(t, err)
 }
 
@@ -658,7 +670,7 @@ func TestAllFetchedItemsFailedErrorIgnoresSkippedItems(t *testing.T) {
 	err := allFetchedItemsFailedError(&types.SyncResult{
 		Total:   3,
 		Skipped: 3,
-	})
+	}, 0)
 	require.NoError(t, err)
 }
 
@@ -667,10 +679,24 @@ func TestAllFetchedItemsFailedErrorTruncatesLongDetail(t *testing.T) {
 		Total:  1,
 		Failed: 1,
 		Errors: []types.SyncItemError{{Message: strings.Repeat("x", 600)}},
-	})
+	}, 0)
 	require.Error(t, err)
 	assert.LessOrEqual(t, len(err.Error()), 560)
 	assert.Contains(t, err.Error(), "...")
+}
+
+func TestAllFetchedItemsFailedErrorTruncatesChineseDetailAtRuneBoundary(t *testing.T) {
+	// 499 ASCII bytes put byte 500 inside the first three-byte rune.
+	message := strings.Repeat("x", 499) + strings.Repeat("导出失败", 50)
+	err := allFetchedItemsFailedError(&types.SyncResult{
+		Total:  1,
+		Failed: 1,
+		Errors: []types.SyncItemError{{Message: message}},
+	}, 0)
+	require.Error(t, err)
+	assert.True(t, utf8.ValidString(err.Error()), "error message must be valid UTF-8")
+	assert.LessOrEqual(t, len(err.Error()), 560)
+	assert.True(t, strings.HasSuffix(err.Error(), strings.Repeat("x", 499)+"..."))
 }
 
 const deletedItemConnectorType = "test-sync-deletion"
@@ -734,7 +760,7 @@ type deletionLookupKnowledgeRepo struct {
 	interfaces.KnowledgeRepository
 	knowledge         *types.Knowledge
 	lookupErr         error
-	metadataUpdates   []map[string]string // metadata persisted via UpdateKnowledge
+	metadataUpdates   []map[string]string // metadata persisted via UpdateKnowledge / UpdateKnowledgeColumn
 	metadataUpdateErr error
 	hardDeleted       []string
 	hardDeleteErr     error
@@ -802,6 +828,19 @@ func (r *deletionLookupKnowledgeRepo) UpdateKnowledge(_ context.Context, knowled
 	}
 	r.metadataUpdates = append(r.metadataUpdates, metadata)
 	return nil
+}
+
+func (r *deletionLookupKnowledgeRepo) UpdateKnowledgeColumn(
+	ctx context.Context, id string, column string, value interface{},
+) error {
+	if column != "metadata" {
+		return fmt.Errorf("unexpected column update %q", column)
+	}
+	raw, ok := value.(types.JSON)
+	if !ok {
+		return fmt.Errorf("unexpected metadata value %T", value)
+	}
+	return r.UpdateKnowledge(ctx, &types.Knowledge{ID: id, Metadata: raw})
 }
 
 func (r *deletionLookupKnowledgeRepo) FindByDataSourceExternalID(
@@ -1516,4 +1555,24 @@ func TestIngestItem_NextcloudConnectorCannotRelabelProvenance(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFetchedConnectorOriginRejectsRelabelAndMutatedArtifact(t *testing.T) {
+	ctx := context.Background()
+	ds := &types.DataSource{ID: "source", TenantID: 1, KnowledgeBaseID: "kb", Type: deletedItemConnectorType}
+	item := &types.FetchedItem{ExternalID: "doc", Content: []byte("fetched"), Metadata: map[string]string{"channel": "feishu"}}
+	bound := bindFetchedConnectorItem(ctx, deletedItemConnector{}, ds, item)
+	proof, ok := bound.Value(fetchedConnectorKey{}).(fetchedConnectorItem)
+	require.True(t, ok)
+	require.True(t, proof.matches(ds, item))
+	item.Content[0] = 'X'
+	require.False(t, proof.matches(ds, item))
+	item.Content[0] = 'f'
+	item.Metadata["channel"] = "nextcloud"
+	require.False(t, proof.matches(ds, item))
+	item.Metadata["channel"] = "feishu"
+	ds.ID = "different"
+	require.False(t, proof.matches(ds, item))
+	ds.Type = types.ConnectorTypeNextcloud
+	require.Nil(t, bindFetchedConnectorItem(ctx, nextcloudCursorMixedConnector{}, ds, item).Value(fetchedConnectorKey{}))
 }

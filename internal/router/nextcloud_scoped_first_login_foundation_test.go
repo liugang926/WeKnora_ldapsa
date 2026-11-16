@@ -211,7 +211,7 @@ func newScopedFirstLoginFoundation(
 	directories := repository.NewDirectoryRepository(db)
 	usersRepo := repository.NewUserRepository(db)
 	tokens := repository.NewAuthTokenRepository(db)
-	tenants := service.NewTenantService(repository.NewTenantRepository(db), nil)
+	tenants := service.NewTenantService(repository.NewTenantRepository(db), nil, nil)
 	members := service.NewTenantMemberService(repository.NewTenantMemberRepository(db), nil, usersRepo, tokens)
 	users := service.NewUserService(
 		cfg, usersRepo, tokens, tenants, members, nil, directories, groups, nil, nil,
@@ -567,7 +567,9 @@ func newScopedFirstLoginFoundation(
 		repository.NewNextcloudEventInboxRepository(db),
 		nil,
 	)
-	kh := handler.NewKnowledgeHandler(cfg, knowledge, base, nil, nil, queue, repository.NewKnowledgeSpanRepository(db))
+	kh := handler.NewKnowledgeHandler(
+		cfg, knowledge, base, nil, nil, chunkService, nil, users, queue, repository.NewKnowledgeSpanRepository(db), nil,
+	)
 	handler.ConfigureKnowledgeHandlerGroupAccess(kh, groups)
 	handler.ConfigureKnowledgeHandlerPublicationGuard(kh, public)
 	handler.ConfigureKnowledgeHandlerContentLeaseStore(kh, leases)
@@ -588,6 +590,7 @@ func newScopedFirstLoginFoundation(
 		groups,
 		sources,
 		leases,
+		repo,
 	)
 	return &scopedFirstLoginFoundation{
 		db:                db,

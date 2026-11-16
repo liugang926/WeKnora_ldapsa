@@ -157,6 +157,38 @@ func (r *ToolRegistry) DefinitionSourceLineageWithContext(
 	return l
 }
 
+// nativeACLTool identifies built-in tools with their own scoped execution path.
+// They can run in an ordinary authenticated workspace. A source-controlled
+// turn still requires an actual producer receipt for each result.
+func nativeACLTool(tool types.Tool) bool {
+	switch t := tool.(type) {
+	case *ConfirmedTool:
+		if _, ok := t.inner.(SourceLineageTool); ok {
+			return true
+		}
+		return nativeACLTool(t.inner)
+	case *FindOperationsTool, *RunOperationTool, *OpenPageTool, *ReadPageTool, *SelectTabTool, *FillPageTool,
+		*SearchWeKnoraDocsTool, *ReadWeKnoraDocTool, *AskUserTool, *CollaborationTool,
+		*WorkCancelTool, *WorkWaitTool, *ShellExecAsyncTool, *BrowserSkillTool,
+		*wikiSearchTool, *wikiReadPageTool, *wikiReadIssueTool, *wikiWritePageTool,
+		*wikiDeletePageTool, *wikiFlagIssueTool, *wikiRenamePageTool, *wikiReplaceTextTool, *wikiUpdateIssueTool:
+		return true
+	default:
+		return false
+	}
+}
+
+// WorkspaceACLOnly reports registered native tools whose results rely on the
+// ordinary workspace ACL instead of complete source-specific receipts.
+func (r *ToolRegistry) WorkspaceACLOnly(name string) bool {
+	tool, err := r.GetTool(name)
+	if err != nil {
+		return false
+	}
+	_, accounted := tool.(SourceLineageTool)
+	return !accounted && nativeACLTool(tool)
+}
+
 // ExecuteToolWithSourceLineage gates before executing an uncovered producer.
 // An empty opaque result is not retrospectively promoted to source-free.
 func (r *ToolRegistry) ExecuteToolWithSourceLineage(
@@ -173,7 +205,7 @@ func (r *ToolRegistry) ExecuteToolWithSourceLineage(
 		return nil, ErrToolSourceLineageUnavailable
 	}
 	adapter, ok := tool.(SourceLineageTool)
-	if !ok {
+	if !ok && (turn.RequiresCompleteProducerLineage() || !nativeACLTool(tool)) {
 		_ = turn.Add(types.UnknownSourceLineage())
 		return nil, ErrToolSourceLineageUnavailable
 	}
@@ -183,7 +215,14 @@ func (r *ToolRegistry) ExecuteToolWithSourceLineage(
 	if err := turn.Check(ctx); err != nil {
 		return nil, err
 	}
-	result, execErr := r.execute(ctx, &lineageToolExecutor{Tool: tool, adapter: adapter}, args)
+	executor := tool
+	if adapter != nil {
+		executor = &lineageToolExecutor{Tool: tool, adapter: adapter}
+	}
+	result, execErr := r.execute(ctx, executor, args)
+	if adapter == nil && result != nil {
+		result.SourceLineage = turn.NormalizeProducerLineage(result.SourceLineage)
+	}
 	if result == nil {
 		_ = turn.Add(types.UnknownSourceLineage())
 		return nil, ErrToolSourceLineageUnavailable
@@ -191,8 +230,12 @@ func (r *ToolRegistry) ExecuteToolWithSourceLineage(
 	if err := turn.Add(result.SourceLineage); err != nil {
 		return nil, err
 	}
-	if err := turn.Check(ctx); err != nil {
+	verified, err := turn.CheckedSnapshot(ctx)
+	if err != nil {
 		return nil, err
+	}
+	if adapter == nil {
+		result.SourceLineage = verified
 	}
 	return result, execErr
 }

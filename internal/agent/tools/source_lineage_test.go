@@ -84,3 +84,31 @@ func TestAgentLineageIncrementalToolEventRequiresReceipt(t *testing.T) {
 	require.ErrorIs(t, lineage.RequireComplete(), types.ErrSourceLineageUnknown)
 	require.ErrorIs(t, EmitToolEvent(context.Background(), event.Event{}), ErrToolSourceLineageUnavailable)
 }
+
+func TestNativeCatalogToolHonorsOrdinaryACLAndStrictBoundary(t *testing.T) {
+	r := NewToolRegistry()
+	docs := NewSearchWeKnoraDocsTool(testDocsLibrary(t))
+	r.RegisterTool(docs)
+	require.True(t, r.WorkspaceACLOnly(docs.Name()))
+	allowed := true
+	turn := types.NewWeKnoraACLSourceLineage(func(context.Context, *types.SourceLineage) error {
+		if !allowed {
+			return types.ErrSourceLineageUnknown
+		}
+		return nil
+	})
+	ctx := types.WithRAGSourceLineage(t.Context(), turn)
+	result, err := r.ExecuteToolWithSourceLineage(ctx, docs.Name(), json.RawMessage(`{}`))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	require.NotEmpty(t, result.Output)
+	require.NoError(t, result.SourceLineage.RequireComplete())
+	allowed = false
+	result, err = r.ExecuteToolWithSourceLineage(ctx, docs.Name(), json.RawMessage(`{}`))
+	require.Error(t, err)
+	require.Nil(t, result)
+	_, strict := toolTurn()
+	result, err = r.ExecuteToolWithSourceLineage(strict, docs.Name(), json.RawMessage(`{}`))
+	require.ErrorIs(t, err, ErrToolSourceLineageUnavailable)
+	require.Nil(t, result)
+}

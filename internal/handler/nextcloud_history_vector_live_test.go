@@ -258,7 +258,7 @@ func documentHistoryVectorUnavailableAuthority(
 		chatpipeline.NewEventManager(),
 		guard,
 	)
-	router.POST("/messages/search-no-material-authority", NewMessageHandler(messages, nil, nil).SearchMessages)
+	router.POST("/messages/search-no-material-authority", NewMessageHandler(messages, nil, nil, repository.NewAgentPromptRepository(db)).SearchMessages)
 	for _, mode := range []string{"vector", "hybrid"} {
 		t.Run("jwt_history_vector_unknown_authority_"+mode, func(t *testing.T) {
 			payload, err := json.Marshal(

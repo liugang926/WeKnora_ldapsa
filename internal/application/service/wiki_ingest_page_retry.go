@@ -51,7 +51,10 @@ func (s *wikiIngestService) checkWikiPageRetrySources(ctx context.Context, kbID 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	live := s.filterLiveUpdates(ctx, kbID, updates)
+	live, err := s.filterLiveUpdates(ctx, kbID, updates)
+	if err != nil {
+		return err
+	}
 	if len(live) != len(updates) {
 		return errWikiPageSourceChanged
 	}

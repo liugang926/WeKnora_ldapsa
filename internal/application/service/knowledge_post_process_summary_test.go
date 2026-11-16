@@ -144,9 +144,14 @@ func TestKnowledgePostProcessWithoutSummaryCompletionFailure(t *testing.T) {
 				wikiEnqueueFailureKnowledgeRepo: wikiEnqueueFailureKnowledgeRepo{knowledge: knowledge},
 				completionErr:                   tc.err, completionSkipped: tc.skipped,
 			}
+			tracker, db := setupSpanTrackerTest(t)
+			ctx := types.WithTaskRetryMetadata(context.Background(), 0, 3)
+			_, attempt, err := tracker.OpenAttempt(ctx, knowledge.ID, "")
+			require.NoError(t, err)
 			queue := &wikiEnqueueFailureTaskQueue{}
 			svc := &KnowledgePostProcessService{
 				knowledgeRepo: repo,
+				spanTracker:   tracker,
 				kbService: &wikiEnqueueFailureKBService{kb: &types.KnowledgeBase{
 					ID: "kb", TenantID: 7, Type: types.KnowledgeBaseTypeDocument,
 					AutoTagConfig: &types.AutoTagConfig{Enabled: true},
@@ -160,7 +165,7 @@ func TestKnowledgePostProcessWithoutSummaryCompletionFailure(t *testing.T) {
 			f := attachPostProcessOriginalInputs(t, svc, &repo.wikiEnqueueFailureKnowledgeRepo,
 				svc.kbService.(*wikiEnqueueFailureKBService).kb, svc.chunkRepo.(*wikiEnqueueFailureChunkRepo).chunks)
 			task := postProcessOriginalTask(t, f)
-			err := svc.Handle(f.build, task)
+			err = svc.Handle(f.build, task)
 			require.ErrorIs(t, err, tc.err)
 			require.Empty(t, queue.taskTypes)
 			require.Equal(t, types.ParseStatusProcessing, knowledge.ParseStatus)
@@ -170,9 +175,17 @@ func TestKnowledgePostProcessWithoutSummaryCompletionFailure(t *testing.T) {
 				Count(&handoffs).Error)
 			require.Zero(t, handoffs, "failed or skipped completion must not own child work")
 			if tc.err != nil {
+				status, code, message := rootSpan(t, db, knowledge.ID, attempt)
+				require.Equal(t, types.SpanStatusRunning, status)
+				require.Empty(t, code)
+				require.Empty(t, message)
 				repo.completionErr = nil
-				require.NoError(t, svc.Handle(f.build, task))
+				require.NoError(t, svc.Handle(types.WithTaskRetryMetadata(f.build, 1, 3), task))
 				require.Equal(t, types.ParseStatusCompleted, knowledge.ParseStatus)
+				status, code, message = rootSpan(t, db, knowledge.ID, attempt)
+				require.Equal(t, types.SpanStatusDone, status)
+				require.Empty(t, code)
+				require.Empty(t, message)
 				require.Equal(t, []string{types.TypeKnowledgeAutoTag}, queue.taskTypes)
 				assertPostProcessQueuedOriginals(t, f, queue)
 				var op types.TaskPendingOp

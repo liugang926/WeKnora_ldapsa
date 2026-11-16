@@ -163,6 +163,8 @@ func nativeRunningHandler(
 		nil,
 		nil,
 		nil,
+		nil, // Host project directories.
+		nil, // Background work.
 	)
 }
 
@@ -232,12 +234,15 @@ func TestNativeLiveReplayActualPausedProducerReceiverAndRedisForgery(t *testing.
 				nil,
 				nil,
 				nil,
+				service.HostSandboxManager{},
 				nil,
 				nil,
 				nil,
 				service.NewSessionBusyGate(),
 				nil,
 				nil,
+				nil, // Background work is outside this HTTP flow.
+				nil, // No interactive prompt is issued.
 			)
 			service.ConfigureMessageSourceLineage(f.messages, sessions, &service.SessionForkService{}, manager, f.guard)
 			mini := miniredis.RunT(t)

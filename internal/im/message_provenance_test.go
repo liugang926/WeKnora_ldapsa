@@ -83,8 +83,7 @@ func TestIMRealMessageProducerBothOutputPaths(t *testing.T) {
 				var valid atomic.Bool
 				valid.Store(true)
 				ctx := withIMIdentity(context.Background(),
-					7,
-					"channel",
+					&IMChannel{TenantID: 7, ID: "channel"},
 					&IncomingMessage{
 						Platform: PlatformDingtalk,
 						UserID:   "sender",

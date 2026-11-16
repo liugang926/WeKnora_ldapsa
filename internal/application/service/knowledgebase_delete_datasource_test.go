@@ -302,3 +302,7 @@ func (r *deleteErrDSRepo) Delete(_ context.Context, id string) error {
 	}
 	return r.kbDeleteDSRepo.Delete(context.Background(), id)
 }
+
+func (*kbDeleteDSRepo) PatchSyncSettings(context.Context, *types.DataSource, types.JSON, []string) error {
+	panic("unexpected PatchSyncSettings call")
+}

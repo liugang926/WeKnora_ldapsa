@@ -31,11 +31,10 @@ type TaskInspector interface {
 	// HasQueuedTasksForKnowledge reports whether any pending / scheduled
 	// / retry / active task referencing the given knowledge ID still
 	// lives in the queue backend. It is the read-only counterpart of
-	// CancelTasksForKnowledge: the housekeeping sweep calls it before
-	// flipping a long-idle "processing"/"finalizing" row to "failed" so
-	// it can tell a genuinely orphaned row (no task anywhere) from one
-	// whose enrichment subtasks are merely backlogged behind a busy
-	// queue (no span heartbeat yet because no worker has picked them up).
+	// CancelTasksForKnowledge: it tells a genuinely orphaned row (no task
+	// anywhere) from one whose enrichment subtasks are merely backlogged
+	// behind a busy queue (no span heartbeat yet because no worker has
+	// picked them up).
 	//
 	// Best-effort and short-circuiting: it returns true as soon as the
 	// first match is seen. On backend error it returns (false, err);
@@ -43,6 +42,14 @@ type TaskInspector interface {
 	// always returns false — inline executors never queue, so the
 	// span/updated_at checks remain authoritative there.
 	HasQueuedTasksForKnowledge(ctx context.Context, knowledgeID string) (bool, error)
+
+	// QueuedKnowledgeIDs returns every knowledge ID that a pending /
+	// scheduled / retry / active task of those same types references, in
+	// one pass over the queues — for answering many documents at once
+	// where HasQueuedTasksForKnowledge would rescan per document. Unlike
+	// that probe it returns list errors instead of reading them as "no
+	// match". Lite mode returns an empty set.
+	QueuedKnowledgeIDs(ctx context.Context) (map[string]struct{}, error)
 
 	// HasQueuedDeleteTasksForKnowledge reports whether any pending /
 	// scheduled / retry / active knowledge:list_delete task still covers

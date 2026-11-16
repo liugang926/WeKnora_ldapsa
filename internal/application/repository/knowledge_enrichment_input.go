@@ -456,6 +456,13 @@ func (s *KnowledgeInputProvenanceStore) AuthorizeKnowledgeCurrentProducerWrite(
 	ctx context.Context,
 	kb *types.KnowledgeBase,
 ) (context.Context, error) {
+	if kb != nil && isLocalReparseGroupEditor(ctx, kb) {
+		proof := KnowledgeBuildInputProofFromContext(ctx)
+		purpose, _ := ctx.Value(knowledgeBuildWritePurposeContextKey{}).(*types.KnowledgeBuildInputProof)
+		if proof != nil && purpose != nil && proof.AdmissionID == purpose.AdmissionID {
+			return s.restoreLocalReparseProducer(ctx, kb, proof)
+		}
+	}
 	actor, err := captureKnowledgeActorSelector(ctx, "")
 	if err != nil {
 		return ctx, err
@@ -526,7 +533,11 @@ func (s *KnowledgeInputProvenanceStore) RestoreKnowledgeProducerActor(
 		Error; err != nil {
 		return ctx, err
 	}
-	fresh, err = s.authorizeKnowledgeActorWrite(fresh, &kb)
+	if isLocalReparseGroupEditor(fresh, &kb) {
+		fresh, err = s.restoreLocalReparseProducer(fresh, &kb, original)
+	} else {
+		fresh, err = s.authorizeKnowledgeActorWrite(fresh, &kb)
+	}
 	if err != nil {
 		return ctx, err
 	}

@@ -562,7 +562,7 @@ func newMachinePipelineFixtureWithSource(
 		f.s.repo,
 		tags,
 		f.s.kbService,
-		f.s.chunkService,
+		f.s.chunkRepo,
 		models,
 		f.s.spanTracker,
 	).(*KnowledgeAutoTagService)

@@ -32,11 +32,11 @@ type (
 )
 
 type dingTalkArtifact struct {
-	Fetch                           dingTalkFetch
-	Fact                            dingtalk.OriginalFetchedArtifactInput
-	InputDigest, FileName, FileHash string
-	Metadata                        map[string]string
-	Size                            int64
+	Fetch                                       dingTalkFetch
+	Fact                                        dingtalk.OriginalFetchedArtifactInput
+	InputDigest, FolderPath, FileName, FileHash string
+	Metadata                                    map[string]string
+	Size                                        int64
 }
 type dingTalkOriginalReceipt struct {
 	AdmissionID                                           string `gorm:"primaryKey"`
@@ -170,8 +170,18 @@ func (s *KnowledgeInputProvenanceStore) BindDingTalkOriginalArtifact(
 	for k, v := range item.Metadata {
 		meta[k] = v
 	}
-	safeName, valid := utils.ValidateInput(item.FileName)
-	if !valid || safeName == "" {
+	relativeName, valid := utils.ValidateInput(item.FileName)
+	if !valid || strings.HasPrefix(relativeName, "/") || strings.Contains(relativeName, `\`) {
+		return ctx, ErrKnowledgeInputChanged
+	}
+	for segment := range strings.SplitSeq(relativeName, "/") {
+		if strings.TrimSpace(segment) == ".." {
+			return ctx, ErrKnowledgeInputChanged
+		}
+	}
+	// Ingestion stores the verified connector path as a folder and a leaf.
+	folder, safeName := types.SplitKnowledgeRelativePath(relativeName)
+	if safeName == "" {
 		return ctx, ErrKnowledgeInputChanged
 	}
 	// Rendered ALIDOC documents arrive as markdown; binary wiki FILE nodes
@@ -193,6 +203,7 @@ func (s *KnowledgeInputProvenanceStore) BindDingTalkOriginalArtifact(
 		Fetch:       f,
 		Fact:        fact,
 		InputDigest: digest,
+		FolderPath:  folder,
 		FileName:    safeName,
 		Metadata:    meta,
 		Size:        int64(len(item.Content)),
@@ -237,6 +248,7 @@ func (s *KnowledgeInputProvenanceStore) checkDingTalkOriginalCreation(
 		k.KnowledgeBaseID != a.Fetch.KB ||
 		k.Channel != types.ConnectorTypeDingTalk ||
 		k.Type != "file" ||
+		k.FolderPath != a.FolderPath ||
 		k.FileName != a.FileName ||
 		k.Title != a.FileName ||
 		k.FileType != expectedType ||

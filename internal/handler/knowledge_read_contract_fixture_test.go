@@ -76,7 +76,7 @@ func knowledgeContractAuth(
 	on := true
 	cfg := &config.Config{Tenant: &config.TenantConfig{EnableRBAC: &on}}
 	groups := service.NewGroupAccessService(repository.NewGroupAccessRepository(db))
-	tenants := service.NewTenantService(faqHTTPTenants{tenant: &types.Tenant{ID: 7, Status: "active"}}, nil)
+	tenants := service.NewTenantService(faqHTTPTenants{tenant: &types.Tenant{ID: 7, Status: "active"}}, nil, nil)
 	users := repository.NewUserRepository(db)
 	tokens := repository.NewAuthTokenRepository(db)
 	members := service.NewTenantMemberService(repository.NewTenantMemberRepository(db), nil, users, tokens)

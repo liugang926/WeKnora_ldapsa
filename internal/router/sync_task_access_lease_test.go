@@ -64,7 +64,10 @@ func (s syncLifecycleTaskHandler) Handle(ctx context.Context, task *asynq.Task) 
 type syncLifecycleKnowledgeService struct {
 	interfaces.KnowledgeService
 	syncLifecycleTaskHandler
+	repo interfaces.KnowledgeRepository
 }
+
+func (s syncLifecycleKnowledgeService) GetRepository() interfaces.KnowledgeRepository { return s.repo }
 
 func (s syncLifecycleKnowledgeService) ProcessDocument(ctx context.Context, task *asynq.Task) error {
 	return s.Handle(ctx, task)
@@ -191,8 +194,9 @@ func TestRegisterSyncHandlersCombinesAuthorizationAndNextcloudBuildLease(t *test
 			}}
 			executor := NewSyncTaskExecutor()
 			RegisterSyncHandlers(SyncTaskParams{
-				Executor: executor, KnowledgeService: syncLifecycleKnowledgeService{syncLifecycleTaskHandler: handler},
-				KnowledgeRepo: repo, ChunkRepo: syncLifecycleChunkRepo{}, ContentLeases: leases,
+				Executor:         executor,
+				KnowledgeService: syncLifecycleKnowledgeService{syncLifecycleTaskHandler: handler, repo: repo},
+				KnowledgeRepo:    repo, ChunkRepo: syncLifecycleChunkRepo{}, ContentLeases: leases,
 				KnowledgeBaseService: syncLifecycleKBService{}, GroupAccess: access, SpanTracker: tracker,
 				TagService: syncLifecycleTagService{}, DataSourceService: syncLifecycleDataSourceService{},
 				ChunkExtractor: handler, DataTableSummary: handler, ImageMultimodal: handler,
@@ -200,6 +204,7 @@ func TestRegisterSyncHandlersCombinesAuthorizationAndNextcloudBuildLease(t *test
 				WikiIngest: handler, TemporaryDocument: syncLifecycleTemporaryDocument{},
 				MemoryService: syncLifecycleMemory{},
 			})
+			require.NotNil(t, executor.onFinalFailure, "Lite must install the knowledge failure callback")
 			payload := map[string]any{
 				"tenant_id": 7, "knowledge_base_id": "kb", "attempt": 2,
 				"initiator": initiator,

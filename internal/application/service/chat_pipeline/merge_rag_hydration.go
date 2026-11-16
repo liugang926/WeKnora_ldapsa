@@ -92,6 +92,12 @@ func (p *PluginMerge) resolveCapturedParents(ctx context.Context, results []*typ
 		}
 		// The narrow text closure does not borrow OCR/caption/image children
 		// through the generic helper without their own real capture receipts.
+		if result.ChunkType == types.ChunkTypeImageVector || result.ChunkType == types.ChunkTypeImageOCR ||
+			result.ChunkType == types.ChunkTypeImageCaption {
+			// Keep the independently captured image hit; expanding its parent
+			// would silently attribute unrelated parent text to the image.
+			continue
+		}
 		if result.ChunkType != types.ChunkTypeText {
 			unknownMergeInput(ctx, result)
 			continue

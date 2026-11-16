@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -381,3 +382,21 @@ func TestAgentSteerOriginalGuardRevocationAtPublicationBlocksOutput(t *testing.T
 }
 
 var _ types.OriginalSteerSink = (*originalAgentSteerSink)(nil)
+
+func TestAgentSteerDeferredWriteRepollsOriginalAtNextBoundary(t *testing.T) {
+	sink := validOriginalAgentSteerSink(t)
+	sink.persistErr = fmt.Errorf("storage: %w", types.ErrSteerWriteDeferred)
+	engine := bindOriginalAgentSteerEngine(t, &mockChat{})
+	engine.SetSteerSink(sink)
+	state := &types.AgentState{}
+	var messages []chat.Message
+	drain := func() int { return engine.drainSteerMessages(t.Context(), state, &messages, "session", "run") }
+	require.Zero(t, drain())
+	require.NoError(t, engine.lineageFailure())
+	require.Empty(t, messages)
+	require.Empty(t, state.PendingSteerMessages)
+	sink.persistErr = nil
+	require.Equal(t, 1, drain())
+	require.Len(t, messages, 1)
+	require.Equal(t, []string{sink.userMessageID}, state.PendingSteerMessages)
+}

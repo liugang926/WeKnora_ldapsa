@@ -189,6 +189,20 @@ func (e *AgentEngine) lineageFailureDiagnostic() string {
 	return e.lineageDiagnostic
 }
 
+func (e *AgentEngine) beginLineageTurn(ctx context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	e.lineageMu.Lock()
+	e.lineageErr, e.lineageDiagnostic, e.lineageCancel = nil, "", cancel
+	e.lineageMu.Unlock()
+	if e.requireCompleteSourceLineage {
+		e.turnLineage = types.NewRAGSourceLineage(e.lineageVerifier)
+	} else {
+		e.turnLineage = types.NewWeKnoraACLSourceLineage(e.lineageVerifier)
+	}
+	ctx = types.WithRAGSourceLineage(ctx, e.turnLineage)
+	return ctx, func() { cancel(); e.lineageMu.Lock(); e.lineageCancel = nil; e.lineageMu.Unlock() }
+}
+
 func (e *AgentEngine) addLineage(inputs ...*types.SourceLineage) error {
 	if err := e.lineageFailure(); err != nil {
 		return err
