@@ -1,5 +1,5 @@
 <template>
-  <div class="agent-list-container">
+  <div class="agent-list-container" :class="{ 'is-lite': authStore.isLiteMode }">
     <div class="agent-list-content">
       <div class="header" style="--wails-draggable: drag">
         <div class="header-title" style="--wails-draggable: drag">
@@ -8,36 +8,34 @@
               <ResourceIcon type="agent" :size="24" />
               {{ $t('agent.title') }}
             </h2>
-            <t-tooltip v-if="authStore.hasRole('contributor')" :content="$t('agent.createAgent')" placement="bottom">
-              <t-button variant="text" theme="default" size="small" class="header-action-btn"
-                data-guide="agent-list-create" style="--wails-draggable: no-drag" @click="handleCreateAgent">
-                <template #icon>
-                  <span class="btn-icon-wrapper">
-                    <svg class="sparkles-icon" width="19" height="19" viewBox="0 0 20 20" fill="none"
-                      xmlns="http://www.w3.org/2000/svg">
-                      <path
-                        d="M10 3L10.8 6.2C10.9 6.7 11.3 7.1 11.8 7.2L15 8L11.8 8.8C11.3 8.9 10.9 9.3 10.8 9.8L10 13L9.2 9.8C9.1 9.3 8.7 8.9 8.2 8.8L5 8L8.2 7.2C8.7 7.1 9.1 6.7 9.2 6.2L10 3Z"
-                        fill="currentColor" stroke="currentColor" stroke-width="0.8" stroke-linecap="round"
-                        stroke-linejoin="round" />
-                      <path
-                        d="M15.5 4L15.8 5.2C15.85 5.45 16.05 5.65 16.3 5.7L17.5 6L16.3 6.3C16.05 6.35 15.85 6.55 15.8 6.8L15.5 8L15.2 6.8C15.15 6.55 14.95 6.35 14.7 6.3L13.5 6L14.7 5.7C14.95 5.65 15.15 5.45 15.2 5.2L15.5 4Z"
-                        fill="currentColor" stroke="currentColor" stroke-width="0.6" stroke-linecap="round"
-                        stroke-linejoin="round" />
-                      <path
-                        d="M4.5 13L4.8 14.2C4.85 14.45 5.05 14.65 5.3 14.7L6.5 15L5.3 15.3C5.05 15.35 4.85 15.55 4.8 15.8L4.5 17L4.2 15.8C4.15 15.55 3.95 15.35 3.7 15.3L2.5 15L3.7 14.7C3.95 14.65 4.15 14.45 4.2 14.2L4.5 13Z"
-                        fill="currentColor" stroke="currentColor" stroke-width="0.6" stroke-linecap="round"
-                        stroke-linejoin="round" />
-                    </svg>
-                  </span>
-                </template>
-                {{ $t('agent.createAgent') }}
-              </t-button>
-            </t-tooltip>
+            <div class="header-actions" :class="{ 'header-actions-lite': authStore.isLiteMode }" style="--wails-draggable: no-drag">
+              <ResourceListToolbar v-if="authStore.isLiteMode" hide-scopes v-model="spaceSelection" v-model:query="keyword" />
+              <ResourceSortControl v-model="selectedResourceSort" />
+              <t-tooltip v-if="authStore.hasRole('contributor')" :content="$t('agent.createAgent')" placement="bottom">
+                <t-button variant="text" theme="default" size="small" class="header-action-btn"
+                  data-guide="agent-list-create" style="--wails-draggable: no-drag" @click="handleCreateAgent">
+                  <template #icon>
+                    <t-icon name="add" size="18px" />
+                  </template>
+                  {{ $t('agent.createAgent') }}
+                </t-button>
+              </t-tooltip>
+              <t-tooltip v-if="authStore.hasRole('contributor') && assistantStore.pageAccess"
+                :content="$t('assistant.create.agentHint')" placement="bottom">
+                <t-button variant="text" theme="default" size="small" class="header-action-btn"
+                  style="--wails-draggable: no-drag" @click="assistantCreateVisible = true">
+                  <template #icon>
+                    <ResourceIcon type="assistant" :size="16" />
+                  </template>
+                  {{ $t('assistant.create.agentAction') }}
+                </t-button>
+              </t-tooltip>
+            </div>
           </div>
           <p class="header-subtitle" style="--wails-draggable: drag">{{ $t('agent.subtitle') }}</p>
         </div>
       </div>
-      <ResourceListToolbar :hide-scopes="authStore.isLiteMode" v-model="spaceSelection" v-model:query="keyword" :count-all="allAgentsCount"
+      <ResourceListToolbar v-if="!authStore.isLiteMode" v-model="spaceSelection" v-model:query="keyword" :count-all="allAgentsCount"
       :count-mine="agents.length" :count-by-org="effectiveSharedCountByOrg" :count-favorites="agentFavoritesCount"
       :count-recents="agentRecentsCount" />
       <div class="agent-list-main">
@@ -92,8 +90,8 @@
             </div>
             <!-- 我创建的：当前 agent 是本空间 + 非内置 + 我亲手创建，且前一张
                  要么不存在、要么不是本空间、要么是内置（builtin → mine 过渡）、
-                 要么是同事创建。与 KB 列表对齐。 -->
-            <div v-if="agent.isMine
+                 要么是同事创建。与 KB 列表对齐，Lite 隐藏该分组标题。 -->
+            <div v-if="!authStore.isLiteMode && agent.isMine
               && !agent.is_builtin
               && isMyAgent(agent)
               && (index === 0
@@ -170,13 +168,7 @@
               </button>
               <div class="card-header">
                 <div class="card-header-left">
-                  <div v-if="agent.is_builtin" class="builtin-avatar"
-                    :class="agent.config?.agent_mode === 'smart-reasoning' ? 'agent' : 'normal'">
-                    <t-icon :name="agent.config?.agent_mode === 'smart-reasoning' ? 'control-platform' : 'chat'"
-                      size="18px" />
-                  </div>
-                  <div v-else-if="agent.avatar" class="builtin-avatar agent-emoji">{{ agent.avatar }}</div>
-                  <AgentAvatar v-else :name="agent.name" size="small" />
+                  <ResourceCardAvatar kind="agent" :emoji="agent.is_builtin ? undefined : agent.avatar" />
                   <span class="card-title" :title="agent.name">{{ agent.name }}</span>
                 </div>
                 <t-popup
@@ -184,9 +176,9 @@
                   :visible="openMoreAgentId === agent.id" trigger="click" overlayClassName="card-more-popup"
                   destroy-on-close placement="bottom-right"
                   @update:visible="(v: boolean) => { openMoreAgentId = v ? agent.id : null }">
-                  <button type="button" :aria-label="$t('common.expand')" class="more-wrap" :class="{ 'active-more': openMoreAgentId === agent.id }"
+                  <button type="button" :aria-label="$t('common.expand')" class="more-wrap" :class="{ 'active-more': openMoreAgentId === agent.id }" :aria-expanded="openMoreAgentId === agent.id" aria-haspopup="true"
                     @click.stop>
-                    <img class="more-icon" src="@/assets/img/more.png" alt="" />
+                    <t-icon name="ellipsis" size="16px" aria-hidden="true" />
                   </button>
                   <template #content>
                     <div class="popup-menu">
@@ -210,9 +202,9 @@
                   :visible="openMoreAgentId === 'shared-' + agent.share_id" trigger="click"
                   overlayClassName="card-more-popup" destroy-on-close placement="bottom-right"
                   @update:visible="(v: boolean) => { openMoreAgentId = v ? 'shared-' + agent.share_id : null }">
-                  <button type="button" :aria-label="$t('common.expand')" class="more-wrap" :class="{ 'active-more': openMoreAgentId === 'shared-' + agent.share_id }"
+                  <button type="button" :aria-label="$t('common.expand')" class="more-wrap" :class="{ 'active-more': openMoreAgentId === 'shared-' + agent.share_id }" :aria-expanded="openMoreAgentId === 'shared-' + agent.share_id" aria-haspopup="true"
                     @click.stop>
-                    <img class="more-icon" src="@/assets/img/more.png" alt="" />
+                    <t-icon name="ellipsis" size="16px" aria-hidden="true" />
                   </button>
                   <template #content>
                     <div class="popup-menu">
@@ -225,7 +217,7 @@
                 </t-popup>
               </div>
               <div class="card-content">
-                <div class="card-description" :title="agent.description || $t('agent.noDescription')">
+                <div class="card-description" :class="{ 'is-empty': !agent.description }" :title="agent.description || $t('agent.noDescription')">
                   {{ agent.description || $t('agent.noDescription') }}</div>
               </div>
               <div class="card-bottom">
@@ -249,7 +241,7 @@
                     <t-tooltip v-if="agent.config?.web_search_enabled" :content="$t('agent.features.webSearch')"
                       placement="top">
                       <div class="feature-badge web-search">
-                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
                           <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2" fill="none" />
                           <ellipse cx="8" cy="8" rx="2.5" ry="6" stroke="currentColor" stroke-width="1.2" fill="none" />
                           <line x1="2" y1="6" x2="14" y2="6" stroke="currentColor" stroke-width="1.2" />
@@ -260,26 +252,26 @@
                     <t-tooltip v-if="agent.config?.knowledge_bases?.length || agent.config?.kb_selection_mode === 'all'"
                       :content="$t('agent.features.knowledgeBase')" placement="top">
                       <div class="feature-badge knowledge">
-                        <t-icon name="folder" size="16px" />
+                        <t-icon name="folder" size="14px" />
                       </div>
                     </t-tooltip>
                     <t-tooltip v-if="agent.config?.mcp_services?.length || agent.config?.mcp_selection_mode === 'all'"
                       :content="$t('agent.features.mcp')" placement="top">
                       <div class="feature-badge mcp">
-                        <t-icon name="extension" size="16px" />
+                        <t-icon name="extension" size="14px" />
                       </div>
                     </t-tooltip>
                     <t-tooltip v-if="agent.config?.multi_turn_enabled" :content="$t('agent.features.multiTurn')"
                       placement="top">
                       <div class="feature-badge multi-turn">
-                        <t-icon name="chat-bubble" size="16px" />
+                        <t-icon name="chat-bubble" size="14px" />
                       </div>
                     </t-tooltip>
                   </div>
                 </div>
                 <!-- 右下角：内置 / 来源徽章 / 空间图标+名称 -->
                 <div v-if="!agent.isMine" class="card-bottom-source">
-                  <img src="@/assets/img/organization-green.svg" class="org-icon" alt="" aria-hidden="true" />
+                  <t-icon name="usergroup" class="org-icon" size="14px" aria-hidden="true" />
                   <span class="org-source-text">{{ agent.org_name }}</span>
                 </div>
                 <div v-else-if="showAgentBuiltinBadge(agent)" class="builtin-badge">
@@ -308,8 +300,8 @@
               <t-icon class="agent-section-toggle"
                 :name="isAgentSectionCollapsed('builtin') ? 'chevron-right' : 'chevron-down'" size="14px" />
             </div>
-            <!-- 我创建的：第一张非内置且我亲手创建的卡片前打标题 -->
-            <div v-if="!agent.is_builtin
+            <!-- 我创建的：非 Lite 在第一张非内置且我亲手创建的卡片前打标题 -->
+            <div v-if="!authStore.isLiteMode && !agent.is_builtin
               && isMyAgent(agent)
               && (index === 0
                 || sortedMineAgents[index - 1].is_builtin
@@ -353,22 +345,16 @@
               <div class="card-header">
                 <div class="card-header-left">
                   <!-- 内置智能体使用简洁图标 -->
-                  <div v-if="agent.is_builtin" class="builtin-avatar"
-                    :class="agent.config?.agent_mode === 'smart-reasoning' ? 'agent' : 'normal'">
-                    <t-icon :name="agent.config?.agent_mode === 'smart-reasoning' ? 'control-platform' : 'chat'"
-                      size="18px" />
-                  </div>
-                  <div v-else-if="agent.avatar" class="builtin-avatar agent-emoji">{{ agent.avatar }}</div>
-                  <AgentAvatar v-else :name="agent.name" size="small" />
+                  <ResourceCardAvatar kind="agent" :emoji="agent.is_builtin ? undefined : agent.avatar" />
                   <span class="card-title" :title="agent.name">{{ agent.name }}</span>
                 </div>
                 <t-popup v-if="canEditAgent(agent) || authStore.hasRole('contributor') || authStore.hasRole('admin')"
                   :visible="openMoreAgentId === agent.id" trigger="click" overlayClassName="card-more-popup"
                   destroy-on-close placement="bottom-right"
                   @update:visible="(v: boolean) => { openMoreAgentId = v ? agent.id : null }">
-                  <button type="button" :aria-label="$t('common.expand')" class="more-wrap" :class="{ 'active-more': openMoreAgentId === agent.id }"
+                  <button type="button" :aria-label="$t('common.expand')" class="more-wrap" :class="{ 'active-more': openMoreAgentId === agent.id }" :aria-expanded="openMoreAgentId === agent.id" aria-haspopup="true"
                     @click.stop>
-                    <img class="more-icon" src="@/assets/img/more.png" alt="" />
+                    <t-icon name="ellipsis" size="16px" aria-hidden="true" />
                   </button>
                   <template #content>
                     <div class="popup-menu">
@@ -397,7 +383,7 @@
 
               <!-- 卡片内容 -->
               <div class="card-content">
-                <div class="card-description" :title="agent.description || $t('agent.noDescription')">
+                <div class="card-description" :class="{ 'is-empty': !agent.description }" :title="agent.description || $t('agent.noDescription')">
                   {{ agent.description || $t('agent.noDescription') }}
                 </div>
               </div>
@@ -420,7 +406,7 @@
                     <t-tooltip v-if="agent.config?.web_search_enabled" :content="$t('agent.features.webSearch')"
                       placement="top">
                       <div class="feature-badge web-search">
-                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
                           <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2" fill="none" />
                           <ellipse cx="8" cy="8" rx="2.5" ry="6" stroke="currentColor" stroke-width="1.2" fill="none" />
                           <line x1="2" y1="6" x2="14" y2="6" stroke="currentColor" stroke-width="1.2" />
@@ -431,19 +417,19 @@
                     <t-tooltip v-if="agent.config?.knowledge_bases?.length || agent.config?.kb_selection_mode === 'all'"
                       :content="$t('agent.features.knowledgeBase')" placement="top">
                       <div class="feature-badge knowledge">
-                        <t-icon name="folder" size="16px" />
+                        <t-icon name="folder" size="14px" />
                       </div>
                     </t-tooltip>
                     <t-tooltip v-if="agent.config?.mcp_services?.length || agent.config?.mcp_selection_mode === 'all'"
                       :content="$t('agent.features.mcp')" placement="top">
                       <div class="feature-badge mcp">
-                        <t-icon name="extension" size="16px" />
+                        <t-icon name="extension" size="14px" />
                       </div>
                     </t-tooltip>
                     <t-tooltip v-if="agent.config?.multi_turn_enabled" :content="$t('agent.features.multiTurn')"
                       placement="top">
                       <div class="feature-badge multi-turn">
-                        <t-icon name="chat-bubble" size="16px" />
+                        <t-icon name="chat-bubble" size="14px" />
                       </div>
                     </t-tooltip>
                   </div>
@@ -513,17 +499,16 @@
             }" role="link" tabindex="0" @keydown.enter.self.prevent="handleSpaceAgentCardClick(shared)" @keydown.space.self.prevent="handleSpaceAgentCardClick(shared)" @click="handleSpaceAgentCardClick(shared)">
               <div class="card-header">
                 <div class="card-header-left">
-                  <div v-if="shared.agent?.avatar" class="builtin-avatar agent-emoji">{{ shared.agent.avatar }}</div>
-                  <AgentAvatar v-else :name="shared.agent?.name" size="small" />
+                  <ResourceCardAvatar kind="agent" :emoji="shared.agent?.avatar" />
                   <span class="card-title" :title="shared.agent?.name">{{ shared.agent?.name }}</span>
                 </div>
                 <t-popup v-if="!shared.is_mine && authStore.hasRole('admin')"
                   :visible="openMoreAgentId === 'shared-tab-' + shared.share_id" trigger="click"
                   overlayClassName="card-more-popup" destroy-on-close placement="bottom-right"
                   @update:visible="(v: boolean) => { openMoreAgentId = v ? 'shared-tab-' + shared.share_id : null }">
-                  <button type="button" :aria-label="$t('common.expand')" class="more-wrap" :class="{ 'active-more': openMoreAgentId === 'shared-tab-' + shared.share_id }"
+                  <button type="button" :aria-label="$t('common.expand')" class="more-wrap" :class="{ 'active-more': openMoreAgentId === 'shared-tab-' + shared.share_id }" :aria-expanded="openMoreAgentId === 'shared-tab-' + shared.share_id" aria-haspopup="true"
                     @click.stop>
-                    <img class="more-icon" src="@/assets/img/more.png" alt="" />
+                    <t-icon name="ellipsis" size="16px" aria-hidden="true" />
                   </button>
                   <template #content>
                     <div class="popup-menu">
@@ -536,7 +521,7 @@
                 </t-popup>
               </div>
               <div class="card-content">
-                <div class="card-description" :title="shared.agent?.description || $t('agent.noDescription')">
+                <div class="card-description" :class="{ 'is-empty': !shared.agent?.description }" :title="shared.agent?.description || $t('agent.noDescription')">
                   {{ shared.agent?.description || $t('agent.noDescription') }}</div>
               </div>
               <div class="card-bottom">
@@ -556,7 +541,7 @@
                     </t-tooltip>
                     <t-tooltip v-if="shared.agent?.config?.web_search_enabled" :content="$t('agent.features.webSearch')"
                       placement="top">
-                      <div class="feature-badge web-search"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"
+                      <div class="feature-badge web-search"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"
                           xmlns="http://www.w3.org/2000/svg">
                           <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2" fill="none" />
                           <ellipse cx="8" cy="8" rx="2.5" ry="6" stroke="currentColor" stroke-width="1.2" fill="none" />
@@ -567,16 +552,16 @@
                     <t-tooltip
                       v-if="shared.agent?.config?.knowledge_bases?.length || shared.agent?.config?.kb_selection_mode === 'all'"
                       :content="$t('agent.features.knowledgeBase')" placement="top">
-                      <div class="feature-badge knowledge"><t-icon name="folder" size="16px" /></div>
+                      <div class="feature-badge knowledge"><t-icon name="folder" size="14px" /></div>
                     </t-tooltip>
                     <t-tooltip
                       v-if="shared.agent?.config?.mcp_services?.length || shared.agent?.config?.mcp_selection_mode === 'all'"
                       :content="$t('agent.features.mcp')" placement="top">
-                      <div class="feature-badge mcp"><t-icon name="extension" size="16px" /></div>
+                      <div class="feature-badge mcp"><t-icon name="extension" size="14px" /></div>
                     </t-tooltip>
                     <t-tooltip v-if="shared.agent?.config?.multi_turn_enabled" :content="$t('agent.features.multiTurn')"
                       placement="top">
-                      <div class="feature-badge multi-turn"><t-icon name="chat-bubble" size="16px" /></div>
+                      <div class="feature-badge multi-turn"><t-icon name="chat-bubble" size="14px" /></div>
                     </t-tooltip>
                   </div>
                 </div>
@@ -612,6 +597,13 @@
             </template>
             <span>{{ $t('agent.createAgent') }}</span>
           </t-button>
+          <t-button v-if="authStore.hasRole('contributor') && assistantStore.pageAccess" variant="outline"
+            class="agent-create-btn" @click="assistantCreateVisible = true">
+            <template #icon>
+              <ResourceIcon type="assistant" :size="16" />
+            </template>
+            {{ $t('assistant.create.agentAction') }}
+          </t-button>
         </EmptyState>
 
         <!-- 空状态：收藏 / 最近 — 不放创建按钮，参见 KnowledgeBaseList 的同处理由 -->
@@ -645,6 +637,13 @@
               </span>
             </template>
             <span>{{ $t('agent.createAgent') }}</span>
+          </t-button>
+          <t-button v-if="authStore.hasRole('contributor') && assistantStore.pageAccess" variant="outline"
+            class="agent-create-btn" @click="assistantCreateVisible = true">
+            <template #icon>
+              <ResourceIcon type="assistant" :size="16" />
+            </template>
+            {{ $t('assistant.create.agentAction') }}
           </t-button>
         </EmptyState>
         <!-- 空状态：空间下 -->
@@ -721,6 +720,8 @@
       </div>
     </Transition>
 
+    <AssistantCreateDialog v-model:visible="assistantCreateVisible" kind="agent" @manual="handleCreateAgent" />
+
     <!-- 智能体编辑器弹窗 -->
     <AgentEditorModal :visible="editorVisible" :mode="editorMode" :agent="editingAgent"
       :initialSection="editorInitialSection"
@@ -735,6 +736,7 @@
 </template>
 
 <script setup lang="ts">
+import { useAssistantDataChange } from '@/utils/assistantDataChange'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { MessagePlugin, Icon as TIcon } from 'tdesign-vue-next'
@@ -752,29 +754,42 @@ import { useMenuStore } from '@/stores/menu'
 import type { SharedAgentInfo, OrganizationSharedAgentItem } from '@/api/organization'
 import AgentEditorModal from './AgentEditorModal.vue'
 import { hasResourceGroupEdit } from '@/utils/resourceGroupPermission'
+import AssistantCreateDialog from '@/components/assistant/AssistantCreateDialog.vue'
+import { useAssistantStore } from '@/stores/assistant'
+import { useAssistantPageContext } from '@/composables/useAssistantPageContext'
 import ContextualGuide from '@/components/ContextualGuide.vue'
 import TenantModelsGuide from '@/components/TenantModelsGuide.vue'
 import { focusAgentEditorSection, markContextualGuideDone } from '@/config/contextualGuides'
 import { useTenantModelReadiness } from '@/composables/useTenantModelReadiness'
 import { useUIStore } from '@/stores/ui'
-import AgentAvatar from '@/components/AgentAvatar.vue'
+import ResourceCardAvatar from '@/components/ResourceCardAvatar.vue'
 import ResourceListToolbar from '@/components/ResourceListToolbar.vue'
 import { matchesResourceQuery } from '@/utils/resourceListSearch'
+import ResourceSortControl from '@/components/ResourceSortControl.vue'
 import ResourceOriginBadge from '@/components/ResourceOriginBadge.vue'
 import { shouldShowResourceOriginBadge } from '@/utils/card-list-badge'
 import { useAuthStore } from '@/stores/auth'
 import { useListUrlState } from '@/composables/useListUrlState'
 import { useResourcePins } from '@/composables/useResourcePins'
 import { integrationSectionKey } from '@/config/settingsRoute'
+import {
+  DEFAULT_RESOURCE_SORT,
+  sortResourcesWithinGroups,
+  type ResourceSortAccessors,
+  type ResourceSortValue,
+} from '@/utils/resourceSorting'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const assistantStore = useAssistantStore()
+const assistantCreateVisible = ref(false)
 const uiStore = useUIStore()
 const orgStore = useOrganizationStore()
 const chatResources = useChatResourcesStore()
 const { loaded: modelsReadyLoaded, isReadyForAgent } = useTenantModelReadiness()
+const selectedResourceSort = ref<ResourceSortValue>(DEFAULT_RESOURCE_SORT)
 
 interface AgentWithUI extends CustomAgent {
   showMore?: boolean
@@ -786,6 +801,32 @@ interface AgentWithUI extends CustomAgent {
  *  (isMine: false, org_name, source_tenant_id, share_id, permission, disabled_by_me?).
  *  `permission` drives the「可编辑 / 仅查看」分组，仅在 shared 分支携带。 */
 type DisplayAgent = (AgentWithUI & { isMine: true }) | (CustomAgent & { isMine: false; org_name: string; source_tenant_id: number; share_id: string; permission?: string; showMore?: boolean; disabled_by_me?: boolean })
+
+const flatAgentSortAccessors: ResourceSortAccessors<any> = {
+  getName: item => item?.name,
+  getUpdatedAt: item => item?.updated_at ?? item?.shared_at,
+  getCreatedAt: item => item?.created_at ?? item?.shared_at,
+}
+
+const sharedAgentSortAccessors: ResourceSortAccessors<OrganizationSharedAgentItem> = {
+  getName: item => item.agent?.name,
+  getUpdatedAt: item => item.agent?.updated_at ?? item.shared_at,
+  getCreatedAt: item => item.agent?.created_at ?? item.shared_at,
+}
+
+const displayAgentSortGroup = (item: DisplayAgent) => {
+  if (item.is_builtin) return 'builtin'
+  if (item.isMine) return isMyAgent(item) ? 'mine' : 'tenantOthers'
+  return isSharedAgentEditable(item.permission) ? 'sharedEditable' : 'sharedReadonly'
+}
+
+const sortDisplayAgents = (items: readonly DisplayAgent[]) => sortResourcesWithinGroups(
+  items,
+  selectedResourceSort.value,
+  displayAgentSortGroup,
+  ['builtin', 'mine', 'tenantOthers', 'sharedEditable', 'sharedReadonly'],
+  flatAgentSortAccessors,
+)
 
 // 左侧空间选择：默认根据当前角色决定。
 // 与 KnowledgeBaseList 同款逻辑：Viewer 在当前空间里通常没有自建智能体，
@@ -901,10 +942,10 @@ const recentsAgentList = computed<DisplayAgent[]>(() => {
 })
 
 const unsearchedFilteredAgents = computed<DisplayAgent[]>(() => {
-  if (spaceSelection.value === 'favorites') return favoritesAgentList.value
-  if (spaceSelection.value === 'recents') return recentsAgentList.value
+  if (spaceSelection.value === 'favorites') return sortDisplayAgents(favoritesAgentList.value)
+  if (spaceSelection.value === 'recents') return sortDisplayAgents(recentsAgentList.value)
   if (spaceSelection.value === 'mine') {
-    return agents.value.map(a => ({ ...a, isMine: true as const }))
+    return sortDisplayAgents(agents.value.map(a => ({ ...a, isMine: true as const })))
   }
   if (spaceSelection.value !== 'all') return []
   const list: DisplayAgent[] = []
@@ -945,36 +986,33 @@ const unsearchedFilteredAgents = computed<DisplayAgent[]>(() => {
       showMore: false
     } as DisplayAgent)
   })
-  return list
+  return sortDisplayAgents(list)
 })
 const filteredAgents = computed(() => unsearchedFilteredAgents.value.filter(item => matchesResourceQuery(item, keyword.value)))
 
-// 「工作空间」视图下的稳定排序：本空间内「我创建」在前、「同事创建 / 内建」
-// 在后。给 contributor 视图把「本空间 · 仅查看」分组标题正好插在过渡处。
+// 「工作空间」固定保持“内置 → 我创建 → 同事创建”，用户选择只影响组内顺序。
 const unsearchedSortedMineAgents = computed(() => {
-  // 内置 → 我创建 → 同事创建。与 filteredAgents 的"全部"视图保持同序。
-  const builtin: AgentWithUI[] = []
-  const own: AgentWithUI[] = []
-  const teammate: AgentWithUI[] = []
-  agents.value.forEach(a => {
-    if (a.is_builtin) builtin.push(a)
-    else if (isMyAgent(a)) own.push(a)
-    else teammate.push(a)
-  })
-  return [...builtin, ...own, ...teammate]
+  return sortResourcesWithinGroups(
+    agents.value,
+    selectedResourceSort.value,
+    item => item.is_builtin ? 'builtin' : isMyAgent(item) ? 'mine' : 'tenantOthers',
+    ['builtin', 'mine', 'tenantOthers'],
+    flatAgentSortAccessors,
+  )
 })
 const sortedMineAgents = computed(() => unsearchedSortedMineAgents.value.filter(item => matchesResourceQuery(item, keyword.value)))
 
-// 空间视角下的稳定排序：我自己创建的（is_mine）放前面，其余按 permission 切分。
+// 空间视角固定保持“我共享的 → 可编辑 → 仅查看”，用户选择只影响组内顺序。
 const unsearchedSortedSpaceAgentsList = computed(() => {
-  return [...spaceAgentsList.value].sort((a, b) => {
-    const aMine = a.is_mine ? 0 : 1
-    const bMine = b.is_mine ? 0 : 1
-    if (aMine !== bMine) return aMine - bMine
-    const aE = isSharedAgentEditable(a.permission) ? 0 : 1
-    const bE = isSharedAgentEditable(b.permission) ? 0 : 1
-    return aE - bE
-  })
+  return sortResourcesWithinGroups(
+    spaceAgentsList.value,
+    selectedResourceSort.value,
+    item => item.is_mine
+      ? 'sharedByMe'
+      : isSharedAgentEditable(item.permission) ? 'sharedEditable' : 'sharedReadonly',
+    ['sharedByMe', 'sharedEditable', 'sharedReadonly'],
+    sharedAgentSortAccessors,
+  )
 })
 const sortedSpaceAgentsList = computed(() => unsearchedSortedSpaceAgentsList.value.filter(item => matchesResourceQuery(item.agent, keyword.value)))
 const loading = ref(false)
@@ -1003,6 +1041,12 @@ const sharedAgentMcpScopeText = computed(() => {
 const editorVisible = ref(false)
 const editorMode = ref<'create' | 'edit'>('create')
 const editingAgent = ref<CustomAgent | null>(null)
+useAssistantPageContext(() => {
+  const agent = editingAgent.value
+  if (!editorVisible.value || editorMode.value !== 'edit' || !agent) return null
+  if (!agents.value.some(own => own.id === agent.id && own.tenant_id === agent.tenant_id)) return null
+  return { page: 'agent_editor', agentId: agent.id, agentName: agent.name }
+})
 const editorInitialSection = ref<string>('basic')
 const editorInitialHighlightField = ref<string>('')
 /** 当前打开三点菜单的卡片 agent.id（用于受控弹出层，避免 computed 项无持久引用导致菜单不响应） */
@@ -1161,6 +1205,8 @@ watch(creatorFilter, () => {
   fetchList(true)
 })
 
+useAssistantDataChange(() => { void fetchList(true) }, { areas: ['agent'] })
+
 onMounted(() => {
   fetchList()
   window.addEventListener('openAgentEditor', handleOpenAgentEditor as EventListener)
@@ -1263,7 +1309,8 @@ function canManageAgent(agent: AgentWithUI): boolean {
   if (agent.group_access_permission && !authStore.hasRole('admin')) return false
   const userId = authStore.user?.id || ''
   const creatorId = (agent as any).created_by || ''
-  if (creatorId && userId && creatorId === userId) return true
+  // A creator demoted to Viewer no longer manages it (access.CreatorRoleFloor).
+  if (creatorId && userId && creatorId === userId && authStore.hasRole('contributor')) return true
   return authStore.hasRole('admin')
 }
 function canEditAgent(agent: AgentWithUI): boolean {
@@ -1330,7 +1377,11 @@ const tenantSectionIconName = computed(() =>
 // 思路——空 Set = 全展开，避免新增分段还得维护默认值。
 type AgentSectionKey = 'builtin' | 'mine' | 'tenantOthers' | 'sharedByMe' | 'sharedEditable' | 'sharedReadonly'
 const collapsedAgentSections = ref<Set<AgentSectionKey>>(new Set())
-const isAgentSectionCollapsed = (key: AgentSectionKey) => collapsedAgentSections.value.has(key)
+const isAgentSectionCollapsed = (key: AgentSectionKey) => {
+  // Lite 隐藏了「我创建的」折叠入口，对应卡片始终展开。
+  if (authStore.isLiteMode && key === 'mine') return false
+  return collapsedAgentSections.value.has(key)
+}
 const toggleAgentSection = (key: AgentSectionKey) => {
   const next = new Set(collapsedAgentSections.value)
   if (next.has(key)) next.delete(key)
@@ -1582,6 +1633,13 @@ watch(keyword, () => { collapsedAgentSections.value = new Set() })
   line-height: 20px;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .header-action-btn {
   padding: 0;
   min-width: 28px;
@@ -1612,7 +1670,8 @@ watch(keyword, () => { collapsedAgentSections.value = new Set() })
   }
 
   :deep(.t-icon),
-  :deep(.btn-icon-wrapper) {
+  :deep(.btn-icon-wrapper),
+  :deep(.resource-icon) {
     color: var(--td-brand-color);
     display: inline-flex;
     align-items: center;
@@ -1632,8 +1691,9 @@ watch(keyword, () => { collapsedAgentSections.value = new Set() })
 }
 
 .card-bottom-source .org-icon {
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
+  color: var(--td-text-color-secondary);
   flex-shrink: 0;
 }
 
@@ -1646,6 +1706,10 @@ watch(keyword, () => { collapsedAgentSections.value = new Set() })
 }
 
 // 共享给我 · 可编辑 / 仅查看 分组标题，与 KB 列表 .kb-section-header 对齐。
+.is-lite .agent-card.is-builtin + .agent-card:not(.is-builtin) {
+  grid-column-start: 1;
+}
+
 .agent-section-header {
   .resource-section-header();
 }
@@ -1658,7 +1722,7 @@ watch(keyword, () => { collapsedAgentSections.value = new Set() })
 .agent-card {
   .resource-card();
 
-  .agent-favorite-star { .resource-favorite-button(); }
+  .resource-card-quiet();
 }
 
 .builtin-badge {
@@ -1675,26 +1739,6 @@ watch(keyword, () => { collapsedAgentSections.value = new Set() })
   flex-shrink: 0;
 }
 
-.builtin-avatar {
-  border-radius: var(--app-radius-md);
-
-  &.agent-emoji {
-    font-size: var(--app-text-2xl);
-    line-height: 1;
-    background: var(--td-bg-color-container-hover);
-  }
-
-  &.normal {
-    background: linear-gradient(135deg, color-mix(in srgb, var(--td-brand-color) 15%, transparent) 0%, color-mix(in srgb, var(--td-brand-color) 8%, transparent) 100%);
-    color: var(--td-brand-color-active);
-  }
-
-  &.agent {
-    background: linear-gradient(135deg, color-mix(in srgb, var(--app-accent-purple) 15%, transparent) 0%, color-mix(in srgb, var(--app-accent-purple) 8%, transparent) 100%);
-    color: var(--td-brand-color);
-  }
-}
-
 /* 与知识库卡片内容区一致 */
 /* 三个列表卡片统一：描述字体 */
 .bottom-left {
@@ -1703,62 +1747,9 @@ watch(keyword, () => { collapsedAgentSections.value = new Set() })
   gap: 8px;
 }
 
+// Card capability icons share the knowledge-base list's quiet treatment.
 .feature-badge {
   .resource-feature-badge();
-
-  &.mode-normal {
-    background: color-mix(in srgb, var(--td-brand-color) 8%, transparent);
-    color: var(--td-brand-color-active);
-
-    &:hover {
-      background: color-mix(in srgb, var(--td-brand-color) 12%, transparent);
-    }
-  }
-
-  &.mode-agent {
-    background: color-mix(in srgb, var(--app-accent-purple) 8%, transparent);
-    color: var(--td-brand-color);
-
-    &:hover {
-      background: color-mix(in srgb, var(--app-accent-purple) 12%, transparent);
-    }
-  }
-
-  &.web-search {
-    background: color-mix(in srgb, var(--td-warning-color) 8%, transparent);
-    color: var(--td-warning-color);
-
-    &:hover {
-      background: color-mix(in srgb, var(--td-warning-color) 12%, transparent);
-    }
-  }
-
-  &.knowledge {
-    background: var(--td-bg-color-secondarycontainer);
-    color: var(--td-text-color-secondary);
-
-    &:hover {
-      background: var(--td-bg-color-container-hover);
-    }
-  }
-
-  &.mcp {
-    background: color-mix(in srgb, var(--td-error-color) 8%, transparent);
-    color: var(--td-error-color);
-
-    &:hover {
-      background: color-mix(in srgb, var(--td-error-color) 12%, transparent);
-    }
-  }
-
-  &.multi-turn {
-    background: color-mix(in srgb, var(--td-brand-color) 8%, transparent);
-    color: var(--td-brand-color);
-
-    &:hover {
-      background: color-mix(in srgb, var(--td-brand-color) 12%, transparent);
-    }
-  }
 }
 
 // 删除确认对话框样式

@@ -66,6 +66,23 @@ func TestTaskInitiatorSnapshotsAPIKeyWithoutRestoringScope(t *testing.T) {
 	}
 }
 
+// Agent audit attribution on a queued mutation must survive without promoting
+// the synthetic caller into a human or carrying its admin authority.
+func TestAgentTaskInitiatorPreservesAttributionWithoutSyntheticAuthority(t *testing.T) {
+	action := AuditAgentAction{SessionID: "s1", Operation: "knowledge.update", ActingVia: "automation:job-7"}
+	ctx := WithAuditAgentAction(context.Background(), action)
+	ctx = context.WithValue(ctx, UserIDContextKey, "system-7")
+	ctx = context.WithValue(ctx, SystemAdminContextKey, true)
+	initiator := TaskInitiatorFromContext(ctx)
+	worker := initiator.Apply(context.Background())
+	if got, ok := AuditAgentActionFromContext(worker); !ok || got != action {
+		t.Fatalf("restored action = %#v, %v", got, ok)
+	}
+	if id, ok := UserIDFromContext(worker); ok || id != "" || IsSystemAdminFromContext(worker) {
+		t.Fatal("synthetic agent action restored a user or administrator grant")
+	}
+}
+
 func TestTaskInitiatorKeepsHumanActorAndAPIKey(t *testing.T) {
 	requestCtx := WithTenantAPIKeyScope(context.Background(), TenantAPIKeyScope{
 		KeyID: 3, Name: "bob-mcp",

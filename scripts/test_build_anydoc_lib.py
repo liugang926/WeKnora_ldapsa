@@ -1,4 +1,4 @@
-"""The pinned parser must receive zip-9 and calamine CFB security updates."""
+"""The pinned parser must receive the pinned zip security update."""
 from pathlib import Path
 import os
 import shutil
@@ -17,13 +17,12 @@ class PrepareAnyDocTest(unittest.TestCase):
         shutil.copyfile(Path(__file__).with_name('build-anydoc-lib.sh'), self.script)
         self.crate = self.root / 'third_party/anydoc-go'
         self.crate.mkdir(parents=True)
-        (self.crate / 'Cargo.toml').write_text('anydoc = "=0.1.9"\n')
-        (self.crate / 'version.go').write_text('const Version = "0.1.9"\n')
-        self.source = self.root / 'cargo/registry/src/local/anydoc-0.1.9'
+        (self.crate / 'Cargo.toml').write_text('anydoc = "=0.2.4"\n')
+        (self.crate / 'version.go').write_text('const Version = "0.2.4"\n')
+        self.source = self.root / 'cargo/registry/src/local/anydoc-0.2.4'
         (self.source / 'src').mkdir(parents=True)
         (self.source / 'src/lib.rs').write_text('use render::markdown::document_to_markdown;\n')
         (self.source / 'Cargo.toml').write_text(
-            '[dependencies.calamine]\nversion = "0.36.1"\nfeatures = ["dates"]\n'
             '[dependencies.zip]\nversion = "8.6.0"\nfeatures = ["deflate"]\n')
 
     def prepare(self):
@@ -37,8 +36,6 @@ class PrepareAnyDocTest(unittest.TestCase):
         patched = self.crate / 'patched-anydoc'
         manifest = (patched / 'Cargo.toml').read_text()
         self.assertIn('version = "=9.0.5"', manifest)
-        self.assertIn('version = "=0.38.0"', manifest)
-        self.assertIn('features = ["dates"]', manifest)
         self.assertIn('features = ["deflate"]', manifest)
         self.assertTrue((patched / 'src/lib.rs').read_text().startswith('pub use '))
         self.assertEqual(self.prepare().returncode, 0)
@@ -46,21 +43,21 @@ class PrepareAnyDocTest(unittest.TestCase):
     def test_refreshes_archive_prepared_before_security_update(self):
         patched = self.crate / 'patched-anydoc'
         shutil.copytree(self.source, patched)
-        (patched / '.weknora-patched').write_text('0.1.9\n')
+        (patched / '.weknora-patched').write_text('0.2.4\n')
         self.assertEqual(self.prepare().returncode, 0)
         self.assertIn('version = "=9.0.5"', (patched / 'Cargo.toml').read_text())
 
-    def test_refreshes_cache_prepared_with_vulnerable_calamine(self):
+    def test_refreshes_cache_prepared_with_an_older_zip_patch(self):
         patched = self.crate / 'patched-anydoc'
         shutil.copytree(self.source, patched)
         manifest = patched / 'Cargo.toml'
-        manifest.write_text(manifest.read_text().replace('0.36.1', '=0.37.0'))
+        manifest.write_text(manifest.read_text().replace('8.6.0', '=9.0.4'))
         marker = patched / '.weknora-patched'
-        marker.write_text('0.1.9:zip9.0.5:calamine0.37.0\n')
+        marker.write_text('0.2.4:zip9.0.4\n')
         self.assertEqual(self.prepare().returncode, 0)
-        self.assertIn('version = "=0.38.0"', manifest.read_text())
-        self.assertNotIn('0.37.0', manifest.read_text())
-        self.assertEqual(marker.read_text(), '0.1.9:zip9.0.5:calamine0.38.0\n')
+        self.assertIn('version = "=9.0.5"', manifest.read_text())
+        self.assertNotIn('9.0.4', manifest.read_text())
+        self.assertEqual(marker.read_text(), '0.2.4:zip9.0.5\n')
         # The refreshed marker must also permit a subsequent cached build.
         (patched / 'cache-sentinel').write_text('retained')
         self.assertEqual(self.prepare().returncode, 0)
@@ -68,8 +65,8 @@ class PrepareAnyDocTest(unittest.TestCase):
 
     def test_dependency_drift_refuses_incomplete_patch(self):
         path = self.source / 'Cargo.toml'
-        for content in ('[dependencies.zip]\nversion = "8.6.0"\n',
-                        path.read_text().replace('0.36.1', '0.40.0')):
+        for content in ('[dependencies.not-zip]\nversion = "8.6.0"\n',
+                        path.read_text().replace('8.6.0', '8.7.0')):
             with self.subTest(content=content):
                 path.write_text(content)
                 result = self.prepare()
@@ -77,7 +74,7 @@ class PrepareAnyDocTest(unittest.TestCase):
                 self.assertFalse((self.crate / 'patched-anydoc/.weknora-patched').exists())
 
     def test_parser_identity_drift_refuses_mislabeled_documents(self):
-        (self.crate / 'version.go').write_text('const Version = "0.1.8"\n')
+        (self.crate / 'version.go').write_text('const Version = "0.2.3"\n')
         self.assertNotEqual(self.prepare().returncode, 0)
         self.assertFalse((self.crate / 'patched-anydoc').exists())
 

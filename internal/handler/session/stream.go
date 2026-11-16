@@ -47,9 +47,11 @@ var errGenerationStoppedByUser = stderrors.New("generation stopped by user")
 // @Produce      text/event-stream
 // @Param        session_id     path      string  true   "会话ID"
 // @Param        message_id     query     string  true   "消息ID"
+// @Param        resume_pending_id query  string  false  "等待此审批恢复后的事件流"
 // @Param        resource_urls  query     string  false  "文件引用形式，public 返回可加载直链"  Enums(handle, public)  default(handle)
-// @Success      200            {object}  map[string]interface{}  "流式响应"
+// @Success      200            {string}  string  "SSE 事件流"
 // @Failure      404         {object}  errors.AppError         "会话或消息不存在"
+// @Failure      409         {object}  errors.AppError         "审批恢复后的事件流尚未就绪"
 // @Security     Bearer
 // @Security     ApiKeyAuth
 // @Router       /sessions/continue-stream/{session_id} [get]
@@ -189,6 +191,23 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 		}
 	}
 
+	// A scheduler may not have reset the previous segment yet. Never replay
+	// its terminal event as if the just-approved continuation had completed.
+	if pendingID := c.Query("resume_pending_id"); pendingID != "" && !message.IsCompleted {
+		ready := false
+		for _, evt := range events {
+			if (evt.Type == types.ResponseTypeAgentQuery && evt.Data["resume_pending_id"] == pendingID) ||
+				(evt.Type == types.ResponseTypeRunResumed && evt.Data["pending_id"] == pendingID) {
+				ready = true
+				break
+			}
+		}
+		if !ready {
+			c.JSON(http.StatusConflict, gin.H{"success": false, "error": "The resumed stream is not ready yet"})
+			return
+		}
+	}
+
 	logger.Infof(
 		ctx, "Preparing to replay %d events and continue streaming, session ID: %s, message ID: %s",
 		len(events), sessionID, messageID,
@@ -229,6 +248,8 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 	logger.Debug(ctx, "Starting event update monitoring")
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
+	heartbeat := time.NewTicker(10 * time.Second)
+	defer heartbeat.Stop()
 
 	for {
 		select {
@@ -236,6 +257,9 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 			logger.Debug(ctx, "Client connection closed")
 			return
 
+		case <-heartbeat.C:
+			c.SSEvent("message", gin.H{"response_type": "heartbeat"})
+			c.Writer.Flush()
 		case <-ticker.C:
 			// Get new events from current offset
 			newEvents, newOffset, err := h.streamManager.GetEvents(ctx, sessionID, messageID, currentOffset)
@@ -488,6 +512,13 @@ func (h *Handler) StopSession(c *gin.Context) {
 		return
 	}
 
+	if h.stopCollaboration != nil {
+		if err := h.stopCollaboration(ctx, sessionID, assistantMessageID); err != nil {
+			c.JSON(500, gin.H{"error": "Failed to stop delegated tasks"})
+			return
+		}
+	}
+
 	// Check if message is already completed (stopped)
 	if message.IsCompleted {
 		logger.Infof(ctx, "Message %s is already completed, no need to stop", assistantMessageID)
@@ -522,6 +553,7 @@ func (h *Handler) StopSession(c *gin.Context) {
 	}
 
 	logger.Infof(ctx, "Stop event written successfully for session: %s, message: %s", sessionID, assistantMessageID)
+	h.notifyBackgroundStop(ctx, session)
 	c.JSON(200, gin.H{
 		"success": true,
 		"message": "Generation stopped",
@@ -543,9 +575,19 @@ func (h *Handler) handleAgentEventsForSSE(
 ) {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
+	heartbeat := time.NewTicker(10 * time.Second)
+	defer heartbeat.Stop()
 
 	lastOffset := 0
 	log := logger.GetLogger(ctx)
+	// Agent mode releases the sandbox turn lease, and therefore cancels ctx,
+	// before the completion event is published. Polling Redis with that
+	// context drops the terminal event and the client waits at the end of
+	// the answer. Client disconnect is still observed on the request below.
+	ctx, cancelPoll := context.WithCancel(context.WithoutCancel(ctx))
+	stopTrackingDisconnect := context.AfterFunc(c.Request.Context(), cancelPoll)
+	defer stopTrackingDisconnect()
+	defer cancelPoll()
 
 	log.Infof("Starting pull-based SSE streaming for session=%s, message=%s", sessionID, assistantMessageID)
 	var liveMessage *types.Message
@@ -564,6 +606,9 @@ func (h *Handler) handleAgentEventsForSSE(
 			)
 			return
 
+		case <-heartbeat.C:
+			c.SSEvent("message", gin.H{"response_type": "heartbeat"})
+			c.Writer.Flush()
 		case <-ticker.C:
 			// Get new events from StreamManager using offset
 			events, newOffset, err := h.streamManager.GetEvents(ctx, sessionID, assistantMessageID, lastOffset)

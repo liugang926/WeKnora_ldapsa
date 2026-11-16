@@ -11,7 +11,10 @@ import (
 )
 
 func TestPDFTextRecoveryUsesRicherLocalText(t *testing.T) {
-	primary := &stubDocReader{result: &types.ReadResult{MarkdownContent: "XH-CG-2026-01\nPDF"}}
+	primary := &stubDocReader{result: &types.ReadResult{
+		MarkdownContent: "XH-CG-2026-01\nPDF",
+		SourceBlocks:    []types.SourceBlock{{Start: 0, End: 2}},
+	}}
 	alternate := &stubDocReader{result: &types.ReadResult{
 		MarkdownContent: strings.Repeat("中文采购审批正文。", 12),
 	}}
@@ -25,18 +28,25 @@ func TestPDFTextRecoveryUsesRicherLocalText(t *testing.T) {
 	if result.MarkdownContent != alternate.result.MarkdownContent {
 		t.Fatalf("recovered markdown = %q", result.MarkdownContent)
 	}
+	if len(result.SourceBlocks) != 0 {
+		t.Fatal("replaced PDF text retained stale source offsets")
+	}
 	if result.Metadata["pdf_text_recovered"] != AnydocEngineName {
 		t.Fatalf("recovery metadata = %#v", result.Metadata)
 	}
 }
 
 func TestPDFTextRecoveryKeepsDocReaderImages(t *testing.T) {
-	primaryMarkdown := "![图](images/page-1.png)\nXH-CG-2026-01"
+	primaryMarkdown := "  ![图](images/page-1.png)\nXH-CG-2026-01\n"
 	primary := &stubDocReader{result: &types.ReadResult{
 		MarkdownContent: primaryMarkdown,
 		ImageRefs:       []types.ImageRef{{OriginalRef: "images/page-1.png"}},
+		SourceBlocks:    []types.SourceBlock{{Start: 4, End: 5}},
 	}}
-	alternate := &stubDocReader{result: &types.ReadResult{MarkdownContent: strings.Repeat("中文审批正文。", 12)}}
+	alternate := &stubDocReader{result: &types.ReadResult{
+		MarkdownContent: strings.Repeat("中文审批正文。", 12),
+		SourceBlocks:    []types.SourceBlock{{Start: 0, End: 2}},
+	}}
 	reader := &pdfTextRecoveryReader{primary: primary, alternate: alternate}
 
 	result, err := reader.Read(context.Background(), &types.ReadRequest{
@@ -48,6 +58,16 @@ func TestPDFTextRecoveryKeepsDocReaderImages(t *testing.T) {
 	if !strings.Contains(result.MarkdownContent, primaryMarkdown) ||
 		!strings.Contains(result.MarkdownContent, alternate.result.MarkdownContent) || len(result.ImageRefs) != 1 {
 		t.Fatalf("recovered PDF lost images or text: %#v", result)
+	}
+	chars := []rune(result.MarkdownContent)
+	if len(result.SourceBlocks) != 2 {
+		t.Fatalf("source blocks = %v", result.SourceBlocks)
+	}
+	for i, want := range []string{"图", "中文"} {
+		b := result.SourceBlocks[i]
+		if b.End > len(chars) || string(chars[b.Start:b.End]) != want {
+			t.Fatalf("block %d no longer maps to %q: %+v", i, want, b)
+		}
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/logprivacy"
+	"github.com/Tencent/WeKnora/internal/models/imageprep"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
@@ -73,6 +74,12 @@ func (s *privacyRerankSpy) Rerank(ctx context.Context, _ string, documents []str
 	return []RankResult{{Index: 0, Document: DocumentInfo{Text: documents[0]}, RelevanceScore: 1}}, nil
 }
 
+func (*privacyRerankSpy) AcceptsImages() bool           { return true }
+func (*privacyRerankSpy) ImageLimits() imageprep.Limits { return imageprep.Limits{} }
+func (s *privacyRerankSpy) RerankImages(ctx context.Context, query string, images []Image) ([]RankResult, error) {
+	return s.Rerank(ctx, query, describeImages(images))
+}
+
 func TestSourceContentRerankTelemetryBypassPreservesOrdinary(t *testing.T) {
 	var payload strings.Builder
 	var mu sync.Mutex
@@ -84,6 +91,11 @@ func TestSourceContentRerankTelemetryBypassPreservesOrdinary(t *testing.T) {
 		response, err := wrapper.Rerank(ctx, "PRIVATE_SOURCE_QUERY", []string{"PRIVATE_SOURCE_DOCUMENT"})
 		require.NoError(t, err)
 		require.Equal(t, "PRIVATE_SOURCE_DOCUMENT", response[0].Document.Text)
+		require.True(t, spy.ctx == ctx)
+		require.False(t, spy.recording)
+		_, err = wrapper.RerankImages(ctx, "PRIVATE_SOURCE_IMAGE_QUERY",
+			[]Image{{Data: []byte("PRIVATE_SOURCE_IMAGE")}})
+		require.NoError(t, err)
 		require.True(t, spy.ctx == ctx)
 		require.False(t, spy.recording)
 	}

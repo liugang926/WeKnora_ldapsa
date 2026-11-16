@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -15,11 +14,17 @@ func osMkdirAll(dir string) error { return os.MkdirAll(dir, 0o755) }
 
 type fakeProjects struct{ dir string }
 
-func (f fakeProjects) ProjectDirForSession(context.Context, string) (string, bool) {
+func (f fakeProjects) ProjectDirForSession(context.Context, string) (string, bool, error) {
 	if f.dir == "" {
-		return "", false
+		return "", false, nil
 	}
-	return f.dir, true
+	return f.dir, true, nil
+}
+
+type revokedProjects struct{}
+
+func (revokedProjects) ProjectDirForSession(context.Context, string) (string, bool, error) {
+	return "", false, ErrProjectDirRevoked
 }
 
 func workspaceFixture(t *testing.T, projectDir string) WorkspaceResolver {
@@ -73,13 +78,19 @@ func TestResolveProjectWorkspaceIsSharedAcrossSessions(t *testing.T) {
 	require.Equal(t, a.Root, b.Root)
 }
 
-func TestResolveSessionWorkspaceCreatesDatedDirectory(t *testing.T) {
-	ws, err := workspaceFixture(t, "").Resolve(context.Background(), "session-abcdef123456")
+func TestResolveSessionWorkspaceSitsDirectlyUnderSessionRoot(t *testing.T) {
+	base := t.TempDir()
+	sessionRoot := filepath.Join(base, "Documents", "WeKnora")
+	r := NewWorkspaceResolver(DirLayout{SessionRoot: sessionRoot}, fakeProjects{})
+	ws, err := r.Resolve(context.Background(), "session-abcdef123456")
 	require.NoError(t, err)
 
 	require.Equal(t, WorkspaceSession, ws.Kind)
 	require.DirExists(t, ws.Root)
-	require.Contains(t, ws.Root, "session-")
+	resolvedRoot, err := filepath.EvalSymlinks(sessionRoot)
+	require.NoError(t, err)
+	require.Equal(t, resolvedRoot, filepath.Dir(ws.Root))
+	require.Equal(t, "session-"+sanitizeSegment("session-abcdef123456"), filepath.Base(ws.Root))
 	require.False(t, ws.ProtectGit)
 	require.NoDirExists(t, filepath.Join(ws.Root, "input"))
 	require.NoDirExists(t, filepath.Join(ws.Root, "output"))
@@ -114,21 +125,42 @@ func TestResolveRejectsEmptySessionID(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestResolveSessionWorkspaceKeepsPathAfterMidnight(t *testing.T) {
+func TestResolveFailsClosedWhenBoundProjectIsRevoked(t *testing.T) {
 	base := t.TempDir()
-	r := NewWorkspaceResolver(DirLayout{
-		SessionRoot: filepath.Join(base, "Documents", "WeKnora"),
-	}, fakeProjects{}).(*workspaceResolver)
+	sessionRoot := filepath.Join(base, "Documents", "WeKnora")
+	r := NewWorkspaceResolver(DirLayout{SessionRoot: sessionRoot}, revokedProjects{})
 
-	day1 := time.Date(2026, 9, 20, 23, 0, 0, 0, time.UTC)
-	r.now = func() time.Time { return day1 }
+	_, err := r.Resolve(context.Background(), "sess-revoked")
+	require.ErrorIs(t, err, ErrProjectDirRevoked)
+
+	if _, statErr := os.Stat(sessionRoot); !os.IsNotExist(statErr) {
+		entries, readErr := os.ReadDir(sessionRoot)
+		require.NoError(t, readErr)
+		require.Empty(t, entries, "revoking a project must not allocate a replacement workspace")
+	}
+}
+
+func TestResolveSessionWorkspaceIsStable(t *testing.T) {
+	r := workspaceFixture(t, "")
 	first, err := r.Resolve(context.Background(), "sess-keep")
 	require.NoError(t, err)
-
-	r.now = func() time.Time { return day1.Add(2 * time.Hour) }
 	second, err := r.Resolve(context.Background(), "sess-keep")
 	require.NoError(t, err)
 	require.Equal(t, first.Root, second.Root)
+}
+
+func TestResolveSessionWorkspaceIgnoresPlantedSymlink(t *testing.T) {
+	base := t.TempDir()
+	sessionRoot := filepath.Join(base, "sessions")
+	outside := filepath.Join(base, "outside")
+	require.NoError(t, osMkdirAll(sessionRoot))
+	require.NoError(t, osMkdirAll(outside))
+	link := filepath.Join(sessionRoot, "session-"+sanitizeSegment("sess-link"))
+	require.NoError(t, os.Symlink(outside, link))
+
+	r := NewWorkspaceResolver(DirLayout{SessionRoot: sessionRoot}, fakeProjects{})
+	_, err := r.Resolve(context.Background(), "sess-link")
+	require.Error(t, err, "a symlink in place of the workspace must not be followed")
 }
 
 func TestResolveSessionWorkspaceUsesFullSessionID(t *testing.T) {

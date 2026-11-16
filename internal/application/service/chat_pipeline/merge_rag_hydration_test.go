@@ -75,6 +75,7 @@ func TestRAGMergeCapturedParentAndNeighborRetainOriginalReceipt(t *testing.T) {
 			KnowledgeBaseID: "kb",
 			ChunkType:       types.ChunkTypeText,
 			Content:         "actual captured base",
+			ParentChunkID:   "parent",
 			NextChunkID:     "next",
 		},
 		"next": {
@@ -152,4 +153,34 @@ func TestRAGMergeUnionDoesNotDropAnEarlierDependency(t *testing.T) {
 	recordMergedChild(context.Background(), "doc", target, source, "test")
 	require.NoError(t, target.SourceLineage.RequireComplete())
 	require.Len(t, target.SourceLineage.Sources, 2)
+}
+
+func TestCapturedImagesValidateTheirOwnRowAndKeepTheirEvidence(t *testing.T) {
+	lineage := mergeRAGTestLineage(t, "77", "doc")
+	imageTypes := []types.ChunkType{types.ChunkTypeImageOCR, types.ChunkTypeImageCaption, types.ChunkTypeImageVector}
+	for _, kind := range imageTypes {
+		t.Run(kind, func(t *testing.T) {
+			image := &types.Chunk{
+				ID: "image", ChunkType: kind, ParentChunkID: "text", KnowledgeID: "doc", KnowledgeBaseID: "kb",
+				Content: "image evidence", ImageInfo: `[{"url":"local://capture"}]`,
+			}
+			reader := &mergeSnapshotTestReader{rows: map[string]*types.Chunk{"image": image}, lineage: lineage}
+			plugin := &PluginMerge{ragChunks: reader}
+			hit := &types.SearchResult{
+				ID: image.ID, ChunkType: kind, ParentChunkID: "text", KnowledgeID: "doc", KnowledgeBaseID: "kb",
+				Content: image.Content, ImageInfo: image.ImageInfo, SourceLineage: lineage,
+			}
+			plugin.resolveCapturedParents(context.Background(), []*types.SearchResult{hit})
+			require.NoError(t, hit.SourceLineage.RequireComplete())
+			require.Equal(t, image.Content, hit.Content)
+			require.Equal(t, image.ImageInfo, hit.ImageInfo)
+			forged := *hit
+			forged.ChunkType, forged.ParentChunkID = types.ChunkTypeText, ""
+			plugin.resolveCapturedParents(context.Background(), []*types.SearchResult{&forged})
+			require.ErrorIs(t, forged.SourceLineage.RequireComplete(), types.ErrSourceLineageUnknown)
+			hit.ParentChunkID = "different parent"
+			plugin.resolveCapturedParents(context.Background(), []*types.SearchResult{hit})
+			require.ErrorIs(t, hit.SourceLineage.RequireComplete(), types.ErrSourceLineageUnknown)
+		})
+	}
 }

@@ -27,11 +27,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/sandbox/admission"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -89,6 +89,12 @@ type TenantSandboxResolverDeps struct {
 	// (session fork). Optional: nil is the ordinary path.
 	Bootstrapper SessionBootstrapper
 
+	// Allocations, Admission and Namespace are passed to every session-bound
+	// manager; see SessionBoundManagerConfig.
+	Allocations AllocationDirectory
+	Admission   admission.Registry
+	Namespace   string
+
 	// SharedTransport is reused by every tenant's HTTP client. Optional; a
 	// guarded transport is installed when nil.
 	SharedTransport *http.Transport
@@ -141,11 +147,7 @@ func NewGuardedTransport() *http.Transport {
 
 func NewGuardedTransportWithPolicy(policy OutboundURLPolicy) *http.Transport {
 	return &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout:   10 * time.Second,
-			KeepAlive: 30 * time.Second,
-			Control:   SafeDialControlForPolicy(policy),
-		}).DialContext,
+		DialContext:         GuardedDialContext(policy),
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 4,
 		IdleConnTimeout:     90 * time.Second,
@@ -198,7 +200,11 @@ func (r *tenantSandboxResolver) Resolve(
 			Checker:         r.deps.Checker,
 			SkipHealthProbe: true,
 			ConfigID:        configID,
+			ConfigTenantID:  tenantID,
 			Bootstrapper:    r.deps.Bootstrapper,
+			Allocations:     r.deps.Allocations,
+			Admission:       r.deps.Admission,
+			Namespace:       r.deps.Namespace,
 		})
 	default:
 		return NewDisabledManager(), nil

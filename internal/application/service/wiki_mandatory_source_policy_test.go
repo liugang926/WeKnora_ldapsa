@@ -38,7 +38,7 @@ func TestWikiMandatorySourcePolicy(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			// A nil repository would panic if any denied entry touched body/storage.
-			svc := NewWikiPageService(nil, nil, test.policy, nil, nil)
+			svc := NewWikiPageService(nil, nil, test.policy, nil, nil, nil)
 			_, err := svc.CreatePage(ctx, &types.WikiPage{KnowledgeBaseID: "kb", Slug: "s", Content: "body"})
 			require.ErrorIs(t, err, ErrNextcloudDerivedContent)
 			_, err = svc.ListAllPages(ctx, "kb")
@@ -68,7 +68,7 @@ func TestWikiIDScopeBeforeBodyAndOrdinaryUsable(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(&types.WikiPage{}, &types.WikiPageRevision{}, &types.WikiFolder{}))
 	repo := repository.NewWikiPageRepository(db)
 	ctx := context.Background()
-	ordinary := NewWikiPageService(repo, nil, wikiOrdinaryTestPolicy{}, nil, nil)
+	ordinary := NewWikiPageService(repo, nil, wikiOrdinaryTestPolicy{}, nil, nil, nil)
 	page, err := ordinary.CreatePage(
 		ctx,
 		&types.WikiPage{ID: "owned", TenantID: 1, KnowledgeBaseID: "kb", Slug: "s", Content: "secret"},
@@ -87,7 +87,7 @@ func TestWikiIDScopeBeforeBodyAndOrdinaryUsable(t *testing.T) {
 				)
 			}),
 	)
-	denied := NewWikiPageService(repo, nil, wikiSourceRejectTestPolicy{}, nil, nil)
+	denied := NewWikiPageService(repo, nil, wikiSourceRejectTestPolicy{}, nil, nil, nil)
 	_, err = denied.GetPageByID(ctx, page.ID)
 	require.ErrorIs(t, err, ErrNextcloudDerivedContent)
 	require.Len(t, queries, 1)
@@ -123,7 +123,7 @@ func TestWikiMetadataCannotRelabelProtectedOwner(t *testing.T) {
 			},
 		),
 	)
-	svc := NewWikiPageService(repo, nil, wikiOrdinaryTestPolicy{}, nil, nil)
+	svc := NewWikiPageService(repo, nil, wikiOrdinaryTestPolicy{}, nil, nil, nil)
 	err = svc.UpdatePageMeta(ctx, &types.WikiPage{ID: "owned", KnowledgeBaseID: "ordinary", Status: "archived"})
 	require.ErrorIs(t, err, ErrNextcloudDerivedContent)
 	require.Error(

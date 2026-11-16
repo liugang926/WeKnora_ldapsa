@@ -1064,7 +1064,7 @@ func (s *userService) resolveDingTalkLogin(
 	// Token generation mirrors the OIDC login exactly so all three login
 	// paths (password / OIDC / DingTalk) produce identical response shapes.
 	resolvedTenantID := s.resolveLoginTenantID(ctx, user)
-	accessToken, refreshToken, err := s.generateTokensForTenant(ctx, user, resolvedTenantID)
+	accessToken, refreshToken, err := s.generateTokensForTenant(ctx, user, resolvedTenantID, "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate local tokens: %w", err)
 	}

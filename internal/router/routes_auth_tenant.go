@@ -60,6 +60,13 @@ func RegisterTenantRoutes(
 	// 空间路由组
 	tenantRoutes := r.Group("/tenants")
 	{
+		// Current-workspace operations cannot select another tenant, including
+		// when the caller has cross-tenant privileges. JWT-only for now.
+		tenantRoutes.GET("/current", g.Viewer(), handler.GetCurrentWorkspace)
+		tenantRoutes.PATCH("/current", g.Owner(), handler.UpdateCurrentWorkspace)
+		if memberHandler != nil {
+			tenantRoutes.GET("/current/members", g.Viewer(), memberHandler.ListCurrentWorkspaceMembers)
+		}
 		// 创建空间对所有已登录用户开放：用户可以为自己再开一个工作区，
 		// handler 内部会调 EnsureOwner 把调用者写成新空间的 Owner。
 		// 跨空间超管走同一个端点，但能携带 storage_quota / status 等
@@ -264,6 +271,10 @@ func RegisterSystemRoutes(
 	handler *handler.SystemHandler,
 	g *rbacGuards,
 ) {
+	// JWT-only: this pops a native dialog on the Lite machine. API keys must
+	// not trigger it. Undeclared for the API-key gate, so keys are denied.
+	r.POST("/system/host-project-dir", g.Viewer(), handler.PickHostProjectDir)
+
 	systemRoutes := g.apiKeyGroup(r.Group("/system"), apiKeyManageVectorStores(apiKeyFullAccess()))
 	{
 		systemRoutes.With(apiKeyAny()).GET("/capabilities", g.Viewer(), handler.GetDeploymentCapabilities)
@@ -303,15 +314,25 @@ func RegisterSystemAdminRoutes(
 	// the guard, so adding new endpoints can't accidentally drop the gate.
 	adminRoutes := r.Group("/system/admin", g.SystemAdmin())
 	{
+		// Catalog mutation is reserved to authenticated system-admin users.
+		// API keys remain default-denied by the API-key gate.
+		adminRoutes.GET("/model-catalog", handler.GetModelCatalog)
+		adminRoutes.POST("/model-catalog/preview", handler.PreviewModelCatalog)
+		adminRoutes.PUT("/model-catalog", handler.PublishModelCatalog)
+
 		// P0: SystemAdmin role management
 		adminRoutes.POST("/promote", handler.PromoteUserToSystemAdmin)
 		adminRoutes.POST("/revoke", handler.RevokeSystemAdmin)
 		adminRoutes.GET("/list", handler.ListSystemAdmins)
+		adminRoutes.GET("/users", handler.ListUsers)
+		adminRoutes.POST("/users/status", handler.SetUserStatus)
 		adminRoutes.POST("/users/reset-password", handler.ResetUserPassword)
 		adminRoutes.POST("/users/create", handler.CreateSystemUser)
 		adminRoutes.GET("/api-keys", handler.ListPlatformAPIKeys)
 		adminRoutes.POST("/api-keys", handler.CreatePlatformAPIKey)
 		adminRoutes.DELETE("/api-keys/:key_id", handler.DeletePlatformAPIKey)
+
+		adminRoutes.GET("/settings-summary", handler.ListSystemSettingSummaries)
 
 		// P1: platform-wide system settings (DB-backed runtime tunables).
 		// Reads return raw model rows / arrays (no `gin.H{"data":...}`

@@ -135,7 +135,7 @@ func TestMessageHistoryActualSQLiteStorageFaultReturnsUnavailableWithoutBody(t *
 			router.Use(middleware.ErrorHandler())
 			router.POST(
 				"/api/v1/messages/search",
-				NewMessageHandler(historyActualStorageFaultService{fault: returned}, nil, nil).SearchMessages,
+				NewMessageHandler(historyActualStorageFaultService{fault: returned}, nil, nil, nil).SearchMessages,
 			)
 			request := httptest.NewRequest(
 				http.MethodPost,
@@ -168,7 +168,7 @@ func TestMessageHistoryActualSQLiteStorageFaultReturnsUnavailableWithoutBody(t *
 				router.Use(middleware.ErrorHandler())
 				router.POST(
 					"/api/v1/messages/search",
-					NewMessageHandler(historyActualStorageFaultService{fault: returned}, nil, nil).SearchMessages,
+					NewMessageHandler(historyActualStorageFaultService{fault: returned}, nil, nil, nil).SearchMessages,
 				)
 				request := httptest.NewRequest(
 					http.MethodPost,

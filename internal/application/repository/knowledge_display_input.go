@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"sort"
 	"strings"
@@ -410,6 +411,12 @@ func knowledgeDisplayWriterOrigin(
 		actual, err = store.authorizeKnowledgeBaseNameInput(ctx, kb, request.ID == "")
 	case "derived":
 		actual, err = store.authorizeOriginalKnowledgeProducerWrite(ctx, kb, request.Original)
+	case "relations":
+		if _, upload := request.Assignments[""]; upload {
+			actual, err = store.AuthorizeCurrentKnowledgeInputWrite(ctx, kb)
+		} else {
+			actual, err = store.authorizeTagAssignment(ctx, kb)
+		}
 	default:
 		actual, err = store.AuthorizeCurrentKnowledgeInputWrite(ctx, kb)
 	}
@@ -447,6 +454,34 @@ func knowledgeDisplayWriterOrigin(
 		lineage, err = request.AutoTagReader.recheckKnowledgeAutoTagInTx(actual, tx, request.AutoTag)
 	}
 	return actual, lineage, "derived", err
+}
+
+// authorizeTagAssignment checks the actor in the transaction that loaded the
+// document and its KB. Only a manual edit of an existing document takes this path.
+func (s *KnowledgeInputProvenanceStore) authorizeTagAssignment(
+	ctx context.Context, kb *types.KnowledgeBase,
+) (context.Context, error) {
+	actor, err := captureKnowledgeActorSelector(ctx, "")
+	if err != nil {
+		return ctx, err
+	}
+	fresh, err := s.restoreCurrentKnowledgeActor(ctx, actor, kb.TenantID)
+	if err != nil {
+		if actor.PrincipalType == types.PrincipalWebUser &&
+			(errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, ErrKnowledgeInputChanged)) {
+			return ctx, access.ErrForbidden
+		}
+		return ctx, err
+	}
+	caller := types.CallerFromContext(fresh)
+	if actor.PrincipalType == types.PrincipalWebUser && caller.Role == types.TenantRoleViewer &&
+		caller.TenantID == kb.TenantID {
+		if !access.HasKBGrant(ctx, kb.ID, kb.TenantID, types.OrgRoleEditor) {
+			return ctx, access.ErrForbidden
+		}
+		return s.authorizeKBResourceWrite(fresh, kb, true)
+	}
+	return s.authorizeKnowledgeActorWrite(fresh, kb)
 }
 
 func (s *KnowledgeInputProvenanceStore) authorizeKnowledgeBaseNameInput(

@@ -250,7 +250,7 @@ func (s *KnowledgeInputProvenanceStore) RestoreKnowledgeBuildActor(
 		Error; err != nil {
 		return ctx, err
 	}
-	fresh, err = s.authorizeKnowledgeActorWrite(fresh, &kb)
+	fresh, err = s.authorizeAdmittedKnowledgeActorWrite(fresh, &kb, &admission)
 	if err != nil {
 		return ctx, err
 	}
@@ -299,6 +299,12 @@ func (s *KnowledgeInputProvenanceStore) authorizeOriginalKnowledgeProducerWrite(
 		return ctx, ErrKnowledgeInputChanged
 	}
 	if !NextcloudBuildLeasePresent(ctx, original.TenantID, original.KnowledgeBaseID, original.KnowledgeID) {
+		if isLocalReparseGroupEditor(ctx, kb) {
+			purpose, _ := ctx.Value(knowledgeBuildWritePurposeContextKey{}).(*types.KnowledgeBuildInputProof)
+			if purpose != nil && purpose.AdmissionID == original.AdmissionID {
+				return s.restoreLocalReparseProducer(ctx, kb, original)
+			}
+		}
 		return s.AuthorizeCurrentKnowledgeInputWrite(ctx, kb)
 	}
 	bound := KnowledgeBuildInputProofFromContext(ctx)
@@ -358,6 +364,15 @@ func (s *KnowledgeInputProvenanceStore) authorizeKnowledgeActorWrite(
 	} else if !caller.Role.HasPermission(types.TenantRoleContributor) {
 		return ctx, access.ErrForbidden
 	}
+	return s.authorizeKBResourceWrite(ctx, kb, false)
+}
+
+// authorizeKBResourceWrite resolves the current resource policy. A scoped tag
+// editor must have an explicit edit grant on this KB even in an own workspace.
+func (s *KnowledgeInputProvenanceStore) authorizeKBResourceWrite(
+	ctx context.Context, kb *types.KnowledgeBase, requireRestrictedEdit bool,
+) (context.Context, error) {
+	caller := types.CallerFromContext(ctx)
 	var shares access.KBShareLookup
 	if caller.UserID != "" {
 		shares = s.actorShares
@@ -380,7 +395,7 @@ func (s *KnowledgeInputProvenanceStore) authorizeKnowledgeActorWrite(
 	if err != nil {
 		return ctx, err
 	}
-	if !permission.Allowed {
+	if !permission.Allowed || (requireRestrictedEdit && permission.Mode != types.ResourceAccessRestricted) {
 		return ctx, access.ErrForbidden
 	}
 	fresh := grant.Context(ctx)

@@ -18,6 +18,7 @@ type RAGSourceLineage struct {
 	revision        uint64
 	authorize       func(context.Context, *SourceLineage) error
 	requireComplete bool
+	outputRefused   bool
 }
 
 // NewRAGSourceLineage creates a turn accumulator with a current authorization checker.
@@ -62,6 +63,9 @@ func (t *RAGSourceLineage) Add(inputs ...*SourceLineage) error {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.outputRefused {
+		return ErrSourceLineageUnknown
+	}
 	var err error
 	before := t.lineage
 	if !t.requireComplete {
@@ -72,6 +76,15 @@ func (t *RAGSourceLineage) Add(inputs ...*SourceLineage) error {
 		t.revision++
 	}
 	return err
+}
+
+// RefuseOutput records a failed publication for the lifetime of this turn. Even
+// an ACL-authorized turn cannot finalize a prefix that its sender rejected.
+func (t *RAGSourceLineage) RefuseOutput() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.outputRefused = true
+	t.revision++ // Invalidate any snapshot currently undergoing authorization.
 }
 
 // normalizeWeKnoraACLInputs keeps structurally valid source receipts while
@@ -141,6 +154,9 @@ func (t *RAGSourceLineage) Snapshot() *SourceLineage {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.outputRefused {
+		return UnknownSourceLineage()
+	}
 	snapshot, _ := UnionSourceLineage(t.lineage)
 	if !t.requireComplete {
 		snapshot.State = SourceLineageComplete
@@ -181,6 +197,10 @@ func (t *RAGSourceLineage) CheckedSnapshot(ctx context.Context) (*SourceLineage,
 	}
 	for attempt := 0; attempt < 32; attempt++ {
 		t.mu.Lock()
+		if t.outputRefused {
+			t.mu.Unlock()
+			return UnknownSourceLineage(), ErrSourceLineageUnknown
+		}
 		lineage, _ := UnionSourceLineage(t.lineage)
 		revision := t.revision
 		t.mu.Unlock()

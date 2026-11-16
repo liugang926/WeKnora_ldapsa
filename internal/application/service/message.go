@@ -56,14 +56,14 @@ func NewMessageService(messageRepo interfaces.MessageRepository,
 	}
 }
 
-// CheckMessagePublication preserves the retired Nextcloud publication API.
+// CheckMessagePublication revalidates the inputs of a carried automation result.
 func (s *messageService) CheckMessagePublication(ctx context.Context, message *types.Message) error {
-	return nil // retired with the NextCloud decoupling 2026-11-09
+	return s.checkAutomationCarry(ctx, message)
 }
 
-// CheckLiveMessagePublication preserves the retired Nextcloud publication API.
+// CheckLiveMessagePublication also covers results streamed before their final save.
 func (s *messageService) CheckLiveMessagePublication(ctx context.Context, message *types.Message) error {
-	return nil // retired with the NextCloud decoupling 2026-11-09
+	return s.checkAutomationCarry(ctx, message)
 }
 
 type liveKnowledgeGrantChecker interface {
@@ -156,7 +156,7 @@ func (s *messageService) GetMessage(ctx context.Context, sessionID string, messa
 
 	tenantID := types.MustTenantIDFromContext(ctx)
 	logger.Infof(ctx, "Checking if session exists, tenant ID: %d", tenantID)
-	_, err := loadSessionForRead(ctx, s.sessionRepo, tenantID, sessionUserIDForLookup(ctx), sessionID)
+	session, err := loadSessionForRead(ctx, s.sessionRepo, tenantID, sessionUserIDForLookup(ctx), sessionID)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to get session: %v", err)
 		return nil, err
@@ -194,8 +194,11 @@ func (s *messageService) GetMessage(ctx context.Context, sessionID string, messa
 	}
 
 	logger.Info(ctx, "Message retrieved successfully")
-	messages := s.clarifyReadArtifactVersions(ctx, sessionID, []*types.Message{message})
-	return rawUserContentOnly(messages)[0], nil
+	messages, err := s.automationHistory(ctx, session, []*types.Message{message})
+	if err != nil {
+		return nil, err
+	}
+	return s.clarifyReadArtifactVersions(ctx, sessionID, messages)[0], nil
 }
 
 // GetMessageForControl is an owner-only metadata lookup used to stop or steer
@@ -244,6 +247,9 @@ func (s *messageService) GetMessageForControl(
 func (s *messageService) GetMessageForStream(ctx context.Context, sessionID, messageID string) (*types.Message, error) {
 	if s.materialStore != nil {
 		message, _, err := s.materialStore.MessageLiveControl(ctx, sessionID, messageID)
+		if err == nil {
+			err = s.checkAutomationStreamControl(ctx, message)
+		}
 		return message, err
 	}
 	tenantID := types.MustTenantIDFromContext(ctx)
@@ -277,7 +283,7 @@ func (s *messageService) GetMessagesBySession(ctx context.Context,
 
 	tenantID := types.MustTenantIDFromContext(ctx)
 	logger.Infof(ctx, "Checking if session exists, tenant ID: %d", tenantID)
-	_, err := loadSessionForRead(ctx, s.sessionRepo, tenantID, sessionUserIDForLookup(ctx), sessionID)
+	session, err := loadSessionForRead(ctx, s.sessionRepo, tenantID, sessionUserIDForLookup(ctx), sessionID)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to get session: %v", err)
 		return nil, err
@@ -295,7 +301,7 @@ func (s *messageService) GetMessagesBySession(ctx context.Context,
 	}
 
 	logger.Infof(ctx, "Retrieved %d messages successfully", len(messages))
-	messages, err = s.filterHistoryMessages(ctx, messages)
+	messages, err = s.automationHistory(ctx, session, messages)
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +321,7 @@ func (s *messageService) GetRecentMessagesBySession(ctx context.Context,
 		return nil, errors.New("workspace ID not found in context")
 	}
 	logger.Infof(ctx, "Checking if session exists, tenant ID: %d", tenantID)
-	_, err := loadSessionForRead(ctx, s.sessionRepo, tenantID, sessionUserIDForLookup(ctx), sessionID)
+	session, err := loadSessionForRead(ctx, s.sessionRepo, tenantID, sessionUserIDForLookup(ctx), sessionID)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to get session: %v", err)
 		return nil, err
@@ -332,7 +338,7 @@ func (s *messageService) GetRecentMessagesBySession(ctx context.Context,
 	}
 
 	logger.Infof(ctx, "Retrieved %d recent messages successfully", len(messages))
-	messages, err = s.filterHistoryMessages(ctx, messages)
+	messages, err = s.automationHistory(ctx, session, messages)
 	if err != nil {
 		return nil, err
 	}
@@ -352,7 +358,7 @@ func (s *messageService) GetMessagesBySessionBeforeTime(ctx context.Context,
 		return nil, errors.New("workspace ID not found in context")
 	}
 	logger.Infof(ctx, "Checking if session exists, tenant ID: %d", tenantID)
-	_, err := loadSessionForRead(ctx, s.sessionRepo, tenantID, sessionUserIDForLookup(ctx), sessionID)
+	session, err := loadSessionForRead(ctx, s.sessionRepo, tenantID, sessionUserIDForLookup(ctx), sessionID)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to get session: %v", err)
 		return nil, err
@@ -370,7 +376,7 @@ func (s *messageService) GetMessagesBySessionBeforeTime(ctx context.Context,
 	}
 
 	logger.Infof(ctx, "Retrieved %d messages before time successfully", len(messages))
-	messages, err = s.filterHistoryMessages(ctx, messages)
+	messages, err = s.automationHistory(ctx, session, messages)
 	if err != nil {
 		return nil, err
 	}

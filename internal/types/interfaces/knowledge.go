@@ -11,6 +11,11 @@ import (
 
 // KnowledgeService defines the interface for knowledge services.
 type KnowledgeService interface {
+	// ReplaceKnowledgeFromDataSource atomically retires the previous row and inserts
+	// its replacement before enqueueing parsing or deleting the previous resources.
+	ReplaceKnowledgeFromDataSource(ctx context.Context, knowledgeID string, item *types.FetchedItem,
+		metadata map[string]string, tagIDs []string, channel string) (*types.Knowledge, error)
+
 	// CreateKnowledgeFromFile creates knowledge from a file.
 	// channel identifies the ingestion channel (e.g. "web", "api", "wechat"); empty defaults to "web".
 	CreateKnowledgeFromFile(
@@ -270,6 +275,11 @@ type KnowledgeService interface {
 
 // KnowledgeRepository defines the interface for knowledge repositories.
 type KnowledgeRepository interface {
+	// ReplaceKnowledge soft-deletes before and inserts after with its tag relations
+	// in one short transaction.
+	// A stale before snapshot is rejected without deleting or inserting either row.
+	ReplaceKnowledge(ctx context.Context, before, after *types.Knowledge, tagIDs []string) error
+
 	CreateKnowledge(ctx context.Context, knowledge *types.Knowledge) error
 	GetKnowledgeByID(ctx context.Context, tenantID uint64, id string) (*types.Knowledge, error)
 	// GetKnowledgeByIDOnly returns knowledge by ID without tenant filter (for permission resolution).
@@ -295,6 +305,9 @@ type KnowledgeRepository interface {
 	DeleteKnowledge(ctx context.Context, tenantID uint64, id string) error
 	DeleteKnowledgeList(ctx context.Context, tenantID uint64, ids []string) error
 	GetKnowledgeBatch(ctx context.Context, tenantID uint64, ids []string) ([]*types.Knowledge, error)
+	// GetKnowledgeBatchByIDOnly returns knowledge by IDs without tenant filter
+	// (for shared-KB resolution; callers check permissions on every row).
+	GetKnowledgeBatchByIDOnly(ctx context.Context, ids []string) ([]*types.Knowledge, error)
 	// CheckKnowledgeExists checks if knowledge already exists.
 	// For file types, check by fileHash or (fileName+fileSize).
 	// For URL types, check by URL.
@@ -416,6 +429,8 @@ type KnowledgeRepository interface {
 	ListIDsByTagIDs(ctx context.Context, tenantID uint64, kbID string, tagIDs []string) ([]string, error)
 	// SetKnowledgeTags replaces all tags for a single knowledge entry (deletes old, inserts new).
 	SetKnowledgeTags(ctx context.Context, knowledgeID string, tagIDs []string) error
+	// SetKnowledgeTagsBatch commits all document assignments and their origin receipts atomically.
+	SetKnowledgeTagsBatch(ctx context.Context, documents []*types.Knowledge, updates map[string][]string) error
 	// AddKnowledgeTagRelations attaches tags without removing existing ones,
 	// after validating that the knowledge and every tag belong to the given
 	// tenant and knowledge base. Duplicate deliveries are idempotent.

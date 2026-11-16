@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/models/api"
 
@@ -13,6 +14,21 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/google/uuid"
 )
+
+// EmptyTruncatedAnswerFallback explains an output-budget exhaustion with no answer text.
+const EmptyTruncatedAnswerFallback = "Sorry, this answer hit the model's per-response output limit " +
+	"before any text was produced. Try narrowing the question, or raise max_completion_tokens."
+
+// IsLengthFinishReason reports whether a provider ended a response because its
+// completion-token budget was exhausted.
+func IsLengthFinishReason(reason string) bool {
+	switch strings.ToLower(strings.TrimSpace(reason)) {
+	case "length", "max_tokens", "max_output_tokens":
+		return true
+	default:
+		return false
+	}
+}
 
 // PluginChatCompletionStream implements streaming chat completion functionality
 // as a plugin that can be registered to EventManager
@@ -151,8 +167,16 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 				close(streamDone)
 			}
 		}()
+		earlyEnd := errors.New(types.StreamEndedEarlyError)
 		failStream := func(err error) {
 			streamErr = err
+			if ctx.Err() != nil {
+				return
+			} // user stopped the stream; no provider error frame
+			msg := "Source output could not complete"
+			if err == earlyEnd {
+				msg = types.StreamEndedEarlyError
+			}
 			// A pure code-origin failure control contains no provider/body/ref
 			// data and never certifies the incomplete assistant. Its private bus
 			// and exact session bind it to this owned producer instance.
@@ -161,7 +185,7 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 				SessionID: chatManage.SessionID,
 				Data: event.ErrorData{
 					Stage:     "source_output",
-					Error:     "Source output could not complete",
+					Error:     msg,
 					SessionID: chatManage.SessionID,
 				},
 			})
@@ -173,6 +197,7 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 		answerID := fmt.Sprintf("%s-answer", uuid.New().String()[:8])
 		thinkingOpen := false
 		answerCompleted := false
+		answerProduced := false
 
 		closeThinking := func() error {
 			if !thinkingOpen {
@@ -262,6 +287,14 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 					return
 				}
 
+				// A stream that stopped without a finish reason is a broken
+				// one, not a short answer: report it the way a read error is
+				// reported instead of closing the answer as complete.
+				if response.ResponseType == types.ResponseTypeAnswer && response.Done &&
+					response.FinishReason == types.FinishReasonIncomplete {
+					failStream(earlyEnd)
+					return
+				}
 				if response.ResponseType == types.ResponseTypeError {
 					errorDiagnostic := "model_stream_error"
 					if !logprivacy.ContentSuppressed(ctx) {
@@ -316,6 +349,14 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 					if response.Done {
 						response.Content += answerDecoder.Flush()
 					}
+					if strings.TrimSpace(response.Content) != "" {
+						answerProduced = true
+					}
+					truncated := response.Done && IsLengthFinishReason(response.FinishReason)
+					if truncated && !answerProduced {
+						response.Content = EmptyTruncatedAnswerFallback
+						answerProduced = true
+					}
 					if err := closeThinking(); err != nil {
 						failStream(err)
 						return
@@ -325,8 +366,9 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 						Type:      types.EventType(event.EventAgentFinalAnswer),
 						SessionID: chatManage.SessionID,
 						Data: event.AgentFinalAnswerData{
-							Content: response.Content,
-							Done:    response.Done,
+							Content:   response.Content,
+							Done:      response.Done,
+							Truncated: truncated,
 						},
 					}); err != nil {
 						failStream(err)

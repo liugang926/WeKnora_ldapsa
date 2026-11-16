@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"slices"
 
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
+
 	"github.com/Tencent/WeKnora/internal/application/readlease"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/searchutil"
@@ -122,28 +124,67 @@ func (s *knowledgeBaseService) processSearchResults(ctx context.Context,
 		}
 	}
 
-	beforeImages := make(map[string]string, len(searchResults))
-	for _, result := range searchResults {
-		beforeImages[result.ID] = result.ImageInfo
-	}
-	searchutil.EnrichSearchResultsImageInfo(ctx, s.chunkRepo, tenantID, searchResults)
-	unaccountedImages := false
-	for _, result := range searchResults {
-		if result.ImageInfo != beforeImages[result.ID] {
-			result.SourceLineage = types.UnknownSourceLineage()
-			unaccountedImages = true
+	// Child discovery provides IDs only. Read the material again under the
+	// parent document's verified receipt, including OCR used in page quotes.
+	loader := &searchImageChildren{ChunkRepository: s.chunkRepo}
+	receiptByKnowledge := ragKnowledgeReceiptMap(allChunks, lineages)
+	loader.list = func(ctx context.Context, parents []string) ([]*types.Chunk, error) {
+		children, err := s.chunkRepo.ListChunksByParentIDsOnly(ctx, parents)
+		if err != nil {
+			return nil, err
 		}
+		requested := map[string]bool{}
+		for _, id := range parents {
+			requested[id] = true
+		}
+		byKnowledge := map[string][]string{}
+		for _, child := range children {
+			if child == nil || !requested[child.ParentChunkID] {
+				continue
+			}
+			p := chunkMap[child.ParentChunkID]
+			if p != nil &&
+				p.KnowledgeID == child.KnowledgeID &&
+				p.KnowledgeBaseID == child.KnowledgeBaseID &&
+				p.TenantID == child.TenantID {
+				byKnowledge[p.KnowledgeID] = append(byKnowledge[p.KnowledgeID], child.ID)
+			}
+		}
+		if len(byKnowledge) == 0 {
+			return nil, nil
+		}
+		rows, childLineages, err := s.hydrateRAGSearchChunks(ctx, byKnowledge, knowledgeMap, receiptByKnowledge)
+		if err != nil {
+			return nil, err
+		}
+		var verified []*types.Chunk
+		for _, child := range rows {
+			p := chunkMap[child.ParentChunkID]
+			if !requested[child.ParentChunkID] ||
+				p == nil ||
+				p.KnowledgeID != child.KnowledgeID ||
+				p.KnowledgeBaseID != child.KnowledgeBaseID ||
+				p.TenantID != child.TenantID {
+				continue
+			}
+			chunkMap[child.ID] = child
+			receiptByKnowledge[child.KnowledgeID], err = types.UnionSourceLineage(
+				receiptByKnowledge[child.KnowledgeID], childLineages[child.ID],
+			)
+			if err != nil && s.ragChunkSnapshots != nil {
+				return nil, err
+			}
+			verified = append(verified, child)
+		}
+		return verified, nil
 	}
-	if unaccountedImages {
-		if turn := types.RAGSourceLineageFromContext(ctx); turn != nil {
-			if err := turn.Add(types.UnknownSourceLineage()); err != nil {
-				return nil, err
-			}
-			if _, err := turn.CheckedSnapshot(ctx); err != nil {
-				return nil, err
-			}
-		} else if s.ragChunkSnapshots != nil {
-			return nil, types.ErrSourceLineageUnknown
+	searchutil.EnrichSearchResultsImageInfoOnly(ctx, loader, searchResults)
+	if loader.err != nil {
+		return nil, loader.err
+	}
+	for _, result := range searchResults {
+		if receipt := receiptByKnowledge[result.KnowledgeID]; receipt != nil {
+			result.SourceLineage = receipt
 		}
 	}
 
@@ -151,11 +192,26 @@ func (s *knowledgeBaseService) processSearchResults(ctx context.Context,
 	return searchResults, nil
 }
 
+type searchImageChildren struct {
+	interfaces.ChunkRepository
+	list func(context.Context, []string) ([]*types.Chunk, error)
+	err  error
+}
+
+func (l *searchImageChildren) ListChunksByParentIDsOnly(ctx context.Context, parents []string) ([]*types.Chunk, error) {
+	rows, err := l.list(ctx, parents)
+	if err != nil {
+		l.err = err
+	}
+	return rows, err
+}
+
 // chunkIndex holds pre-computed lookup structures for processing search results.
 type chunkIndex struct {
 	knowledgeIDs    []string
 	chunkIDs        []string
 	scores          map[string]float64
+	vectorScores    map[string]float64
 	matchTypes      map[string]types.MatchType
 	matchedContents map[string]string
 	processedIDs    map[string]bool // tracks all IDs (chunk + enrichment) to avoid duplicates
@@ -166,6 +222,7 @@ type chunkIndex struct {
 func (s *knowledgeBaseService) buildChunkIndex(chunks []*types.IndexWithScore) *chunkIndex {
 	idx := &chunkIndex{
 		scores:          make(map[string]float64, len(chunks)),
+		vectorScores:    make(map[string]float64, len(chunks)),
 		matchTypes:      make(map[string]types.MatchType, len(chunks)),
 		matchedContents: make(map[string]string, len(chunks)),
 		processedIDs:    make(map[string]bool, len(chunks)*2),
@@ -179,6 +236,7 @@ func (s *knowledgeBaseService) buildChunkIndex(chunks []*types.IndexWithScore) *
 		}
 		idx.chunkIDs = append(idx.chunkIDs, chunk.ChunkID)
 		idx.scores[chunk.ChunkID] = chunk.Score
+		idx.vectorScores[chunk.ChunkID] = chunk.VectorScore
 		idx.matchTypes[chunk.ChunkID] = chunk.MatchType
 		idx.matchedContents[chunk.ChunkID] = chunk.Content
 	}
@@ -253,10 +311,10 @@ func (s *knowledgeBaseService) collectParentChunkIDs(
 	return ids
 }
 
-// hasImageChunks returns true if any chunk is an image_ocr or image_caption type.
+// hasImageChunks returns true if any chunk is one of the image child types.
 func (s *knowledgeBaseService) hasImageChunks(chunks []*types.Chunk) bool {
 	for _, c := range chunks {
-		if c.ChunkType == types.ChunkTypeImageOCR || c.ChunkType == types.ChunkTypeImageCaption {
+		if types.IsImageChildChunkType(c.ChunkType) {
 			return true
 		}
 	}
@@ -301,10 +359,10 @@ func (s *knowledgeBaseService) assembleSearchResults(
 		if knowledge, ok := knowledgeMap[chunk.KnowledgeID]; ok {
 			matchType := idx.matchTypes[chunk.ID]
 			matchedContent := idx.matchedContents[chunk.ID]
-			searchResults = append(
-				searchResults,
-				s.buildSearchResult(chunk, knowledge, score, matchType, matchedContent),
-			)
+			result := s.buildSearchResult(chunk, knowledge, score, matchType, matchedContent)
+			result.VectorScore = idx.vectorScores[chunk.ID]
+			searchutil.CaptureImageEvidence(result)
+			searchResults = append(searchResults, result)
 			addedChunkIDs[chunk.ID] = true
 		} else {
 			logger.Warnf(ctx, "Knowledge not found for chunk: %s, knowledge_id: %s", chunk.ID, chunk.KnowledgeID)
@@ -420,8 +478,10 @@ func (s *knowledgeBaseService) buildSearchResult(chunk *types.Chunk,
 		KnowledgeDescription:    knowledge.Description,
 		KnowledgeCustomMetadata: knowledge.CustomMetadataText(),
 		ChunkMetadata:           chunk.Metadata,
+		ContextHeader:           chunk.ContextHeader,
 		MatchedContent:          matchedContent,
 		KnowledgeBaseID:         knowledge.KnowledgeBaseID,
+		SourceLocators:          chunk.SourceLocators,
 	}
 }
 
@@ -440,6 +500,6 @@ func (s *knowledgeBaseService) isSearchableChunk(chunk *types.Chunk) bool {
 		types.ChunkTypeText, types.ChunkTypeSummary,
 		types.ChunkTypeTableColumn, types.ChunkTypeTableSummary,
 		types.ChunkTypeFAQ,
-		types.ChunkTypeImageOCR, types.ChunkTypeImageCaption,
+		types.ChunkTypeImageOCR, types.ChunkTypeImageCaption, types.ChunkTypeImageVector,
 	}, chunk.ChunkType)
 }

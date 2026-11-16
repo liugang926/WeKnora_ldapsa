@@ -15,8 +15,10 @@ import (
 	"go.uber.org/dig"
 	"gorm.io/gorm"
 
+	"github.com/Tencent/WeKnora/internal/agent/operations"
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/handler"
 	"github.com/Tencent/WeKnora/internal/handler/session"
@@ -115,6 +117,10 @@ type RouterParams struct {
 	WeKnoraCloudHandler                *handler.WeKnoraCloudHandler
 	WikiPageHandler                    *handler.WikiPageHandler
 	MemoryHandler                      *handler.MemoryHandler
+	GraphSearchHandler                 *handler.GraphSearchHandler
+	AutomationHandler                  *handler.AutomationHandler
+	HostSandbox                        service.HostSandboxManager
+	OperationDispatcher                *operations.HandlerDispatcher
 }
 
 // NewRouter 创建新的路由
@@ -128,6 +134,8 @@ func NewRouter(params RouterParams) *gin.Engine {
 	handler.ConfigureChunkHandlerContentLeaseStore(params.ChunkHandler, params.NextcloudContentLeaseStore)
 	session.ConfigureSearchKnowledgeRead(params.SessionHandler, params.KnowledgeService,
 		params.NextcloudContentLeaseStore)
+	// 清理 FormFile/MultipartForm 解析产生的 multipart 临时文件，避免容器 /tmp 持续增长。
+	r.Use(middleware.MultipartFormCleanup())
 
 	// Trusted proxies: gin defaults to trusting ALL proxies, which makes
 	// c.ClientIP() honor a client-supplied X-Forwarded-For. Public, unauthed
@@ -153,7 +161,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 			"X-Embed-Session", "X-External-User-ID", "X-External-User-Token", "X-WeKnora-Desktop-Token",
 			// Streamable HTTP MCP clients running in a browser send these on
 			// the /mcp/:endpoint_id surface.
-			"MCP-Protocol-Version", "Mcp-Session-Id", "Last-Event-ID",
+			"MCP-Protocol-Version", "Mcp-Method", "Mcp-Name", "Mcp-Session-Id", "Last-Event-ID",
 		},
 		ExposeHeaders:    []string{"Content-Length", "Access-Control-Allow-Origin", "Mcp-Session-Id"},
 		AllowCredentials: true,
@@ -208,8 +216,8 @@ func NewRouter(params RouterParams) *gin.Engine {
 		r.Use(embedFrameAncestorsMiddleware(params.EmbedChannelService))
 	}
 
-	// 前端静态文件（仅 Lite 版本内嵌前端）
-	if handler.Edition == "lite" {
+	// Lite bundles the frontend; other editions can explicitly opt in.
+	if handler.Edition == "lite" || strings.TrimSpace(os.Getenv("WEKNORA_WEB_DIR")) != "" {
 		serveFrontendStatic(r)
 	}
 
@@ -436,6 +444,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		if params.KnowledgeEnrichmentTemplateHandler != nil {
 			RegisterKnowledgeEnrichmentTemplateRoutes(v1, params.KnowledgeEnrichmentTemplateHandler, rbacGuards)
 		}
+		RegisterImageAttrRoutes(v1, params.KBHandler, rbacGuards)
 		RegisterKnowledgeBaseActivityRoutes(v1, params.AuditLogHandler, rbacGuards)
 		// KB-scoped image proxy: lets tenants render images embedded in
 		// org-shared / agent-visible KB content, which the tenant-scoped
@@ -472,6 +481,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		)
 		RegisterKnowledgeTagRoutes(v1, params.TagHandler, rbacGuards)
 		RegisterKnowledgeRoutes(v1, params.KnowledgeHandler, rbacGuards)
+		RegisterGraphSearchRoutes(v1, params.GraphSearchHandler, rbacGuards)
 		RegisterFAQRoutes(v1, params.FAQHandler, rbacGuards)
 		RegisterChunkRoutes(v1, params.ChunkHandler, rbacGuards)
 		RegisterSessionRoutes(v1, params.SessionHandler, params.MessageSuggestionHandler, rbacGuards)
@@ -544,6 +554,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterWeKnoraCloudRoutes(v1, params.WeKnoraCloudHandler, rbacGuards)
 		RegisterWikiPageRoutes(v1, params.WikiPageHandler, rbacGuards)
 		RegisterMemoryRoutes(v1, params.MemoryHandler, rbacGuards)
+		RegisterAutomationRoutes(v1, params.AutomationHandler, rbacGuards)
 		RegisterChunkerDebugRoutes(v1, rbacGuards)
 
 		// Fail fast if any declared API-key policy points at a route
@@ -551,6 +562,11 @@ func NewRouter(params RouterParams) *gin.Engine {
 		// stale template would silently 403 every API key on that route,
 		// so we panic at startup instead of shipping a dead policy.
 		rbacGuards.assertAPIKeyPoliciesMatchRoutes(r)
+	}
+
+	if params.OperationDispatcher != nil {
+		assertOperationRoutesExist(r, operations.Builtin())
+		params.OperationDispatcher.Bind(r)
 	}
 
 	return r

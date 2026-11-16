@@ -77,7 +77,7 @@ func addDocumentLiveHistorySearch(t *testing.T, router *gin.Engine, db *gorm.DB,
 		guard,
 	)
 	repository.ConfigureMessageOriginalBodyAvailability(store, repository.CheckOriginalBodyAvailableInTx)
-	h := NewMessageHandler(messages, nil, nil)
+	h := NewMessageHandler(messages, nil, nil, repository.NewAgentPromptRepository(db))
 	router.POST("/messages/search", h.SearchMessages)
 	var checkVector func(bool)
 	if vector != nil {

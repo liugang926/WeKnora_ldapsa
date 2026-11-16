@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/require"
 )
 
@@ -186,6 +188,64 @@ func TestEvaluationTemporaryKnowledgeBaseUsesSelectedChatModel(t *testing.T) {
 	require.Equal(t, "embedding-selected", kb.EmbeddingModelID)
 	require.Equal(t, "chat-selected", kb.SummaryModelID)
 	require.NotEqual(t, "chat-unselected", kb.SummaryModelID)
+}
+
+type evaluationSelectionModels struct {
+	interfaces.ModelService
+	models []*types.Model
+}
+
+func (m evaluationSelectionModels) ListModels(context.Context) ([]*types.Model, error) {
+	return m.models, nil
+}
+
+func (m evaluationSelectionModels) GetModelByID(_ context.Context, id string) (*types.Model, error) {
+	for _, model := range m.models {
+		if model.ID == id {
+			return model, nil
+		}
+	}
+	return nil, errors.New("unknown model")
+}
+
+type evaluationSelectionKB struct {
+	interfaces.KnowledgeBaseService
+	created *types.KnowledgeBase
+}
+
+func (k *evaluationSelectionKB) CreateKnowledgeBase(
+	_ context.Context, kb *types.KnowledgeBase,
+) (*types.KnowledgeBase, error) {
+	k.created = kb
+	return nil, errors.New("captured evaluation configuration")
+}
+
+func TestEvaluationResolvesModelsBeforeIndexing(t *testing.T) {
+	t.Setenv("EVALUATION_DEFAULT_DATASET_DIR", "")
+	models := evaluationSelectionModels{models: []*types.Model{
+		{ID: "chat-first", Type: types.ModelTypeKnowledgeQA, Status: types.ModelStatusActive},
+		{ID: "chat-default", Type: types.ModelTypeKnowledgeQA, Status: types.ModelStatusActive, IsDefault: true},
+		{ID: "embed-first", Type: types.ModelTypeEmbedding, Status: types.ModelStatusActive},
+		{ID: "embed-default", Type: types.ModelTypeEmbedding, Status: types.ModelStatusActive, IsDefault: true},
+		{ID: "rerank", Type: types.ModelTypeRerank, Status: types.ModelStatusActive},
+	}}
+	for _, tc := range []struct {
+		name, dataset, chat, embedding, wantChat, wantEmbedding string
+	}{
+		{"bundled workspace defaults", "default", "", "", "chat-default", "embed-default"},
+		{"named explicit models", "named", "chat-first", "embed-first", "chat-first", "embed-first"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			kb := &evaluationSelectionKB{}
+			svc := EvaluationService{modelService: models, knowledgeBaseService: kb}
+			ctx := types.WithExecutionTenant(context.Background(), 7)
+			_, err := svc.Evaluation(ctx, tc.dataset, "", tc.chat, "rerank", tc.embedding)
+			require.EqualError(t, err, "captured evaluation configuration")
+			require.NotNil(t, kb.created)
+			require.Equal(t, tc.wantChat, kb.created.SummaryModelID)
+			require.Equal(t, tc.wantEmbedding, kb.created.EmbeddingModelID)
+		})
+	}
 }
 
 func TestEvaluationRequiresExplicitModelsForNamedOrOperatorDefaultDataset(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/logprivacy"
-	"github.com/Tencent/WeKnora/internal/models/catalog"
+	"github.com/Tencent/WeKnora/internal/models/api"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
@@ -18,7 +18,7 @@ func TestSourceContentProtocolRerankDebugPreservesOrdinary(t *testing.T) {
 	log.SetOutput(&logs)
 	log.SetLevel(logrus.DebugLevel)
 	ctx := context.WithValue(context.Background(), types.LoggerContextKey, logrus.NewEntry(log))
-	r := newWrapped(&fakeProtocol{}, catalog.RerankSettings{})
+	r := newWrapped(&fakeProtocol{}, api.RerankSettings{})
 	for _, private := range []context.Context{
 		logprivacy.SuppressContent(ctx),
 		types.WithRAGSourceLineage(ctx, types.NewRAGSourceLineage(nil)),

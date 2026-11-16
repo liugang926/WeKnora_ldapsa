@@ -2,7 +2,7 @@
 
 管理组织成员以及知识库和智能体的共享关系。组织以工作空间为成员单位。
 
-组织（Organization）以“空间（tenant）”为成员单位。组织组路由的 API key 策略为 `manage_spaces` 或 full-access；KB/Agent 分享管理仅 full-access key 可用。
+组织（Organization）以“空间（tenant）”为成员单位。组织组路由的 API key 策略为 `manage_spaces` 或 full-access；两个只读的「共享知识库清单」端点额外允许 `retrieve`，方便只读 key 发现自己本就有权检索的共享库；KB/Agent 分享管理仅 full-access key 可用。
 
 ## 组织管理（/api/v1/organizations）
 
@@ -176,25 +176,24 @@ curl -X POST $BASE/api/v1/organizations/org-1/invite-code -H "Authorization: Bea
 
 ### GET /api/v1/organizations/:id/search-tenants
 
-用途：搜索可邀请的空间（返回按空间分组的候选）。权限：Admin+。
+用途：按空间 ID 解析可邀请的空间。权限：Admin+，且调用者空间须为组织 admin。自 v0.8.2 起只接受完整的空间 ID，不再按空间名称跨空间搜索，`limit` 参数已移除。
 
 | 查询参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `q` | string | 是 | 空间名关键字 |
-| `limit` | int | 否 | 默认 10，上限 50 |
+| `q` | string | 是 | 完整的空间 ID |
 
-响应：200 `{"success":true,"data":[{"tenant_id","tenant_name"}]}`
+响应：200 `{"success":true,"data":[{"tenant_id","tenant_name"}]}`。`q` 不是有效 ID、空间不存在或已是组织成员时返回空数组，否则返回唯一候选。
 
 ```bash
-curl "$BASE/api/v1/organizations/org-1/search-tenants?q=demo" -H "Authorization: Bearer $TOKEN"
+curl "$BASE/api/v1/organizations/org-1/search-tenants?q=10002" -H "Authorization: Bearer $TOKEN"
 ```
 
 ### GET /api/v1/organizations/:id/search-users
 
-用途：已废弃别名，行为同 `search-tenants`（返回空间分组结果）。权限：Admin+。参数同上。
+用途：已废弃别名，行为同 `search-tenants`。权限：Admin+。参数同上。
 
 ```bash
-curl "$BASE/api/v1/organizations/org-1/search-users?q=demo" -H "Authorization: Bearer $TOKEN"
+curl "$BASE/api/v1/organizations/org-1/search-users?q=10002" -H "Authorization: Bearer $TOKEN"
 ```
 
 ### POST /api/v1/organizations/:id/invite
@@ -295,7 +294,7 @@ curl $BASE/api/v1/organizations/org-1/agent-shares -H "Authorization: Bearer $TO
 
 ### GET /api/v1/organizations/:id/shared-knowledge-bases
 
-用途：组织空间视图：组织内全部共享 KB（含我自己的）。权限：Viewer+。
+用途：组织空间视图：组织内全部共享 KB（含我自己的）。权限：Viewer+；API key 需 `manage_spaces`、`retrieve` 或 full-access，且只返回该 key 白名单内的 KB。
 
 响应：200 `{"success":true,"data":[...含 is_mine、source_from_agent 标记...],"total":N}`
 
@@ -411,7 +410,7 @@ curl -X DELETE $BASE/api/v1/agents/agent-1/shares/s-1 -H "Authorization: Bearer 
 
 ### GET /api/v1/shared-knowledge-bases
 
-用途：列出通过组织共享给我的 KB（去除属主侧向量库元数据）。权限：Viewer+；API key 需 `manage_spaces` 或 full-access。
+用途：列出通过组织共享给我的 KB（去除属主侧向量库元数据）。权限：Viewer+；API key 需 `manage_spaces`、`retrieve` 或 full-access，且只返回该 key 白名单内的 KB。
 
 响应：200 `{"success":true,"data":[...],"total":N}`
 
@@ -449,4 +448,4 @@ curl -X POST $BASE/api/v1/shared-agents/disabled -H "Authorization: Bearer $TOKE
 
 ## 实现参考
 
-路由注册：`internal/router/router.go` 的 `RegisterOrganizationRoutes`。Handler：`internal/handler/organization.go`。
+路由注册：`internal/router/routes_agent.go` 的 `RegisterOrganizationRoutes`。Handler：`internal/handler/organization.go`。

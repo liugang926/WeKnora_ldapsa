@@ -14,6 +14,8 @@ const ALL_MENU_PATHS = [
   'artifacts',
   'agents',
   'organizations',
+  'automations',
+  'toolbox',
   'settings',
   'logout',
 ]
@@ -45,7 +47,7 @@ test('every hidden entry is covered by the employee rule', () => {
   // settings/organizations 等管理入口必须全部命中收敛集合。
   assert.deepEqual(
     [...EMPLOYEE_HIDDEN_MENU_PATHS].sort(),
-    ['agents', 'artifacts', 'knowledge-bases', 'organizations', 'settings'],
+    ['agents', 'artifacts', 'automations', 'knowledge-bases', 'organizations', 'settings', 'toolbox'],
   )
 })
 

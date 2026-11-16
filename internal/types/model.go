@@ -161,7 +161,7 @@ type ModelParameters struct {
 
 // ModelSpecOverride is the per-row slice of a catalog model entry that an
 // operator may pin from the UI or YAML. Compat is the flat protocol-specific
-// object documented in internal/models/catalog/compat.go.
+// object decoded by internal/models/runtime/compat.go using the API settings.
 type ModelSpecOverride struct {
 	API             string             `yaml:"api,omitempty"               json:"api,omitempty"`
 	Reasoning       *bool              `yaml:"reasoning,omitempty"         json:"reasoning,omitempty"`
@@ -200,6 +200,9 @@ func (o *ModelSpecOverride) CompatJSON() json.RawMessage {
 // "value too long for type" failure at INSERT time.
 const ModelIDMaxLen = 64
 
+// ModelDisplayNameMaxLen matches models.display_name VARCHAR(255).
+const ModelDisplayNameMaxLen = 255
+
 // DefaultBuiltinModelTenantID is the tenant id that built-in models are
 // assigned to when YAML does not specify one. Kept in sync with the seed
 // value of tenants_id_seq in migrations/versioned/000000_init.up.sql
@@ -230,6 +233,10 @@ type Model struct {
 	Parameters ModelParameters `yaml:"parameters"  json:"parameters"  gorm:"type:json"`
 	// Whether the model is the default model
 	IsDefault bool `yaml:"is_default"  json:"is_default"`
+	// DefaultFor lists workspace default purposes (model types or "Utility").
+	// It is projected by ListModels, never stored; a vision-capable chat model
+	// can be the vision default independently of the chat default.
+	DefaultFor []string `yaml:"-" json:"default_for,omitempty" gorm:"-"`
 	// Whether the model is a builtin model (visible to all tenants)
 	IsBuiltin bool `yaml:"is_builtin"  json:"is_builtin"  gorm:"default:false"`
 	// ManagedBy identifies which subsystem owns this row's lifecycle.

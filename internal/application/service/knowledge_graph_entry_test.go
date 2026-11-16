@@ -171,6 +171,7 @@ func graphSQLNeoFixture(
 		"000053_knowledge_input_provenance",
 		"000054_knowledge_configuration_history_inputs",
 		"000055_knowledge_actual_config_controls",
+		"000056_knowledge_original_worker_actor",
 	} {
 		script, err := os.ReadFile("../../../migrations/sqlite/" + version + ".up.sql")
 		require.NoError(t, err)
@@ -261,7 +262,12 @@ func graphAdmittedInput(
 		IndexStatus:     "ready",
 		Metadata:        types.JSON(`{}`),
 	}
-	require.NoError(t, repository.NewChunkRepository(db).CreateChunks(ctx, []*types.Chunk{chunk}))
+	parent := *chunk
+	parent.ID = namespace.Knowledge + "-parent"
+	parent.ChunkType = types.ChunkTypeParentText
+	parent.Content = "actual admitted parent text"
+	chunk.ParentChunkID = parent.ID
+	require.NoError(t, repository.NewChunkRepository(db).CreateChunks(ctx, []*types.Chunk{&parent, chunk}))
 	snapshot, err := store.CaptureKnowledgeBuildInputs(
 		ctx,
 		types.KnowledgeBuildInputCaptureRequest{
@@ -348,6 +354,9 @@ func TestKnowledgeGraphActualSQLTaskNeo4jAgentOrdinaryEntry(t *testing.T) {
 	)
 	require.NoError(t, readErr, "actual reader entry")
 	require.NotNil(t, snapshot)
+	require.Len(t, snapshot.Chunks, 1)
+	require.Equal(t, namespace.Knowledge+"-parent", snapshot.Chunks[0].ParentChunkID)
+	require.Zero(t, snapshot.Chunks[0].Score)
 	require.NoError(t, snapshot.Close())
 	tool := tools.NewQueryKnowledgeGraphTool(bases, targets).WithKnowledgeScope(knowledge)
 	registry := tools.NewToolRegistry()

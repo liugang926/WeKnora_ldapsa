@@ -35,9 +35,14 @@ func TestWorkbookSyncReadsCellsAndRetriesFailedRevision(t *testing.T) {
 				`"extension":"axls","modifiedTimestamp":2},` +
 				`{"nodeId":"ai","type":"FILE","category":"ALIDOC","extension":"able"}]}`
 		case sheets:
-			data = `{"value":[{"id":"s1","name":"预算"},{"id":"s2","name":"进度"}]}`
-		case sheets + "/s1", sheets + "/s2":
+			data = `{"value":[{"id":"s1","name":"预算"},{"id":"s2","name":"进度"},{"id":"s3","name":"明细3"},` +
+				`{"id":"s4","name":"明细4"},{"id":"s5","name":"明细5"},{"id":"s6","name":"明细6"}]}`
+		case sheets + "/s1", sheets + "/s2", sheets + "/s3", sheets + "/s4", sheets + "/s5", sheets + "/s6":
 			data = `{"lastNonEmptyRow":0,"lastNonEmptyColumn":1}`
+		case sheets + "/s3/ranges/A1:B1", sheets + "/s4/ranges/A1:B1",
+			sheets + "/s5/ranges/A1:B1", sheets + "/s6/ranges/A1:B1":
+			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, sheets+"/s"), "/ranges/A1:B1")
+			data = fmt.Sprintf(`{"displayValues":[["明细%s","值%s"]]}`, id, id)
 		case sheets + "/s1/ranges/A1:B1":
 			data = `{"displayValues":[["金额","¥5,000"]]}`
 		case sheets + "/s2/ranges/A1:B1":
@@ -69,7 +74,9 @@ func TestWorkbookSyncReadsCellsAndRetriesFailedRevision(t *testing.T) {
 		require.Equal(t, "text/markdown", items[0].ContentType)
 		require.Equal(t, "财务.md", items[0].FileName)
 		require.Equal(t, "# 财务\n\n## 预算\nA1: 金额\nB1: ¥5,000\n"+
-			"\n## 进度\nA1: 完成率\nB1: 45%\n", string(items[0].Content))
+			"\n## 进度\nA1: 完成率\nB1: 45%\n"+
+			"\n## 明细3\nA1: 明细3\nB1: 值3\n\n## 明细4\nA1: 明细4\nB1: 值4\n"+
+			"\n## 明细5\nA1: 明细5\nB1: 值5\n\n## 明细6\nA1: 明细6\nB1: 值6\n", string(items[0].Content))
 		_, err = VerifyOriginalFetchedArtifactForInvocation(invocation, &items[0])
 		require.NoError(t, err)
 	}

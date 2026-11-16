@@ -28,7 +28,11 @@ func (m sessionTitleLineageModel) Chat(
 	_ *chat.ChatOptions,
 ) (*types.ChatResponse, error) {
 	require.Len(m.t, messages, 2)
-	require.Equal(m.t, "raw human question", messages[1].Content)
+	require.Equal(m.t, "system", messages[0].Role)
+	require.Equal(m.t, sessionTitleInjectionGuard, messages[0].Content)
+	require.Equal(m.t, "user", messages[1].Role)
+	require.Equal(m.t, "<user_message>\nraw human question\n</user_message>\n\n"+
+		"Write the session title for the message above. Output only the title.", messages[1].Content)
 	for _, input := range messages {
 		require.NoError(m.t, input.SourceLineage.RequireComplete())
 		require.Empty(m.t, input.SourceLineage.Sources)
@@ -60,7 +64,7 @@ func (s sessionTitleLineageModels) GetChatModel(context.Context, string) (chat.C
 }
 
 func TestSessionTextLineageActualTitleModelWriterAndManualRace(t *testing.T) {
-	for _, mutation := range []string{"none", "different", "same text", "ABA"} {
+	for _, mutation := range []string{"none", "different", "same text", "ABA", "owner transferred", "legacy assigned"} {
 		manualRace := mutation != "none"
 		t.Run(mutation, func(t *testing.T) {
 			db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -71,10 +75,18 @@ func TestSessionTextLineageActualTitleModelWriterAndManualRace(t *testing.T) {
 			require.NoError(t, db.Exec(string(triggerSQL)[strings.Index(string(triggerSQL), "CREATE TRIGGER"):]).Error)
 			empty, _ := types.NewCompleteSourceLineage()
 			row := &types.Session{TenantID: 7, UserID: "reader", Title: "legacy secret title"}
+			ownerChange := mutation == "owner transferred" || mutation == "legacy assigned"
+			if mutation == "legacy assigned" {
+				row.UserID = ""
+			}
 			require.NoError(t, db.Create(row).Error)
 			model := sessionTitleLineageModel{t: t}
 			if manualRace {
 				model.mutate = func() {
+					if ownerChange {
+						require.NoError(t, db.Model(row).Update("user_id", "new-owner").Error)
+						return
+					}
 					if mutation == "different" {
 						require.NoError(
 							t,
@@ -117,9 +129,11 @@ func TestSessionTextLineageActualTitleModelWriterAndManualRace(t *testing.T) {
 					ragReadActorFixture{},
 				),
 			}
+			// The authenticated reader's loaded row, not the caller DTO, supplies the write scope.
+			input := &types.Session{ID: row.ID, TenantID: row.TenantID}
 			title, err := svc.GenerateTitle(
 				ragReadContext(),
-				row,
+				input,
 				[]types.Message{{Role: "user", Content: "raw human question"}},
 				"title-model",
 			)
@@ -130,9 +144,13 @@ func TestSessionTextLineageActualTitleModelWriterAndManualRace(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, "new model title", title)
 			}
-			stored, err := svc.sessionRepo.Get(context.Background(), 7, "reader", row.ID)
+			owner := "reader"
+			if ownerChange {
+				owner = "new-owner"
+			}
+			stored, err := svc.sessionRepo.Get(context.Background(), 7, owner, row.ID)
 			require.NoError(t, err)
-			if mutation == "same text" || mutation == "ABA" {
+			if mutation == "same text" || mutation == "ABA" || ownerChange {
 				require.Nil(t, stored.TitleSourceLineage)
 			} else {
 				require.Equal(t, empty, stored.TitleSourceLineage)

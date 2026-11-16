@@ -22,9 +22,15 @@ import (
 
 type stubSessionService struct {
 	interfaces.SessionService
+	// session, when set, is the row GetSession returns. Background-work tests
+	// use it so the handler must key work by session.TenantID.
+	session *types.Session
 }
 
 func (s *stubSessionService) GetSession(_ context.Context, id string) (*types.Session, error) {
+	if s != nil && s.session != nil {
+		return s.session, nil
+	}
 	return &types.Session{ID: id, TenantID: 1}, nil
 }
 
@@ -98,6 +104,8 @@ func (s *stubStreamManager) ClearLiveRun(context.Context, string, string) error 
 	return nil
 }
 
+func (s *stubStreamManager) ResetEvents(context.Context, string, string) error { return nil }
+
 // completedAnswerStream is one assistant turn whose answer embeds a knowledge-base
 // image, with the resource handle straddling two deltas as it does in production
 // when the model-context decoder flushes mid-reference.
@@ -132,7 +140,7 @@ func renderReplayCodec(t *testing.T, initial, polled []interfaces.StreamEvent, q
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(middleware.ErrorHandler())
-	h := &Handler{fileService: &stubResourceFileService{}}
+	h := &Handler{fileService: &stubResourceFileService{}, ResourceURLResolver: stubRequestResolver}
 	r.GET("/codec", func(c *gin.Context) {
 		rewriter, err := h.resolveStreamRewriter(c)
 		if err != nil {

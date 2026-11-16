@@ -2,9 +2,7 @@ package service
 
 import (
 	"context"
-	"errors"
 
-	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -48,6 +46,12 @@ func (s *knowledgeBaseService) fetchKnowledgeDataWithShared(ctx context.Context,
 		if k == nil {
 			return
 		}
+		if scope, ok := ctx.Value(searchHydrationScopeKey{}).(searchHydrationScope); ok {
+			owner, requested := scope.owners[k.KnowledgeBaseID]
+			if !requested || owner != k.TenantID || (len(scope.documents) > 0 && !scope.documents[k.ID]) {
+				return
+			}
+		}
 		allowed, err := permissions.Check(k.KnowledgeBaseID, k.TenantID, types.OrgRoleViewer)
 		if err != nil || !allowed {
 			return
@@ -65,17 +69,18 @@ func (s *knowledgeBaseService) fetchKnowledgeDataWithShared(ctx context.Context,
 	for _, k := range rows {
 		appendAllowed(k)
 	}
-	for _, id := range knowledgeIDs {
-		if rows[id] != nil {
-			continue
-		}
-		k, err := s.kgRepo.GetKnowledgeByIDOnly(ctx, id)
-		if err != nil && !errors.Is(err, repository.ErrKnowledgeNotFound) {
-			return nil, err
-		}
-		if err == nil {
-			appendAllowed(k)
-		}
+	// Knowledge of org-shared KBs lives in the sharing workspace. Fetch all
+	// of it in one query; it used to be one query per ID, serially.
+	missing := s.findMissingIDs(knowledgeIDs, func(id string) bool { return rows[id] != nil })
+	if len(missing) == 0 {
+		return knowledgeMap, nil
+	}
+	crossRows, err := s.kgRepo.GetKnowledgeBatchByIDOnly(ctx, missing)
+	if err != nil {
+		return nil, err
+	}
+	for _, k := range crossRows {
+		appendAllowed(k)
 	}
 	return knowledgeMap, nil
 }

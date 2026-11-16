@@ -70,6 +70,18 @@ func (r *chunkRepository) CreateChunks(ctx context.Context, chunks []*types.Chun
 		}
 	}
 
+	// GORM substitutes default:true for a zero bool even with Select("*").
+	// A non-nil pointer makes both true and false explicit on insert, while
+	// embedding the original chunk keeps generated seq_ids and timestamps on it.
+	type chunkInsert struct {
+		*types.Chunk
+		IsEnabled *bool
+	}
+	rows := make([]chunkInsert, len(chunks))
+	for i, chunk := range chunks {
+		rows[i] = chunkInsert{Chunk: chunk, IsEnabled: &chunk.IsEnabled}
+	}
+
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, chunk := range chunks {
 			if err := CheckNextcloudBuildIdentity(ctx, chunk.TenantID, chunk.KnowledgeBaseID, chunk.KnowledgeID); err !=
@@ -91,8 +103,6 @@ func (r *chunkRepository) CreateChunks(ctx context.Context, chunks []*types.Chun
 			}
 		}
 
-		// Select("*") ensures zero-value fields (IsEnabled=false, Flags=0) are
-		// explicitly inserted, bypassing GORM's default value behavior.
 		// SeqID=0 is skipped by GORM automatically (autoIncrement tag).
 		for _, chunk := range chunks {
 			if _, err := validateKnowledgeInputWrite(
@@ -108,7 +118,7 @@ func (r *chunkRepository) CreateChunks(ctx context.Context, chunks []*types.Chun
 		if err := guardNextcloudDerivedChunkReferences(tx, chunks); err != nil {
 			return err
 		}
-		if err := tx.Select("*").CreateInBatches(chunks, createChunksBatchSize).Error; err != nil {
+		if err := tx.Table("chunks").Select("*").CreateInBatches(rows, createChunksBatchSize).Error; err != nil {
 			return err
 		}
 		for _, chunk := range chunks {
@@ -192,6 +202,21 @@ func (r *chunkRepository) ListChunksByIDOnly(ctx context.Context, ids []string) 
 	return chunks, nil
 }
 
+// ListChunkEvidenceByIDOnly validates graph references without loading content.
+// Find retains Chunk's default soft-delete scope; the caller checks KB access.
+func (r *chunkRepository) ListChunkEvidenceByIDOnly(ctx context.Context, ids []string) ([]*types.Chunk, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var chunks []*types.Chunk
+	if err := r.db.WithContext(ctx).
+		Select("id, knowledge_base_id, knowledge_id, is_enabled").
+		Where("id IN ?", ids).Find(&chunks).Error; err != nil {
+		return nil, err
+	}
+	return chunks, nil
+}
+
 // ListChunksBySeqID retrieves multiple chunks by their seq_ids
 func (r *chunkRepository) ListChunksBySeqID(
 	ctx context.Context, tenantID uint64, seqIDs []int64,
@@ -270,11 +295,11 @@ func (r *chunkRepository) ListPagedChunksByKnowledgeID(
 			db = db.Where("is_enabled = ?", *isEnabled)
 		}
 		if keyword != "" {
-			like := "%" + keyword + "%"
+			like := "%" + escapeLikeKeyword(keyword) + "%"
 
 			// Document type: search content only
 			if knowledgeType != types.KnowledgeTypeFAQ {
-				db = db.Where("content LIKE ?", like)
+				db = db.Where("content LIKE ? ESCAPE ?", like, likeEscapeChar)
 				return db
 			}
 
@@ -286,32 +311,35 @@ func (r *chunkRepository) ListPagedChunksByKnowledgeID(
 			case "standard_question":
 				// Search only in standard_question field of metadata
 				if isPostgres {
-					db = db.Where("metadata->>'standard_question' ILIKE ?", like)
+					db = db.Where("metadata->>'standard_question' ILIKE ? ESCAPE ?", like, likeEscapeChar)
 				} else {
 					// MySQL: metadata->>'$.standard_question' (MySQL 5.7.13+)
 					// 也可以用 JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.standard_question'))
-					db = db.Where("metadata->>'$.standard_question' LIKE ?", like)
+					db = db.Where("metadata->>'$.standard_question' LIKE ? ESCAPE ?", like, likeEscapeChar)
 				}
 			case "similar_questions":
 				// Search in similar_questions array of metadata
 				if isPostgres {
-					db = db.Where("(metadata->'similar_questions')::text ILIKE ?", like)
+					db = db.Where("(metadata->'similar_questions')::text ILIKE ? ESCAPE ?", like, likeEscapeChar)
 				} else {
-					db = db.Where("JSON_EXTRACT(metadata, '$.similar_questions') LIKE ?", like)
+					db = db.Where("JSON_EXTRACT(metadata, '$.similar_questions') LIKE ? ESCAPE ?",
+						like, likeEscapeChar)
 				}
 			case "answers":
 				// Search in answers array of metadata
 				if isPostgres {
-					db = db.Where("(metadata->'answers')::text ILIKE ?", like)
+					db = db.Where("(metadata->'answers')::text ILIKE ? ESCAPE ?", like, likeEscapeChar)
 				} else {
-					db = db.Where("JSON_EXTRACT(metadata, '$.answers') LIKE ?", like)
+					db = db.Where("JSON_EXTRACT(metadata, '$.answers') LIKE ? ESCAPE ?", like, likeEscapeChar)
 				}
 			default:
 				// Search in all fields (content and metadata)
 				if isPostgres {
-					db = db.Where("(content ILIKE ? OR metadata::text ILIKE ?)", like, like)
+					db = db.Where("(content ILIKE ? ESCAPE ? OR metadata::text ILIKE ? ESCAPE ?)",
+						like, likeEscapeChar, like, likeEscapeChar)
 				} else {
-					db = db.Where("(content LIKE ? OR CAST(metadata AS CHAR) LIKE ?)", like, like)
+					db = db.Where("(content LIKE ? ESCAPE ? OR CAST(metadata AS CHAR) LIKE ? ESCAPE ?)",
+						like, likeEscapeChar, like, likeEscapeChar)
 				}
 			}
 		}
@@ -422,6 +450,24 @@ func (r *chunkRepository) ListChunksByParentIDs(
 	return chunks, nil
 }
 
+// ListChunksByParentIDsOnly retrieves chunks by parent IDs without tenant
+// filter, for expansions whose parent IDs come from org-shared KB retrieval
+// results owned by another workspace (#3342).
+func (r *chunkRepository) ListChunksByParentIDsOnly(
+	ctx context.Context, parentIDs []string,
+) ([]*types.Chunk, error) {
+	if len(parentIDs) == 0 {
+		return nil, nil
+	}
+	var chunks []*types.Chunk
+	if err := r.db.WithContext(ctx).
+		Where("parent_chunk_id IN ?", parentIDs).
+		Find(&chunks).Error; err != nil {
+		return nil, err
+	}
+	return chunks, nil
+}
+
 // UpdateChunk updates a chunk using GORM Save, which updates ALL fields
 // except SeqID (auto-increment, must not be overwritten).
 // Make sure the chunk object is complete (e.g., fetched from DB) before calling this method.
@@ -513,6 +559,7 @@ func (r *chunkRepository) SaveChunkRevision(
 			Updates(map[string]interface{}{
 				"content":          common.CleanInvalidUTF8(chunk.Content),
 				"source_content":   common.CleanInvalidUTF8(chunk.SourceContent),
+				"source_locators":  chunk.SourceLocators,
 				"content_revision": chunk.ContentRevision,
 				"is_enabled":       chunk.IsEnabled,
 				"metadata":         chunk.Metadata,
@@ -767,7 +814,9 @@ func (r *chunkRepository) DeleteChunks(ctx context.Context, tenantID uint64, ids
 	return nil
 }
 
-// DeleteChunksByKnowledgeID deletes all chunks for a knowledge ID
+// DeleteChunksByKnowledgeID soft-deletes all active chunks for a knowledge ID.
+// The rows remain available for recovery until a later successful replacement
+// proves that a newer chunk with the same document position is now active.
 func (r *chunkRepository) DeleteChunksByKnowledgeID(ctx context.Context, tenantID uint64, knowledgeID string) error {
 	if _, guarded := ctx.Value(nextcloudBuildContextKey{}).(nextcloudBuildContext); !guarded {
 		return r.db.WithContext(ctx).Where(
@@ -783,6 +832,61 @@ func (r *chunkRepository) DeleteChunksByKnowledgeID(ctx context.Context, tenantI
 		return tx.Where("tenant_id = ? AND knowledge_id = ?", tenantID, knowledgeID).
 			Delete(&types.Chunk{}).Error
 	})
+}
+
+// PurgeSupersededChunksByKnowledgeID permanently removes only soft-deleted
+// chunks that have an active replacement from a later parse at the same
+// document position and chunk type. This intentionally does not purge an
+// arbitrary soft-deleted row: a user-deleted chunk, or a row from a failed or
+// cancelled replacement, remains recoverable until a successful replacement
+// supersedes it.
+//
+// The revision snapshots belong to the obsolete chunk ID and are removed in
+// the same transaction. SQLite's chunk_images projection is maintained by its
+// existing DELETE trigger; other stores have already removed their indexes
+// before this method is called.
+func (r *chunkRepository) PurgeSupersededChunksByKnowledgeID(
+	ctx context.Context, tenantID uint64, knowledgeID string,
+) (int64, error) {
+	var chunkIDs []string
+	var purged int64
+
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// A replacement must have been created after the previous row was
+		// soft-deleted. Comparing against deleted_at avoids treating a manual
+		// delete as superseded merely because an older live chunk has the same
+		// index. COALESCE keeps legacy NULL chunk_type rows comparable.
+		if err := tx.Unscoped().Model(&types.Chunk{}).Where(
+			`chunks.tenant_id = ? AND chunks.knowledge_id = ?
+				AND chunks.deleted_at IS NOT NULL
+				AND EXISTS (
+					SELECT 1 FROM chunks AS replacement
+					WHERE replacement.tenant_id = chunks.tenant_id
+						AND replacement.knowledge_id = chunks.knowledge_id
+						AND replacement.deleted_at IS NULL
+						AND replacement.chunk_index = chunks.chunk_index
+						AND COALESCE(replacement.chunk_type, '') = COALESCE(chunks.chunk_type, '')
+						AND replacement.created_at >= chunks.deleted_at
+				)`,
+			tenantID, knowledgeID,
+		).Pluck("chunks.id", &chunkIDs).Error; err != nil {
+			return err
+		}
+		if len(chunkIDs) == 0 {
+			return nil
+		}
+
+		if err := tx.Where("chunk_id IN ?", chunkIDs).Delete(&types.ChunkRevision{}).Error; err != nil {
+			return err
+		}
+		result := tx.Unscoped().Where("id IN ?", chunkIDs).Delete(&types.Chunk{})
+		if result.Error != nil {
+			return result.Error
+		}
+		purged = result.RowsAffected
+		return nil
+	})
+	return purged, err
 }
 
 // ListImageInfoByKnowledgeIDs returns non-empty image_info values for the given knowledge IDs.

@@ -1,16 +1,8 @@
 package sandbox
 
-import (
-	"path"
-	"strings"
-)
+import "github.com/Tencent/WeKnora/internal/sandbox/workspace"
 
-// ResolveWorkspacePath gives file tools the same relative-path semantics as
-// commands. This normalizes only; callers still enforce their read/write roots.
-func ResolveWorkspacePath(value string) string {
-	value = strings.TrimSpace(value)
-	if !path.IsAbs(value) {
-		return path.Join(SessionWorkspaceRoot, value)
-	}
-	return path.Clean(value)
+// ResolveWorkspacePathIn anchors a relative path at the layout root.
+func ResolveWorkspacePathIn(l WorkspaceLayout, value string) string {
+	return workspace.ResolvePathIn(l, value)
 }

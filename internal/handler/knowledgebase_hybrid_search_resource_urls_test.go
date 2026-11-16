@@ -25,7 +25,7 @@ func newHybridSearchResourceURLRouter(svc interfaces.KnowledgeBaseService, fileS
 		c.Set(types.UserIDContextKey.String(), "u-test")
 		c.Next()
 	})
-	h := &KnowledgeBaseHandler{service: svc, fileService: fileSvc}
+	h := &KnowledgeBaseHandler{service: svc, fileService: fileSvc, ResourceURLResolver: stubRequestResolver}
 	router.POST("/knowledge-bases/:id/hybrid-search", h.HybridSearch)
 	router.GET("/knowledge-bases/:id/hybrid-search", h.HybridSearch)
 	return router
@@ -50,8 +50,9 @@ func performHybridSearchResourceURLRequest(
 func TestHybridSearch_PublicResourceURLs(t *testing.T) {
 	svc := &hybridSearchTestService{
 		results: []*types.SearchResult{{
-			Content:   "chunk ![c](" + testResourceHandle + ")",
-			ImageInfo: `[{"url":"` + testResourceHandle + `"}]`,
+			Content:       "chunk ![c](" + testResourceHandle + ")",
+			MatchedImages: []types.MatchedImage{{ChunkID: "image-1", URL: testResourceHandle}},
+			ImageInfo:     `[{"url":"` + testResourceHandle + `"}]`,
 		}},
 	}
 	fileSvc := &stubResourceFileService{url: "https://cdn.example.com/signed.png"}

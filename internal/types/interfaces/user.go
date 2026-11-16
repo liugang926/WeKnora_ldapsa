@@ -82,7 +82,7 @@ type UserService interface {
 	GetUserByUsername(ctx context.Context, username string) (*types.User, error)
 	// GetUserByTenantID gets the first user (owner) of a tenant
 	GetUserByTenantID(ctx context.Context, tenantID uint64) (*types.User, error)
-	// UpdateUser updates user information
+	// UpdateUser updates user data without changing account status; use SetUserActive for that.
 	UpdateUser(ctx context.Context, user *types.User) error
 	// DeleteUser deletes a user
 	DeleteUser(ctx context.Context, id string) error
@@ -143,6 +143,15 @@ type UserService interface {
 	// FindUserByEmailOrUsernameFold finds an exact, case-insensitive email or
 	// username collision. Inactive users still count; soft-deleted users do not.
 	FindUserByEmailOrUsernameFold(ctx context.Context, email, username string) (*types.User, error)
+	// SetUserActive enables or disables a user account (SystemAdmin action).
+	// Disabling also revokes all of that user's outstanding tokens. The
+	// repository enforces self-disable and last-system-admin guards.
+	SetUserActive(ctx context.Context, userID, actorID string, active bool) (*types.User, error)
+	// ListAllUsers lists every platform user (across tenants) newest-first.
+	// Returns the page plus a has_more flag so the system-admin user-list UI
+	// can paginate without a second count query. The handler enforces the
+	// SystemAdmin gate, so the service does not duplicate it here.
+	ListAllUsers(ctx context.Context, offset, limit int) ([]*types.User, bool, error)
 	// ListSystemAdmins lists users with IsSystemAdmin=true.
 	// Returns the page of admins plus the total count (for pagination UI);
 	// callers pass offset/limit to page through results. Used by the
@@ -183,8 +192,11 @@ type UserRepository interface {
 	GetUserByUsername(ctx context.Context, username string) (*types.User, error)
 	// GetUserByTenantID gets the first user (owner) of a tenant
 	GetUserByTenantID(ctx context.Context, tenantID uint64) (*types.User, error)
-	// UpdateUser updates a user
+	// UpdateUser updates user data without changing account status; use SetUserActive for that.
 	UpdateUser(ctx context.Context, user *types.User) error
+	// SetUserActive atomically changes status and revokes sessions on disable,
+	// preserving at least one active system administrator.
+	SetUserActive(ctx context.Context, userID, actorID string, active bool) (*types.User, error)
 	// DeleteUser deletes a user
 	DeleteUser(ctx context.Context, id string) error
 	// ListUsers lists users with pagination
@@ -206,8 +218,9 @@ type UserRepository interface {
 
 // AuthTokenRepository defines the auth token repository interface
 type AuthTokenRepository interface {
-	// CreateToken creates an auth token
-	CreateToken(ctx context.Context, token *types.AuthToken) error
+	// CreateTokenPair issues an active user's token pair. During rotation it consumes
+	// the previous refresh token in the same transaction.
+	CreateTokenPair(ctx context.Context, access, refresh *types.AuthToken, previousRefresh string) error
 	// GetTokenByValue gets a token by its value
 	GetTokenByValue(ctx context.Context, tokenValue string) (*types.AuthToken, error)
 	// GetTokenByID gets a token by its primary key

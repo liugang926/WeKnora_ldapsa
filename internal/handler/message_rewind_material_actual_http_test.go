@@ -119,6 +119,7 @@ func serveActualRewindHTTP(
 		nil,
 		nil,
 		service.NewSessionBusyGate(),
+		nil, // No background activities in this material-only rewind.
 	)
 	h := sessionhandler.NewHandler(
 		nativeSavedReplaySessions{repo: sessions},
@@ -153,6 +154,8 @@ func serveActualRewindHTTP(
 		nil,
 		rewind,
 		nil,
+		nil, // Host project directories.
+		nil, // Background work.
 	)
 	gin.SetMode(gin.TestMode)
 	router := gin.New()

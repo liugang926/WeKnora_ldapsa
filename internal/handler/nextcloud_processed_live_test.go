@@ -182,7 +182,7 @@ func TestNextcloudProcessedLiveHTTPReadAndRevocation(t *testing.T) {
 		require.NoError(t, db.AutoMigrate(&types.AuthToken{}))
 		users := repository.NewUserRepository(db)
 		tokens := repository.NewAuthTokenRepository(db)
-		tenants := service.NewTenantService(repository.NewTenantRepository(db), nil)
+		tenants := service.NewTenantService(repository.NewTenantRepository(db), nil, nil)
 		members := service.NewTenantMemberService(repository.NewTenantMemberRepository(db), nil, users, tokens)
 		enforced := true
 		cfg := &config.Config{Tenant: &config.TenantConfig{EnableRBAC: &enforced}}

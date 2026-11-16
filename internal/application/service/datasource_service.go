@@ -3,16 +3,17 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"mime/multipart"
-	"net/textproto"
 	"reflect"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
 
@@ -86,6 +87,9 @@ func (s *DataSourceService) CreateDataSource(ctx context.Context, ds *types.Data
 			"nextcloud sources require the source-pairing endpoint",
 		), "Nextcloud sources require the source-pairing endpoint")
 	}
+	if err := datasource.ValidateSyncSchedule(ds.SyncSchedule); err != nil {
+		return nil, err
+	}
 
 	// Validate knowledge base exists
 	kb, err := s.kbService.GetKnowledgeBaseByID(ctx, ds.KnowledgeBaseID)
@@ -104,6 +108,14 @@ func (s *DataSourceService) CreateDataSource(ctx context.Context, ds *types.Data
 
 	// Validate configuration
 	if cfg, err := ds.ParseConfig(); err == nil && cfg != nil {
+		if ds.Type == types.ConnectorTypeDingTalk {
+			if cfg.Settings == nil {
+				cfg.Settings = make(map[string]interface{})
+			}
+			if _, set := cfg.Settings["include_uploaded_files"]; !set {
+				cfg.Settings["include_uploaded_files"] = false
+			}
+		}
 		cfg.StripNonSecretCredentials(ds.Type)
 		if blob, err := cfg.ToJSON(); err == nil {
 			ds.Config = blob
@@ -163,6 +175,22 @@ func (s *DataSourceService) ListDataSources(ctx context.Context, kbID string) ([
 
 // UpdateDataSource updates an existing data source
 func (s *DataSourceService) UpdateDataSource(ctx context.Context, ds *types.DataSource) (*types.DataSource, error) {
+	return s.updateDataSource(ctx, ds, nil, nil)
+}
+
+// PatchDataSourceSyncSettings preserves worker state and settings omitted by the caller.
+func (s *DataSourceService) PatchDataSourceSyncSettings(
+	ctx context.Context, before, after *types.DataSource, fields []string,
+) (*types.DataSource, error) {
+	if before == nil || after == nil || before.ID != after.ID || len(fields) == 0 {
+		return nil, datasource.ErrDataSourceInvalid
+	}
+	return s.updateDataSource(ctx, after, before, fields)
+}
+
+func (s *DataSourceService) updateDataSource(
+	ctx context.Context, ds, before *types.DataSource, fields []string,
+) (*types.DataSource, error) {
 	if ds == nil || ds.ID == "" {
 		return nil, datasource.ErrDataSourceInvalid
 	}
@@ -216,6 +244,9 @@ func (s *DataSourceService) UpdateDataSource(ctx context.Context, ds *types.Data
 	if ds.TenantID != existing.TenantID {
 		return nil, datasource.ErrDataSourceInvalid
 	}
+	if err := datasource.ValidateSyncSchedule(ds.SyncSchedule); err != nil {
+		return nil, err
+	}
 
 	// Credentials NEVER flow through this endpoint — they live behind the
 	// /credentials subresource. Force-preserve the stored credentials map
@@ -262,9 +293,22 @@ func (s *DataSourceService) UpdateDataSource(ctx context.Context, ds *types.Data
 		}
 	}
 
-	if err := s.dsRepo.Update(ctx, ds); err != nil {
+	if before != nil {
+		err = s.dsRepo.PatchSyncSettings(ctx, ds, before.Config, fields)
+	} else {
+		err = s.dsRepo.Update(ctx, ds)
+	}
+	if err != nil {
 		logger.Errorf(ctx, "failed to update data source: %v", err)
 		return nil, err
+	}
+
+	if before != nil {
+		// Schedule from current persisted status, never the handler's stale snapshot.
+		ds, err = s.dsRepo.FindByID(ctx, ds.ID)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Update cron schedule
@@ -651,6 +695,9 @@ func (s *DataSourceService) ResumeDataSource(ctx context.Context, id string) err
 		if !active {
 			return apprepo.ErrNextcloudSourcePairingConflict
 		}
+	}
+	if err := datasource.ValidateSyncSchedule(ds.SyncSchedule); err != nil {
+		return err
 	}
 
 	ds.Status = types.DataSourceStatusActive
@@ -1204,6 +1251,8 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 	// Auto-tag: find or create a tag for this data source so synced items are easily identifiable
 	autoTagIDs := s.resolveAutoTagIDs(ctx, ds)
 
+	var ingestErr error
+	nonBlockingFailures := 0
 	for _, item := range items {
 		if ds.Type == types.ConnectorTypeNextcloud {
 			cancelled, guardErr := s.checkNextcloudSyncActive(ctx, payload)
@@ -1212,7 +1261,13 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 			}
 		}
 		item := item
-		s.applyFetchedItem(withKBActivitySuppressed(ctx), ds, &item, autoTagIDs, result)
+		ingestCtx := bindFetchedConnectorItem(withKBActivitySuppressed(ctx), connector, ds, &item)
+		nonBlocking, err := s.applyFetchedItem(ingestCtx, ds, &item, autoTagIDs, result)
+		if nonBlocking || errors.Is(err, ErrInvalidFileType) {
+			nonBlockingFailures++
+		} else if err != nil && ingestErr == nil {
+			ingestErr = err
+		}
 	}
 	if ds.Type == types.ConnectorTypeNextcloud {
 		cancelled, guardErr := s.checkNextcloudSyncActive(ctx, payload)
@@ -1222,7 +1277,13 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 	}
 
 	resultJSON, _ := result.ToJSON()
-	if err := allFetchedItemsFailedError(result); err != nil {
+	if ingestErr != nil {
+		// Keep the previous cursor so a retry can recover items the sink did not accept.
+		s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON,
+			types.SyncLogStatusFailed, apperrors.PublicMessage(ingestErr), wasPaused)
+		return ingestErr
+	}
+	if err := allFetchedItemsFailedError(result, nonBlockingFailures); err != nil {
 		logger.Errorf(ctx, "data source sync failed while processing fetched items: %v", err)
 		s.updateSyncRunResult(
 			ctx, ds, syncLog, result, resultJSON, types.SyncLogStatusFailed, apperrors.PublicMessage(err), wasPaused,
@@ -1610,11 +1671,13 @@ func fetchFailureSyncError(item *types.FetchedItem, rawMsg string) types.SyncIte
 // applyFetchedItem writes a single fetched item into the knowledge base and
 // updates result counters. It is the shared core of the batch loop and the
 // streaming handler so item classification (deleted / empty / ingest outcome)
-// stays identical across both fetch paths.
+// stays identical across both fetch paths. Unexpected ingestion errors are
+// returned so callers do not acknowledge a cursor beyond an unaccepted item.
+// The boolean marks oversized downloads that should not disable scheduled syncs.
 func (s *DataSourceService) applyFetchedItem(
 	ctx context.Context, ds *types.DataSource, item *types.FetchedItem,
 	tagIDs []string, result *types.SyncResult,
-) {
+) (nonBlockingFailure bool, ingestErr error) {
 	if item.IsDeleted {
 		if !ds.SyncDeletions && ds.Type != types.ConnectorTypeNextcloud {
 			// Other connectors may disable sync deletion. Nextcloud must
@@ -1624,7 +1687,7 @@ func (s *DataSourceService) applyFetchedItem(
 		if item.ExternalID == "" {
 			logger.Warnf(ctx, "skipping deletion for item %q: empty external_id", item.Title)
 			result.Skipped++
-			return
+			return false, nil
 		}
 		if ds.Type == types.ConnectorTypeNextcloud {
 			versions, ok := s.knowledgeService.GetRepository().(nextcloudVersionStore)
@@ -1675,13 +1738,13 @@ func (s *DataSourceService) applyFetchedItem(
 				Code:    "deletion_lookup_failed",
 				Message: "Failed to look up the item before deletion; see server logs",
 			})
-			return
+			return false, nil
 		}
 		if existing == nil {
 			// Deletion is idempotent: the source item may already have been
 			// removed manually or by an earlier sync.
 			result.Skipped++
-			return
+			return false, nil
 		}
 		if deleteErr := s.knowledgeService.DeleteKnowledge(ctx, existing.ID); deleteErr != nil {
 			// The cursor is already past this item, so a failed deletion normally
@@ -1696,7 +1759,7 @@ func (s *DataSourceService) applyFetchedItem(
 				Code:    "deletion_failed",
 				Message: "Deletion failed; see server logs",
 			})
-			return
+			return false, nil
 		}
 		if herr := repo.HardDeleteKnowledge(ctx, ds.TenantID, existing.ID); herr != nil {
 			result.Failed++
@@ -1708,10 +1771,10 @@ func (s *DataSourceService) applyFetchedItem(
 				Code:    "deletion_failed",
 				Message: "Deletion failed; see server logs",
 			})
-			return
+			return false, nil
 		}
 		result.Deleted++
-		return
+		return false, nil
 	}
 
 	if len(item.Content) == 0 && item.URL == "" {
@@ -1720,11 +1783,12 @@ func (s *DataSourceService) applyFetchedItem(
 			logger.Warnf(ctx, "item %q (external_id=%s) fetch failed: %s", item.Title, item.ExternalID, errMsg)
 			result.Failed++
 			recordSyncError(result, fetchFailureSyncError(item, errMsg))
+			return item.Metadata["error_reason_code"] == "dingtalk_document_too_large", nil
 		} else {
 			logger.Infof(ctx, "skipping item %q (external_id=%s): no content or URL", item.Title, item.ExternalID)
 			result.Skipped++
 		}
-		return
+		return false, nil
 	}
 
 	isUpdate, err := s.ingestItem(ctx, ds, item, tagIDs)
@@ -1739,16 +1803,12 @@ func (s *DataSourceService) applyFetchedItem(
 			// Duplicate file/URL is not a failure — count as skipped.
 			logger.Infof(ctx, "item %q (external_id=%s) already exists, skipping", item.Title, item.ExternalID)
 			result.Skipped++
-		case item.Metadata["embedded_image"] == "true":
-			// An image extracted from a document for OCR is a best-effort
-			// enrichment, not the document itself. If the KB cannot ingest it
-			// (VLM/object-storage not configured for images, or a transient error),
-			// skip it rather than failing the whole sync: the doc body already
-			// synced, and the image stays in SubtreeKeep for a later retry once the
-			// KB is configured.
-			logger.Infof(ctx, "skipping embedded image %q (external_id=%s), not ingested: %v",
-				item.Title, item.ExternalID, err)
-			result.Skipped++
+		case errors.Is(err, ErrInvalidFileType):
+			result.Failed++
+			recordSyncError(result, types.SyncItemError{
+				Title: item.Title, Code: "unsupported_file_type", Message: "Unsupported file type",
+			})
+			return false, err
 		default:
 			logger.Warnf(ctx, "failed to ingest item %q (external_id=%s): %v", item.Title, item.ExternalID, err)
 			result.Failed++
@@ -1757,12 +1817,14 @@ func (s *DataSourceService) applyFetchedItem(
 				Code:    "ingest_failed",
 				Message: "Ingest failed; see server logs",
 			})
+			return false, &dataSourceIngestError{cause: err}
 		}
 	} else if isUpdate {
 		result.Updated++
 	} else {
 		result.Created++
 	}
+	return false, nil
 }
 
 // streamStartCursor decides which cursor a streaming fetch should resume from.
@@ -1777,10 +1839,76 @@ func streamStartCursor(ds *types.DataSource, forceFull bool, attempt int) (*type
 	return ds.ParseSyncCursor()
 }
 
+// feishuSettingResyncRequired is the one-shot upgrade marker key. Legacy
+// feishu/lark data sources are stamped by migration 000122 (sqlite 000040).
+const feishuSettingResyncRequired = "resync_required"
+
+// resyncRequired reads the one-shot upgrade marker out of parsed config
+// Settings. Tolerates both bool and string encodings. The marker is stamped
+// onto legacy feishu/lark data sources by migration 000122 (sqlite 000040)
+// when the per-source parse_mode shipped; it upgrades their next sync — even
+// a scheduled incremental one — to a full pass so existing documents re-ingest
+// with folder paths and block-level parsing.
+func resyncRequired(cfg *types.DataSourceConfig) bool {
+	if cfg == nil {
+		return false
+	}
+	switch v := cfg.Settings[feishuSettingResyncRequired].(type) {
+	case bool:
+		return v
+	case string:
+		return v == "true"
+	default:
+		return false
+	}
+}
+
+// clearResyncMarker removes the one-shot upgrade marker after the upgraded sync
+// succeeded so it never fires again. Streaming path only: the feishu/lark
+// connectors the migration tags all implement StreamingConnector.
+func (s *DataSourceService) clearResyncMarker(ctx context.Context, ds *types.DataSource) {
+	cfg, err := ds.ParseConfig()
+	if err == nil && cfg.Settings[feishuSettingResyncRequired] == nil {
+		return
+	}
+	// Re-read the row before writing: the upgraded sync may have run long, and
+	// a full-row Update from the sync-start snapshot would silently revert
+	// concurrent user edits (settings, resource_ids, schedule…). Only the
+	// marker removal is ours to persist.
+	fresh, err := s.dsRepo.FindByID(ctx, ds.ID)
+	if err != nil {
+		logger.Warnf(ctx, "failed to clear resync_required marker, re-read failed: ds=%s err=%v", ds.ID, err)
+		return
+	}
+	cfg, err = fresh.ParseConfig()
+	if err != nil {
+		logger.Warnf(ctx, "failed to clear resync_required marker, config unreadable: ds=%s err=%v", ds.ID, err)
+		return
+	}
+	if cfg.Settings[feishuSettingResyncRequired] == nil {
+		return
+	}
+	delete(cfg.Settings, feishuSettingResyncRequired)
+	blob, err := cfg.ToJSON()
+	if err != nil {
+		logger.Warnf(ctx, "failed to clear resync_required marker, config re-encode failed: ds=%s err=%v", ds.ID, err)
+		return
+	}
+	fresh.Config = blob
+	if err := s.dsRepo.Update(ctx, fresh); err != nil {
+		logger.Warnf(ctx, "failed to clear resync_required marker: ds=%s err=%v", ds.ID, err)
+	}
+}
+
 // streamSyncHandler adapts a streaming fetch to the knowledge-base ingest path.
 // Emit ingests each item as it arrives (bounding memory) and Checkpoint persists
 // the connector cursor plus live progress counts at page boundaries.
 type streamSyncHandler struct {
+	connector datasource.Connector
+	ingestErr error
+	// Count separately from the capped error samples; unsupported and oversized
+	// files must not disable future syncs, including runs with both failure types.
+	nonBlockingFailures       int
 	svc                       *DataSourceService
 	ds                        *types.DataSource
 	tagIDs                    []string
@@ -1925,11 +2053,12 @@ func (h *streamSyncHandler) validateNextcloudCursor(cursor *types.SyncCursor) er
 	return nil
 }
 
-// Emit ingests one streamed item. A canceled context aborts the stream so the
-// connector stops fetching; per-item ingest failures are recorded in result and
-// do NOT abort (matching the batch loop, which never fails the whole sync for
-// one bad document).
+// Emit ingests one streamed item. Unexpected ingestion errors abort the stream
+// before the connector can checkpoint past the failed item.
 func (h *streamSyncHandler) Emit(ctx context.Context, item types.FetchedItem) error {
+	if h.ingestErr != nil {
+		return h.ingestErr
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -1963,18 +2092,24 @@ func (h *streamSyncHandler) Emit(ctx context.Context, item types.FetchedItem) er
 	}
 	beforeFailed := h.result.Failed
 	h.result.Total++
-	ingestCtx := withKBActivitySuppressed(ctx)
+	ingestCtx := bindFetchedConnectorItem(withKBActivitySuppressed(ctx), h.connector, h.ds, &item)
 	if h.ds.Type == types.ConnectorTypeNextcloud && h.payload.Trigger == "nextcloud_candidate_retry" {
 		ingestCtx = apprepo.WithNextcloudCandidateRetryClaim(ingestCtx, nextcloudCandidateRetryClaim(h.payload))
 	}
-	h.svc.applyFetchedItem(ingestCtx, h.ds, &item, h.tagIDs, h.result)
+	nonBlocking, err := h.svc.applyFetchedItem(ingestCtx, h.ds, &item, h.tagIDs, h.result)
 	if h.ds.Type == types.ConnectorTypeNextcloud && h.result.Failed > beforeFailed {
-		return apperrors.NewProtocolError(fmt.Errorf(
+		h.ingestErr = apperrors.NewProtocolError(fmt.Errorf(
 			"nextcloud item %s could not be processed",
 			item.ExternalID,
 		), fmt.Sprintf("Nextcloud item %s could not be processed", item.ExternalID))
+		return h.ingestErr
 	}
-	return nil
+	if nonBlocking || errors.Is(err, ErrInvalidFileType) {
+		h.nonBlockingFailures++
+		return nil
+	}
+	h.ingestErr = err
+	return h.ingestErr
 }
 
 // Checkpoint persists the connector cursor onto the data source and mirrors the
@@ -1988,6 +2123,9 @@ func (h *streamSyncHandler) Checkpoint(ctx context.Context, cursor *types.SyncCu
 		return apperrors.NewProtocolError(fmt.Errorf(
 			"nextcloud stream has no resumable partial cursor",
 		), "Nextcloud stream has no resumable partial cursor")
+	}
+	if h.ingestErr != nil {
+		return h.ingestErr
 	}
 	if cursor == nil {
 		return nil
@@ -2062,6 +2200,12 @@ func (s *DataSourceService) processSyncStreaming(
 	autoTagIDs := s.resolveAutoTagIDs(ctx, ds)
 
 	forceFull := payload.ForceFull || ds.SyncMode == types.SyncModeFull
+	if resyncRequired(config) {
+		// One-shot legacy upgrade (design §7). The marker is cleared only
+		// after the run succeeds below; a failure keeps it so the retry
+		// resumes the upgraded pass from its checkpoint.
+		forceFull = true
+	}
 	attempt, _ := asynq.GetRetryCount(ctx)
 	startCursor, err := streamStartCursor(ds, forceFull, attempt)
 	if err != nil {
@@ -2073,7 +2217,7 @@ func (s *DataSourceService) processSyncStreaming(
 
 	result := &types.SyncResult{}
 	handler := &streamSyncHandler{
-		svc: s, ds: ds, tagIDs: autoTagIDs, result: result,
+		svc: s, ds: ds, connector: sc, tagIDs: autoTagIDs, result: result,
 		syncLog: syncLog, payload: payload,
 	}
 
@@ -2097,6 +2241,10 @@ func (s *DataSourceService) processSyncStreaming(
 			return nil
 		}
 		return fetchErr
+	}
+	if handler.ingestErr != nil {
+		// Do not publish a final cursor even if the connector ignored an Emit error.
+		fetchErr = handler.ingestErr
 	}
 	if fetchErr != nil {
 		// Progress so far is already checkpointed onto ds.LastSyncCursor; leave
@@ -2133,7 +2281,7 @@ func (s *DataSourceService) processSyncStreaming(
 	}
 
 	resultJSON, _ := result.ToJSON()
-	if err := allFetchedItemsFailedError(result); err != nil {
+	if err := allFetchedItemsFailedError(result, handler.nonBlockingFailures); err != nil {
 		logger.Errorf(ctx, "streaming sync failed while processing fetched items: %v", err)
 		s.updateSyncRunResult(
 			ctx, ds, syncLog, result, resultJSON, types.SyncLogStatusFailed, apperrors.PublicMessage(err), wasPaused,
@@ -2167,6 +2315,12 @@ func (s *DataSourceService) processSyncStreaming(
 		}
 	}
 	s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON, status, errMsg, wasPaused)
+	// The upgraded full pass succeeded (success or partial — per-document
+	// failures are a normal retryable condition): retire the marker so it
+	// never fires again. Failed runs returned earlier and keep it.
+	if resyncRequired(config) {
+		s.clearResyncMarker(ctx, ds)
+	}
 	logger.Infof(ctx, "streaming sync completed: ds=%s created=%d updated=%d deleted=%d skipped=%d failed=%d",
 		payload.DataSourceID, result.Created, result.Updated, result.Deleted, result.Skipped, result.Failed)
 	return nil
@@ -2291,12 +2445,19 @@ func (s *DataSourceService) updateSyncRunResult(
 		})
 }
 
-func allFetchedItemsFailedError(result *types.SyncResult) error {
+func allFetchedItemsFailedError(result *types.SyncResult, nonBlockingFailures int) error {
 	if result == nil || result.Total == 0 {
 		return nil
 	}
 	if result.Failed != result.Total || result.Created != 0 || result.Updated != 0 ||
 		result.Deleted != 0 || result.Skipped != 0 {
+		return nil
+	}
+	// An oversized or unsupported file will not recover by replaying the same
+	// task. Keep the failure visible as a partial run. Oversized downloads retain
+	// their connector revision until the source file is replaced. Other failures
+	// still follows the existing failure/retry path, even beyond the sample cap.
+	if nonBlockingFailures == result.Failed {
 		return nil
 	}
 
@@ -2305,7 +2466,13 @@ func allFetchedItemsFailedError(result *types.SyncResult) error {
 		detail = result.Errors[0].Display()
 		const maxDetailLen = 500
 		if len(detail) > maxDetailLen {
-			detail = detail[:maxDetailLen] + "..."
+			// Back off to a rune boundary: a partial multi-byte rune is invalid
+			// UTF-8, which PostgreSQL rejects when the error is persisted.
+			cut := maxDetailLen
+			for cut > 0 && !utf8.RuneStart(detail[cut]) {
+				cut--
+			}
+			detail = detail[:cut] + "..."
 		}
 	}
 	if detail == "" {
@@ -2352,7 +2519,7 @@ func (s *DataSourceService) validateDataSourceConfig(ctx context.Context, ds *ty
 }
 
 // ingestItem writes a single FetchedItem into the knowledge base.
-// If a knowledge item with the same external_id already exists, it is deleted first (update = delete + re-create).
+// Existing datasource items are replaced atomically at the knowledge-row boundary.
 //
 // Routing logic:
 //   - Has Content bytes → CreateKnowledgeFromFile (走完整的文档解析 pipeline)
@@ -2368,6 +2535,71 @@ type (
 		epoch        int64
 	}
 )
+
+// A capability scoped to one synchronous item handoff. Only the real worker
+// fetch loop and its private streaming adapter issue it; an uploaded file or
+// caller-supplied channel/metadata cannot construct it.
+type (
+	fetchedConnectorKey  struct{}
+	fetchedConnectorItem struct {
+		ds               *types.DataSource
+		item             *types.FetchedItem
+		tenant           uint64
+		source, kb, kind string
+		artifact         [sha256.Size]byte
+	}
+)
+
+// Hash the body separately so binding a large fetched file never allocates its base64 representation.
+func fetchedConnectorDigest(item *types.FetchedItem) ([sha256.Size]byte, error) {
+	descriptor := *item
+	descriptor.Content = nil
+	h := sha256.New()
+	body := sha256.Sum256(item.Content)
+	h.Write(body[:])
+	if err := json.NewEncoder(h).Encode(descriptor); err != nil {
+		return [sha256.Size]byte{}, err
+	}
+	var digest [sha256.Size]byte
+	copy(digest[:], h.Sum(nil))
+	return digest, nil
+}
+
+func (p fetchedConnectorItem) matches(ds *types.DataSource, item *types.FetchedItem) bool {
+	if p.ds != ds ||
+		p.item != item ||
+		p.kind != ds.Type ||
+		p.tenant != ds.TenantID ||
+		p.kb != ds.KnowledgeBaseID ||
+		p.source != ds.ID {
+		return false
+	}
+	got, err := fetchedConnectorDigest(item)
+	return err == nil && got == p.artifact
+}
+
+func bindFetchedConnectorItem(
+	ctx context.Context, connector datasource.Connector,
+	ds *types.DataSource, item *types.FetchedItem,
+) context.Context {
+	if connector == nil ||
+		ds == nil ||
+		item == nil ||
+		ds.Type == "" ||
+		connector.Type() != ds.Type ||
+		ds.Type == types.ConnectorTypeNextcloud ||
+		ds.Type == types.ConnectorTypeDingTalk {
+		return ctx
+	}
+	digest, err := fetchedConnectorDigest(item)
+	if err != nil {
+		return ctx
+	}
+	return context.WithValue(ctx, fetchedConnectorKey{}, fetchedConnectorItem{
+		ds, item, ds.TenantID,
+		ds.ID, ds.KnowledgeBaseID, ds.Type, digest,
+	})
+}
 
 func (s *DataSourceService) ingestItem(
 	ctx context.Context,
@@ -2421,47 +2653,79 @@ func (s *DataSourceService) ingestItem(
 		return s.ingestNextcloudItem(ctx, ds, item, metadata, tagIDs)
 	}
 
-	// Check if a knowledge item with this external_id already exists → delete it first (update)
+	// Protected connectors have their own source admission and generation handoff.
+	if ds.Type == types.ConnectorTypeDingTalk {
+		return false, types.ErrSourceLineageUnknown
+	}
+	metadata["datasource_id"] = ds.ID
+	metadata["external_id"] = item.ExternalID
+	metadata["source_resource_id"] = item.SourceResourceID
+	if channel == types.ConnectorTypeDingTalk || channel == types.ConnectorTypeNextcloud {
+		return false, types.ErrSourceLineageUnknown
+	}
+	if proof, ok := ctx.Value(fetchedConnectorKey{}).(fetchedConnectorItem); ok && proof.matches(ds, item) {
+		// The registered connector returned this exact item at the authorized
+		// worker boundary. No protected source contributed to its external bytes.
+		lineage, err := types.NewCompleteSourceLineage()
+		if err != nil {
+			return false, err
+		}
+		ctx, err = apprepo.WithDerivedKnowledgeInput(ctx, lineage)
+		if err != nil {
+			return false, err
+		}
+	} else if _, production := s.knowledgeService.(*knowledgeService); production || s.sourceInputs != nil {
+		return false, types.ErrSourceLineageUnknown
+	}
+	// Reject unsupported source files before replacing an existing document.
+	// Do not classify generic BadRequest errors: missing storage configuration
+	// also uses that type and must remain retryable.
+	if len(item.Content) > 0 && (IsVideoType(getFileType(item.FileName)) || !isValidFileType(item.FileName)) {
+		return false, ErrInvalidFileType
+	}
+	// Existing items are replaced through a short DB transaction. Validation and
+	// file storage must succeed before the previous row or resources are retired.
 	isUpdate := false
 	if item.ExternalID != "" {
 		repo := s.knowledgeService.GetRepository()
-		// Scope the lookup to items owned by this data source so identical
-		// external IDs from two data sources cannot collide or overwrite each
-		// other during updates.
 		existing, err := repo.FindByDataSourceExternalID(ctx, ds.TenantID, ds.KnowledgeBaseID, ds.ID, item.ExternalID)
 		if err != nil {
-			if ds.Type == types.ConnectorTypeNextcloud {
-				return false, fmt.Errorf(("check existing Nextcloud knowledge for external_id=%s: " +
-					"%w"), item.ExternalID, err)
-			}
-			logger.Warnf(ctx, "failed to check existing knowledge for external_id=%s: %v", item.ExternalID, err)
-			// Non-fatal: proceed with creation (may produce duplicate)
-		} else if existing != nil {
-			logger.Infof(
-				ctx,
-				"found existing knowledge %s for external_id=%s, deleting for update",
-				existing.ID,
-				item.ExternalID,
-			)
-			if err := s.knowledgeService.DeleteKnowledge(ctx, existing.ID); err != nil {
-				if ds.Type == types.ConnectorTypeNextcloud {
-					return false, fmt.Errorf("delete replaced Nextcloud knowledge %s: %w", existing.ID, err)
+			return false, fmt.Errorf("check existing datasource knowledge: %w", err)
+		}
+		if existing != nil {
+			// Conflict strategy "skip" (跳过已存在): the item already exists in
+			// the KB, so leave it untouched and report the conflict as a skip
+			// via the shared DuplicateKnowledgeError path (Tencent/WeKnora#4640 —
+			// this strategy was silently ignored and the item was overwritten).
+			if ds.ConflictStrategy == types.ConflictStrategySkip {
+				logger.Infof(
+					ctx,
+					"item %q (external_id=%s) already exists as knowledge %s, conflict strategy skip → skipping",
+					item.Title, item.ExternalID, existing.ID,
+				)
+				return false, &types.DuplicateKnowledgeError{
+					Message: fmt.Sprintf(
+						"knowledge already exists for external_id %s (conflict strategy: skip)",
+						item.ExternalID,
+					),
+					Knowledge: existing,
 				}
-				logger.Warnf(ctx, "failed to delete existing knowledge %s: %v", existing.ID, err)
-			} else {
-				if herr := repo.HardDeleteKnowledge(ctx, ds.TenantID, existing.ID); herr != nil {
-					if ds.Type == types.ConnectorTypeNextcloud {
-						return false, fmt.Errorf("hard-delete replaced Nextcloud knowledge %s: %w", existing.ID, herr)
-					}
-					logger.Warnf(ctx, "failed to hard-delete replaced knowledge %s: %v", existing.ID, herr)
-				}
-				isUpdate = true
 			}
+			_, err := s.knowledgeService.ReplaceKnowledgeFromDataSource(
+				ctx, existing.ID, item, metadata, tagIDs, channel)
+			var dupErr *types.DuplicateKnowledgeError
+			if err == nil || (errors.As(err, &dupErr) && dupIsSameNode(dupErr, item)) {
+				s.sweepStaleSubtree(ctx, ds, item)
+			}
+			return err == nil, err
 		}
 	}
 
 	// Case 1: content already fetched → build a FileHeader from bytes and call CreateKnowledgeFromFile
 	if len(item.Content) > 0 {
+		// Images ride inline as base64 data URIs; ProcessDocument's image
+		// resolver stores them on the file service and swaps in persistent
+		// provider:// URLs before chunking.
 		fh, err := bytesToFileHeader(item.Content, item.FileName)
 		if err != nil {
 			return isUpdate, fmt.Errorf("build file header: %w", err)
@@ -2523,7 +2787,13 @@ func (s *DataSourceService) ingestItem(
 				return isUpdate, fmt.Errorf("marshal datasource metadata: %w", mErr)
 			}
 			created.Metadata = types.JSON(metadataBytes)
-			if uErr := s.knowledgeService.GetRepository().UpdateKnowledge(ctx, created); uErr != nil {
+			// Only the metadata column: the processing task is already
+			// queued, and a full-row save of this snapshot could put
+			// parse_status back to "pending" under a worker that has moved
+			// it on, which then skips post-process and strands the row.
+			if uErr := s.knowledgeService.GetRepository().UpdateKnowledgeColumn(
+				ctx, created.ID, "metadata", created.Metadata,
+			); uErr != nil {
 				return isUpdate, fmt.Errorf("attach datasource metadata: %w", uErr)
 			}
 		}
@@ -2742,12 +3012,7 @@ func bytesToFileHeader(data []byte, filename string) (*multipart.FileHeader, err
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
 
-	// Create a form file part
-	partHeader := make(textproto.MIMEHeader)
-	partHeader.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filename))
-	partHeader.Set("Content-Type", "application/octet-stream")
-
-	part, err := writer.CreatePart(partHeader)
+	part, err := writer.CreateFormFile("file", filename)
 	if err != nil {
 		return nil, fmt.Errorf("create multipart part: %w", err)
 	}

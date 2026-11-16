@@ -76,7 +76,7 @@ func knowledgeContractAuth(
 	on := true
 	cfg := &config.Config{Tenant: &config.TenantConfig{EnableRBAC: &on}}
 	groups := service.NewGroupAccessService(repository.NewGroupAccessRepository(db))
-	tenants := service.NewTenantService(faqHTTPTenants{tenant: &types.Tenant{ID: 7, Status: "active"}}, nil)
+	tenants := service.NewTenantService(faqHTTPTenants{tenant: &types.Tenant{ID: 7, Status: "active"}}, nil, nil)
 	users := repository.NewUserRepository(db)
 	tokens := repository.NewAuthTokenRepository(db)
 	members := service.NewTenantMemberService(repository.NewTenantMemberRepository(db), nil, users, tokens)
@@ -102,9 +102,9 @@ func knowledgeContractAuth(
 	return r, cfg, groups
 }
 
-func serveAuthenticatedFAQRead(
+func newAuthenticatedFAQProgressReader(
 	ctx context.Context, t *testing.T, db *gorm.DB, h *FAQHandler, url string,
-) *httptest.ResponseRecorder {
+) func() *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, url, nil)
 	r, cfg, _ := knowledgeContractAuth(ctx, t, db, req)
@@ -115,9 +115,11 @@ func serveAuthenticatedFAQRead(
 	}})
 	r.Use(gate.Middleware())
 	r.GET(progress, middleware.RequireRole(types.TenantRoleViewer, cfg), h.GetImportProgress)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	return w
+	return func() *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req.Clone(req.Context()))
+		return w
+	}
 }
 
 func serveAuthenticatedTagHTTP(

@@ -12,7 +12,26 @@ import (
 	"github.com/Tencent/WeKnora/internal/application/readlease"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/mark3labs/mcp-go/mcp"
 )
+
+// optionalKnowledgeBaseSelectors rejects malformed explicit scopes instead of
+// silently widening them to the endpoint's default scope.
+func optionalKnowledgeBaseSelectors(req mcp.CallToolRequest) ([]string, error) {
+	if _, supplied := req.GetArguments()["knowledge_base_ids"]; !supplied {
+		return nil, nil
+	}
+	selectors, err := req.RequireStringSlice("knowledge_base_ids")
+	if err != nil {
+		return nil, err
+	}
+	for _, selector := range selectors {
+		if strings.TrimSpace(selector) == "" {
+			return nil, fmt.Errorf("knowledge_base_ids must not contain empty selectors")
+		}
+	}
+	return selectors, nil
+}
 
 // allowedKnowledgeBases returns every knowledge base the endpoint may touch,
 // each one re-authorized for the calling principal through access.ResolveKB
@@ -68,19 +87,6 @@ func (s *Server) authorizedKnowledgeBase(
 	if _, err := s.resolveKB(ctx, kb, required); err != nil {
 		return nil, err
 	}
-	action := types.ResourceActionRead
-	if required != types.OrgRoleViewer {
-		action = types.ResourceActionEdit
-	}
-	allowed, err := s.groupResourceAllowed(
-		ctx, kb.TenantID, types.GroupResourceTypeKnowledgeBase, kb.ID, action,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("check group access for knowledge base %q: %w", kb.ID, err)
-	}
-	if !allowed {
-		return nil, access.ErrForbidden
-	}
 	return kb, nil
 }
 
@@ -110,6 +116,19 @@ func (s *Server) groupResourceAllowed(
 func (s *Server) resolveKB(
 	ctx context.Context, kb *types.KnowledgeBase, required types.OrgMemberRole,
 ) (*access.KBAccess, error) {
+	action := types.ResourceActionRead
+	if required != types.OrgRoleViewer {
+		action = types.ResourceActionEdit
+	}
+	allowed, err := s.groupResourceAllowed(
+		ctx, kb.TenantID, types.GroupResourceTypeKnowledgeBase, kb.ID, action,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("check group access for knowledge base %q: %w", kb.ID, err)
+	}
+	if !allowed {
+		return nil, access.ErrForbidden
+	}
 	request := access.KBRequest{Caller: types.CallerFromContext(ctx)}
 	return access.ResolveKB(ctx, request, kb, required, s.kbShareService, nil)
 }
@@ -129,23 +148,7 @@ func (s *Server) resolveKB(
 func (s *Server) scopedKBContext(
 	ctx context.Context, kb *types.KnowledgeBase, required types.OrgMemberRole,
 ) (context.Context, error) {
-	action := types.ResourceActionRead
-	if required != types.OrgRoleViewer {
-		action = types.ResourceActionEdit
-	}
-	allowed, groupErr := s.groupResourceAllowed(
-		ctx, kb.TenantID, types.GroupResourceTypeKnowledgeBase, kb.ID, action,
-	)
-	if groupErr != nil {
-		return ctx, fmt.Errorf("check group access for knowledge base %q: %w", kb.ID, groupErr)
-	}
-	if !allowed {
-		if action == types.ResourceActionRead {
-			return ctx, fmt.Errorf("this endpoint is not allowed to read knowledge base %q", kb.ID)
-		}
-		return ctx, fmt.Errorf("this endpoint is not allowed to write to knowledge base %q", kb.ID)
-	}
-	grant, err := s.resolveKB(ctx, kb, required)
+	_, scoped, err := s.authorizeKB(ctx, kb, required)
 	if err != nil {
 		if errors.Is(err, access.ErrForbidden) || errors.Is(err, access.ErrUnauthorized) {
 			if required == types.OrgRoleViewer {
@@ -155,16 +158,28 @@ func (s *Server) scopedKBContext(
 		}
 		return ctx, err
 	}
+	return scoped, nil
+}
+
+// authorizeKB resolves the caller's grant on kb and returns it together with
+// the owner-scoped context described on scopedKBContext.
+func (s *Server) authorizeKB(
+	ctx context.Context, kb *types.KnowledgeBase, required types.OrgMemberRole,
+) (*access.KBAccess, context.Context, error) {
+	grant, err := s.resolveKB(ctx, kb, required)
+	if err != nil {
+		return nil, ctx, err
+	}
 	scoped := grant.Context(ctx)
 	caller := types.CallerFromContext(ctx)
 	if kb.TenantID != caller.TenantID && s.tenantService != nil {
 		owner, err := s.tenantService.GetTenantByID(ctx, kb.TenantID)
 		if err != nil || owner == nil {
-			return ctx, fmt.Errorf("the workspace owning knowledge base %q is unavailable", kb.ID)
+			return nil, ctx, fmt.Errorf("the workspace owning knowledge base %q is unavailable", kb.ID)
 		}
 		scoped = context.WithValue(scoped, types.TenantInfoContextKey, owner)
 	}
-	return scoped, nil
+	return grant, scoped, nil
 }
 
 // selectKnowledgeBases narrows the allowed set to the ones a caller named,
@@ -234,6 +249,51 @@ func searchTargetsFor(kbs []*types.KnowledgeBase) types.SearchTargets {
 	return targets
 }
 
+// maxSearchKnowledgeDocuments bounds validation lookups and backend filter size.
+const maxSearchKnowledgeDocuments = 100
+
+// documentSearchTargets narrows an already authorized KB selection to explicit
+// documents. Never leave whole-KB targets for bases with no selected documents.
+func (s *Server) documentSearchTargets(
+	ctx context.Context, kbs []*types.KnowledgeBase, knowledgeIDs []string,
+) (types.SearchTargets, error) {
+	if len(knowledgeIDs) == 0 {
+		return nil, fmt.Errorf("knowledge_ids must contain at least one document id; " +
+			"omit it to search whole knowledge bases")
+	}
+	if len(knowledgeIDs) > maxSearchKnowledgeDocuments {
+		return nil, fmt.Errorf("knowledge_ids must contain at most %d document ids", maxSearchKnowledgeDocuments)
+	}
+	targets := make(types.SearchTargets, 0)
+	byKB := make(map[string]*types.SearchTarget)
+	seen := make(map[string]bool, len(knowledgeIDs))
+	for _, id := range knowledgeIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return nil, fmt.Errorf("knowledge_ids must not contain blank document ids")
+		}
+		if seen[id] {
+			continue
+		}
+		k, kb, err := s.knowledgeInKnowledgeBases(ctx, kbs, id)
+		if err != nil {
+			return nil, err
+		}
+		target := byKB[kb.ID]
+		if target == nil {
+			target = &types.SearchTarget{
+				Type: types.SearchTargetTypeKnowledge, KnowledgeBaseID: kb.ID, TenantID: kb.TenantID,
+				DisableRecallThresholds: true,
+			}
+			byKB[kb.ID] = target
+			targets = append(targets, target)
+		}
+		target.KnowledgeIDs = append(target.KnowledgeIDs, k.ID)
+		seen[id] = true
+	}
+	return targets, nil
+}
+
 func knowledgeBaseIDs(kbs []*types.KnowledgeBase) []string {
 	ids := make([]string, 0, len(kbs))
 	for _, kb := range kbs {
@@ -276,6 +336,18 @@ func wikiScopesFor(kbs []*types.KnowledgeBase) []tools.WikiScope {
 func (s *Server) knowledgeInScope(
 	ctx context.Context, ep *types.MCPEndpoint, knowledgeID string,
 ) (*types.Knowledge, *types.KnowledgeBase, error) {
+	allowed, err := s.allowedKnowledgeBases(ctx, ep)
+	if err != nil {
+		return nil, nil, err
+	}
+	return s.knowledgeInKnowledgeBases(ctx, allowed, knowledgeID)
+}
+
+// knowledgeInKnowledgeBases applies the same document/owner checks to either
+// the full endpoint scope or a narrower, already authorized KB selection.
+func (s *Server) knowledgeInKnowledgeBases(
+	ctx context.Context, kbs []*types.KnowledgeBase, knowledgeID string,
+) (*types.Knowledge, *types.KnowledgeBase, error) {
 	knowledgeID = strings.TrimSpace(knowledgeID)
 	if knowledgeID == "" {
 		return nil, nil, fmt.Errorf("knowledge_id is required")
@@ -289,13 +361,16 @@ func (s *Server) knowledgeInScope(
 	if _, marked, scopeErr := readlease.NextcloudKnowledgeLeaseScope(k); marked || scopeErr != nil {
 		return nil, nil, fmt.Errorf("document %q is unavailable on this endpoint", knowledgeID)
 	}
-	allowed, err := s.allowedKnowledgeBases(ctx, ep)
-	if err != nil {
-		return nil, nil, err
+	var kb *types.KnowledgeBase
+	for _, candidate := range kbs {
+		if candidate.ID == k.KnowledgeBaseID {
+			kb = candidate
+			break
+		}
 	}
-	kb := matchKnowledgeBase(allowed, k.KnowledgeBaseID)
 	if kb == nil || kb.TenantID != k.TenantID {
-		return nil, nil, fmt.Errorf("document %q is outside this endpoint's scope", knowledgeID)
+		return nil, nil, fmt.Errorf("document %q is outside this endpoint's scope or the selected knowledge bases",
+			knowledgeID)
 	}
 	return k, kb, nil
 }

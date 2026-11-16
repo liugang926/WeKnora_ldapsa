@@ -25,6 +25,7 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
+	"gorm.io/gorm"
 )
 
 // ErrWikiIngestConcurrent is returned by the wiki ingest handler in Lite mode
@@ -190,6 +191,25 @@ return proposed
 	// shorter replies still stop early via finish_reason=stop. See #2604.
 	wikiLLMMaxTokens = 32768
 
+	// wikiPageModifyMaxContinuations bounds how many extra LLM rounds a page
+	// rewrite may take when the provider stopped at the completion budget
+	// (finish_reason=length). A page body is the one artifact whose value IS
+	// the whole text, so a fragment is not a usable answer: the editor is asked
+	// for the tail instead. Tables are enumerated top-down, so each round makes
+	// forward progress; 3 rounds cover a 32768-token budget being clamped to
+	// roughly a quarter by a provider or by a nearly-full context window.
+	//
+	// This is deliberately NOT the general strategy for every wiki call — see
+	// the agent loop's reasoning in internal/agent/observe.go: a continuation
+	// nudge only helps when the caller can tell the model "you were cut off,
+	// keep going", which for a JSON extraction is already covered by the
+	// parse-failure path.
+	wikiPageModifyMaxContinuations = 3
+
+	// wikiPageModifyContinuationDone is the sentinel a model may reply with
+	// when a continuation round finds nothing left to write.
+	wikiPageModifyContinuationDone = "(complete)"
+
 	// wikiLLMBackoffBase is the base delay for the exponential backoff
 	// between retry attempts. The nth retry waits base << (n-1) — so with
 	// a 2s base we wait 2s, 4s, 8s between attempts.
@@ -334,11 +354,14 @@ const (
 type WikiPendingOp struct {
 	OriginalInput *types.KnowledgeBuildInputProof `json:"original_input,omitempty"`
 	Initiator     types.TaskInitiator             `json:"initiator,omitempty"`
-	Attempt       int                             `json:"attempt,omitempty"`
 	Op            string                          `json:"op"`
 	KnowledgeID   string                          `json:"knowledge_id"`
 	// Ingest fields
 	Language string `json:"language,omitempty"`
+	// Attempt is the parse attempt whose finalizing counter owns this op's
+	// slot. An op that outlived a reparse must not release a slot of the
+	// newer attempt. Zero on ops queued before this field existed.
+	Attempt int `json:"attempt,omitempty"`
 	// Retract fields
 	DocTitle   string   `json:"doc_title,omitempty"`
 	DocSummary string   `json:"doc_summary,omitempty"`
@@ -544,6 +567,31 @@ func EnqueueWikiIngest(
 	return true, nil
 }
 
+// WikiPendingLanguage returns the language recorded on the KB's newest queued
+// wiki ingest op, or "" if none. A trigger re-armed without a request context
+// must carry it: batch-level taxonomy planning reads the trigger's language,
+// and would otherwise fall back to the server default.
+func WikiPendingLanguage(ctx context.Context, db *gorm.DB, tenantID uint64, kbID string) string {
+	if db == nil || kbID == "" {
+		return ""
+	}
+	// Plucked as text: SQLite returns the column as a string, which does not
+	// scan into json.RawMessage.
+	var payloads []string
+	if err := db.WithContext(ctx).Model(&types.TaskPendingOp{}).
+		Where("tenant_id = ? AND task_type = ? AND scope = ? AND scope_id = ? AND op = ?",
+			tenantID, wikiTaskType, wikiTaskScope, kbID, WikiOpIngest).
+		Order("id DESC").Limit(1).
+		Pluck("payload", &payloads).Error; err != nil || len(payloads) == 0 {
+		return ""
+	}
+	var op WikiPendingOp
+	if err := json.Unmarshal([]byte(payloads[0]), &op); err != nil {
+		return ""
+	}
+	return op.Language
+}
+
 func newWikiIngestPendingOp(
 	ctx context.Context,
 	tenantID uint64,
@@ -719,6 +767,53 @@ func (s *wikiIngestService) clearDeletedKnowledgeBasePendingOps(ctx context.Cont
 	cleanupCtx, cancel := wikiIngestCleanupContext(ctx)
 	defer cancel()
 	return cleaner.DeleteByScope(cleanupCtx, types.TaskScopeKnowledgeBase, kbID)
+}
+
+// tenantIsDeleted reports whether the payload's tenant has been soft-deleted.
+// A tenant deletion removes the workspace but leaves its knowledge bases and
+// durable pending ops in place, so wiki tasks restored from those ops would
+// otherwise keep issuing model requests for a tenant nobody can reach (#3593).
+//
+// Fail-open on transient lookup errors and when the pending repo does not
+// expose tenant liveness (legacy test doubles): the retry machinery still
+// covers the task, and the guarded enqueue / startup recovery paths enforce
+// the same invariant on their own DB access.
+func (s *wikiIngestService) tenantIsDeleted(ctx context.Context, tenantID uint64) bool {
+	if tenantID == 0 {
+		return false
+	}
+	checker, ok := s.pendingRepo.(interfaces.TaskPendingOpsTenantLiveness)
+	if !ok {
+		return false
+	}
+	active, err := checker.HasActiveTenant(ctx, tenantID)
+	if err != nil {
+		logger.Warnf(ctx, "wiki: tenant liveness lookup failed for tenant %d: %v (failing open)", tenantID, err)
+		return false
+	}
+	return !active
+}
+
+// releaseIngestForUnavailableWiki drops the KB's queued ingest ops when the
+// wiki cannot run for a reason retries will not fix, and releases each
+// document's wiki slot in the same transaction so it leaves "finalizing".
+// Retract ops stay queued for when the wiki is usable again. Documents a live
+// batch holds are left to it.
+func (s *wikiIngestService) releaseIngestForUnavailableWiki(ctx context.Context, kbID, reason string) error {
+	drainer, ok := s.pendingRepo.(interfaces.TaskPendingOpsDrainer)
+	if !ok {
+		return fmt.Errorf("wiki ingest: KB %s unavailable (%s)", kbID, reason)
+	}
+	cleanupCtx, cancel := wikiIngestCleanupContext(ctx)
+	defer cancel()
+	knowledgeIDs, err := drainer.DrainUnclaimedAndRelease(cleanupCtx, wikiTaskType, wikiTaskScope, kbID,
+		WikiOpIngest, time.Now().Add(-wikiClaimStaleAfter))
+	if err != nil {
+		return fmt.Errorf("wiki ingest: KB %s unavailable (%s), drain pending ingest: %w", kbID, reason, err)
+	}
+	logger.Warnf(ctx, "wiki ingest: KB %s unavailable (%s), dropped pending ingest for %d document(s)",
+		kbID, reason, len(knowledgeIDs))
+	return nil
 }
 
 func (s *wikiIngestService) enqueueFinalizeRow(ctx context.Context, op *types.TaskPendingOp) bool {
@@ -988,11 +1083,13 @@ return 1
 // standard/Redis mode). Returns (release, true) when granted — release() MUST
 // run when the batch finishes; (nil, false) when the KB is already at
 // maxInflight, so the caller should reschedule and bail. A background renew
-// keeps the slot alive for the batch's duration; a crashed batch's slot simply
-// expires (wikiInflightTTL) and is purged by the next reserver. Lite mode has
-// no shared-pool contention (liteLocks already serialize per KB), so it always
-// grants a no-op slot. Fails OPEN on a Redis error: a blip must not halt wiki
-// generation, and the pool size still bounds total work.
+// keeps the slot alive for the batch's duration and removes it when the task
+// context is canceled, even if the handler itself is still blocked. A crashed
+// batch's slot simply expires (wikiInflightTTL) and is purged by the next
+// reserver. Lite mode has no shared-pool contention (liteLocks already
+// serialize per KB), so it always grants a no-op slot. Fails OPEN on a Redis
+// error: a blip must not halt wiki generation, and the pool size still bounds
+// total work.
 func (s *wikiIngestService) reserveInflightSlot(ctx context.Context, kbID string, maxInflight int) (func(), bool) {
 	if s.redisClient == nil || maxInflight <= 0 {
 		return func() {}, true
@@ -1016,10 +1113,13 @@ func (s *wikiIngestService) reserveInflightSlot(ctx context.Context, kbID string
 		return nil, false
 	}
 
-	renewCtx, cancel := context.WithCancel(context.Background())
+	renewCtx, cancel := context.WithCancel(ctx)
+	renewDone := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(wikiInflightRenew)
 		defer ticker.Stop()
+		defer close(renewDone)
+		defer s.redisClient.ZRem(context.Background(), key, token)
 		for {
 			select {
 			case <-renewCtx.Done():
@@ -1033,8 +1133,36 @@ func (s *wikiIngestService) reserveInflightSlot(ctx context.Context, kbID string
 	}()
 	return func() {
 		cancel()
-		s.redisClient.ZRem(context.Background(), key, token)
+		<-renewDone
 	}, true
+}
+
+// wikiInflightCountScript purges expired slots exactly like the reserve
+// script does, then returns the live count. Read-mostly companion to
+// wikiInflightReserveScript so a fan-out decision sees the same view of the
+// cap a reserver would.
+const wikiInflightCountScript = `
+redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, tonumber(ARGV[1]))
+return redis.call('ZCARD', KEYS[1])
+`
+
+// activeInflightSlots reports how many batches currently hold one of KB's
+// in-flight slots (standard/Redis mode). Returns -1 when the count is
+// unavailable (no Redis client, or a Redis error); callers must treat that as
+// "unknown" and stay conservative instead of scaling on a stale number.
+func (s *wikiIngestService) activeInflightSlots(ctx context.Context, kbID string) int {
+	if s.redisClient == nil {
+		return -1
+	}
+	res, err := s.redisClient.Eval(ctx, wikiInflightCountScript,
+		[]string{wikiInflightPrefix + kbID},
+		time.Now().UnixMilli(),
+	).Int()
+	if err != nil {
+		logger.Warnf(ctx, "wiki ingest: inflight count failed for KB %s: %v", kbID, err)
+		return -1
+	}
+	return res
 }
 
 // scheduleCappedRetry enqueues a single coalesced follow-up trigger after a
@@ -2618,20 +2746,74 @@ func (s *wikiIngestService) deduplicateExtractedBatch(
 // transient 504 from the upstream gateway used to drop the document's
 // summary page permanently. Retries plus failedOps requeuing (see
 // mapOneDocument) turn those events into at-most-a-few-minute hiccups.
+//
+// Callers that need the provider stop reason — or that write a page body and
+// therefore care whether the answer was cut off — use
+// generateWithTemplateResult instead.
 func (s *wikiIngestService) generateWithTemplate(ctx context.Context, chatModel chat.Chat, promptTpl string, data map[string]string) (string, error) {
-	if err := s.checkWikiTaskAuthorization(ctx); err != nil {
+	result, err := s.generateWithTemplateResult(ctx, chatModel, promptTpl, data)
+	if err != nil {
 		return "", err
+	}
+	return result.Content, nil
+}
+
+// wikiTemplateResult is one wiki LLM answer: the text plus the provider's stop
+// reason. The stop reason used to be dropped on the floor, which is why a page
+// rewrite cut off at the completion budget was stored verbatim with no trace.
+type wikiTemplateResult struct {
+	Content      string
+	FinishReason string
+}
+
+// errWikiPageRewriteTruncated is returned when the editor model stopped at the
+// completion budget and every continuation round did too. The caller treats it
+// like any other reduce failure: it logs, keeps the existing page, and flags the
+// addition as failed — a truncated page is never written.
+var errWikiPageRewriteTruncated = errors.New("wiki page rewrite truncated at the completion budget")
+
+// isLengthStopFinishReason reports whether a provider finish reason means the
+// answer was cut off by the completion budget rather than finished. Same
+// vocabulary as the agent loop (internal/agent/observe.go, compaction/overflow.go).
+func isLengthStopFinishReason(reason string) bool {
+	switch strings.ToLower(strings.TrimSpace(reason)) {
+	case "length", "max_tokens", "max_output_tokens":
+		return true
+	default:
+		return false
+	}
+}
+
+// generateWithTemplateResult is generateWithTemplate plus the provider stop
+// reason, and it is where a truncated page rewrite is continued instead of
+// accepted.
+//
+// Why continuation lives here: reduce hands the editor the WHOLE page and takes
+// back a full rewrite (see reduceSlugUpdates), so the model's output is not a
+// summary of the page, it IS the page. Long enumerations — a certificate ledger
+// with a hundred-plus holder rows — are emitted row by row and the provider
+// stops the model mid-table. Before this, the fragment was persisted verbatim:
+// a 146-row source table became a 119-row page, the page history showed an
+// ordinary edit, and nothing in the logs said "truncated".
+func (s *wikiIngestService) generateWithTemplateResult(
+	ctx context.Context,
+	chatModel chat.Chat,
+	promptTpl string,
+	data map[string]string,
+) (wikiTemplateResult, error) {
+	if err := s.checkWikiTaskAuthorization(ctx); err != nil {
+		return wikiTemplateResult{}, err
 	}
 	tmpl, err := template.New("wiki").Parse(promptTpl)
 	if err != nil {
-		return "", fmt.Errorf("parse template: %w", err)
+		return wikiTemplateResult{}, fmt.Errorf("parse template: %w", err)
 	}
 
 	maskedData, urlMap := maskTemplateDataImageURLs(data)
 
 	var buf strings.Builder
 	if err := tmpl.Execute(&buf, maskedData); err != nil {
-		return "", fmt.Errorf("execute template: %w", err)
+		return wikiTemplateResult{}, fmt.Errorf("execute template: %w", err)
 	}
 
 	prompt := buf.String()
@@ -2684,44 +2866,109 @@ func (s *wikiIngestService) generateWithTemplate(ctx context.Context, chatModel 
 			var warmupErr error
 			releaseWarmup, warmupErr = s.awaitWikiPromptWarmup(ctx, warmupKey)
 			if warmupErr != nil {
-				return "", warmupErr
+				return wikiTemplateResult{}, warmupErr
 			}
 		}
 		defer releaseWarmup()
 
-		var lastErr error
-		for attempt := 1; attempt <= wikiLLMMaxAttempts; attempt++ {
-			if err := s.checkWikiTaskAuthorization(ctx); err != nil {
-				return "", err
-			}
-			response, callErr := chatModel.Chat(ctx, messages, opts)
-			if callErr == nil && response != nil {
-				return response.Content, nil
-			}
-			if callErr == nil {
-				callErr = errors.New("LLM returned nil response")
-			}
-			lastErr = callErr
+		// call runs one LLM request under the bounded transient-error retry
+		// policy and hands back the full response (the caller needs
+		// FinishReason, which the old signature threw away).
+		call := func(msgs []chat.Message) (*types.ChatResponse, error) {
+			var lastErr error
+			for attempt := 1; attempt <= wikiLLMMaxAttempts; attempt++ {
+				if err := s.checkWikiTaskAuthorization(ctx); err != nil {
+					return nil, err
+				}
+				response, callErr := chatModel.Chat(ctx, msgs, opts)
+				if callErr == nil && response != nil {
+					return response, nil
+				}
+				if callErr == nil {
+					callErr = errors.New("LLM returned nil response")
+				}
+				lastErr = callErr
 
-			if !isTransientLLMError(ctx, callErr) {
-				return "", fmt.Errorf("LLM call failed: %w", callErr)
+				if !isTransientLLMError(ctx, callErr) {
+					return nil, fmt.Errorf("LLM call failed: %w", callErr)
+				}
+				if attempt == wikiLLMMaxAttempts {
+					break
+				}
+
+				backoff := wikiLLMBackoffBase << (attempt - 1)
+				logger.Warnf(ctx, "wiki ingest: LLM call failed (attempt %d/%d), retrying in %s: %v",
+					attempt, wikiLLMMaxAttempts, backoff, callErr)
+				timer := time.NewTimer(backoff)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return nil, fmt.Errorf("LLM call aborted during backoff: %w", ctx.Err())
+				case <-timer.C:
+				}
 			}
-			if attempt == wikiLLMMaxAttempts {
+			return nil, fmt.Errorf("LLM call failed after %d attempts: %w", wikiLLMMaxAttempts, lastErr)
+		}
+
+		// A page rewrite is the one answer whose value is the whole text: a
+		// fragment is a broken page, not a shorter answer. So when the provider
+		// stops at the completion budget, replay the fragment as an assistant
+		// turn and ask for the tail. Everything else keeps the single-call
+		// behaviour (a truncated JSON extraction already fails its parse).
+		canContinue := promptTpl == agent.WikiPageModifyUserPrompt
+
+		var (
+			rewrite      strings.Builder
+			finishReason string
+			conversation = messages
+		)
+		for round := 0; ; round++ {
+			response, callErr := call(conversation)
+			if callErr != nil {
+				return wikiTemplateResult{}, callErr
+			}
+			finishReason = response.FinishReason
+
+			// A continuation round that has nothing left to add ends the loop
+			// without appending its sentinel to the page.
+			if round > 0 && strings.EqualFold(strings.TrimSpace(response.Content), wikiPageModifyContinuationDone) {
+				finishReason = "stop"
 				break
 			}
 
-			backoff := wikiLLMBackoffBase << (attempt - 1)
-			logger.Warnf(ctx, "wiki ingest: LLM call failed (attempt %d/%d), retrying in %s: %v",
-				attempt, wikiLLMMaxAttempts, backoff, callErr)
-			timer := time.NewTimer(backoff)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return "", fmt.Errorf("LLM call aborted during backoff: %w", ctx.Err())
-			case <-timer.C:
+			rewrite.WriteString(response.Content)
+
+			if !canContinue || !isLengthStopFinishReason(finishReason) || round >= wikiPageModifyMaxContinuations {
+				break
 			}
+
+			logger.Warnf(ctx,
+				"wiki ingest: page rewrite %s hit the completion budget (finish_reason=%s, "+
+					"%d chars so far); requesting continuation %d/%d",
+				maskedData["PageSlug"], finishReason, rewrite.Len(), round+1, wikiPageModifyMaxContinuations)
+
+			conversation = append(
+				append([]chat.Message(nil), conversation...),
+				chat.Message{Role: "assistant", Content: response.Content},
+				chat.Message{Role: "user", Content: agent.WikiPageModifyContinuationPrompt},
+			)
 		}
-		return "", fmt.Errorf("LLM call failed after %d attempts: %w", wikiLLMMaxAttempts, lastErr)
+
+		content := rewrite.String()
+		if canContinue && isLengthStopFinishReason(finishReason) {
+			// Out of continuation rounds and still cut off. Refuse the fragment:
+			// the caller keeps the existing page and flags the addition, which is
+			// recoverable; storing a half page is not.
+			logger.Warnf(ctx,
+				"wiki ingest: page rewrite %s still truncated after %d continuation rounds "+
+					"(finish_reason=%s, %d chars); refusing the partial page",
+				maskedData["PageSlug"], wikiPageModifyMaxContinuations, finishReason, len(content))
+			return wikiTemplateResult{}, fmt.Errorf(
+				"%w (finish_reason=%s after %d continuation rounds, %d chars)",
+				errWikiPageRewriteTruncated, finishReason, wikiPageModifyMaxContinuations, len(content))
+		}
+
+		return wikiTemplateResult{Content: content, FinishReason: finishReason}, nil
 	}
 
 	// Missing tenant context is unexpected for production Wiki work. Fail safe
@@ -2730,25 +2977,27 @@ func (s *wikiIngestService) generateWithTemplate(ctx context.Context, chatModel 
 	if !tenantScoped {
 		value, executeErr := execute()
 		if executeErr != nil {
-			return "", executeErr
+			return wikiTemplateResult{}, executeErr
 		}
-		content, _ := value.(string)
-		return unmaskImageURLs(content, urlMap), nil
+		result, _ := value.(wikiTemplateResult)
+		result.Content = unmaskImageURLs(result.Content, urlMap)
+		return result, nil
 	}
 	resultCh := s.llmRequests.DoChan(requestKey, execute)
 
 	select {
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return wikiTemplateResult{}, ctx.Err()
 	case result := <-resultCh:
 		if result.Err != nil {
-			return "", result.Err
+			return wikiTemplateResult{}, result.Err
 		}
 		if err := s.checkWikiTaskAuthorization(ctx); err != nil {
-			return "", err
+			return wikiTemplateResult{}, err
 		}
-		content, _ := result.Val.(string)
-		return unmaskImageURLs(content, urlMap), nil
+		rewritten, _ := result.Val.(wikiTemplateResult)
+		rewritten.Content = unmaskImageURLs(rewritten.Content, urlMap)
+		return rewritten, nil
 	}
 }
 
@@ -2903,45 +3152,58 @@ func isTransientLLMError(ctx context.Context, err error) bool {
 // to the DB. A nil result from GetKnowledgeByIDOnly also counts as gone: the
 // repo layer uses GORM First() which filters soft-deleted rows, so a
 // soft-deleted knowledge surfaces as "not found" here — exactly what we want.
-func (s *wikiIngestService) isKnowledgeGone(ctx context.Context, kbID, knowledgeID string) bool {
+// Other lookup errors leave liveness unknown and must reach the caller so it
+// can retry instead of discarding the document's pending work.
+func (s *wikiIngestService) isKnowledgeGone(ctx context.Context, kbID, knowledgeID string) (bool, error) {
 	if knowledgeID == "" {
-		return true
+		return true, nil
 	}
 	if s.redisClient != nil {
 		if exists, err := s.redisClient.Exists(ctx, WikiDeletedTombstoneKey(kbID, knowledgeID)).Result(); err == nil && exists > 0 {
-			return true
+			return true, nil
 		}
 	}
 	kn, err := s.knowledgeSvc.GetKnowledgeByIDOnly(ctx, knowledgeID)
-	if err != nil || kn == nil {
-		return true
+	if errors.Is(err, repository.ErrKnowledgeNotFound) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("wiki ingest: check knowledge %s: %w", knowledgeID, err)
+	}
+	if kn == nil {
+		return true, nil
 	}
 	switch kn.ParseStatus {
 	case types.ParseStatusDeleting, types.ParseStatusCancelled:
-		return true
+		return true, nil
 	}
-	return false
+	return false, nil
 }
 
 // filterLiveUpdates drops additions/summaries whose source knowledge has been
 // deleted since the Map phase finished. Retract updates are preserved so
 // pages still get cleaned up. Caches per-knowledge results to avoid DB
 // hammering when a single reduce slug carries many updates for the same doc.
-func (s *wikiIngestService) filterLiveUpdates(ctx context.Context, kbID string, updates []SlugUpdate) []SlugUpdate {
+func (s *wikiIngestService) filterLiveUpdates(
+	ctx context.Context, kbID string, updates []SlugUpdate,
+) ([]SlugUpdate, error) {
 	if len(updates) == 0 {
-		return updates
+		return updates, nil
 	}
 	goneCache := make(map[string]bool)
-	isGone := func(kid string) bool {
+	isGone := func(kid string) (bool, error) {
 		if kid == "" {
-			return false
+			return false, nil
 		}
 		if v, ok := goneCache[kid]; ok {
-			return v
+			return v, nil
 		}
-		v := s.isKnowledgeGone(ctx, kbID, kid)
+		v, err := s.isKnowledgeGone(ctx, kbID, kid)
+		if err != nil {
+			return false, err
+		}
 		goneCache[kid] = v
-		return v
+		return v, nil
 	}
 	filtered := make([]SlugUpdate, 0, len(updates))
 	dropped := 0
@@ -2950,7 +3212,11 @@ func (s *wikiIngestService) filterLiveUpdates(ctx context.Context, kbID string, 
 		case "retract", "retractStale":
 			filtered = append(filtered, u)
 		default:
-			if isGone(u.KnowledgeID) {
+			gone, err := isGone(u.KnowledgeID)
+			if err != nil {
+				return nil, err
+			}
+			if gone {
 				dropped++
 				continue
 			}
@@ -2960,7 +3226,7 @@ func (s *wikiIngestService) filterLiveUpdates(ctx context.Context, kbID string, 
 	if dropped > 0 {
 		logger.Infof(ctx, "wiki ingest: reduce dropped %d updates for deleted knowledge(s)", dropped)
 	}
-	return filtered
+	return filtered, nil
 }
 
 // reconstructContent rebuilds document text from chunks.
@@ -3017,6 +3283,134 @@ func reconstructEnrichedContent(
 	return searchutil.EnrichContentWithImageInfo(content, mergedImageInfo)
 }
 
+// appendScannedPageText adds OCR from pages whose parent text is only an
+// image link. reconstructEnrichedContent inlines image_info when that JSON
+// exists; scanned pages often keep the recognized text only on the image_ocr
+// chunk. A document that already has some prose still receives those pages.
+// Disabled chunks, OCR beside real prose, and text already present are left out.
+func appendScannedPageText(content string, chunks []*types.Chunk) string {
+	var b strings.Builder
+	b.WriteString(content)
+	written := content
+	for _, c := range scannedOCRForWiki(chunks) {
+		text := strings.TrimSpace(c.Content)
+		if text == "" || strings.Contains(written, text) {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(text)
+		written = b.String()
+	}
+	return b.String()
+}
+
+// wikiCitationChunks gives the citation pass the scanned-page OCR on the
+// parent text chunk. splitChunksIntoCitationBatches only reads text chunks,
+// so an image-link parent would otherwise be cited without the page text.
+// The returned chunks are copies; stored rows are not changed.
+func wikiCitationChunks(chunks []*types.Chunk) []*types.Chunk {
+	ocrByParent := map[string][]*types.Chunk{}
+	var orphans []*types.Chunk
+	for _, c := range scannedOCRForWiki(chunks) {
+		if c.ParentChunkID == "" {
+			orphans = append(orphans, c)
+			continue
+		}
+		ocrByParent[c.ParentChunkID] = append(ocrByParent[c.ParentChunkID], c)
+	}
+	out := make([]*types.Chunk, 0, len(chunks)+len(orphans))
+	for _, c := range chunks {
+		if c == nil || !c.IsEnabled {
+			continue
+		}
+		if c.ChunkType != types.ChunkTypeText && c.ChunkType != "" {
+			continue
+		}
+		ocrs := ocrByParent[c.ID]
+		if len(ocrs) == 0 || chunkHasExtractableText(c.Content) {
+			out = append(out, c)
+			continue
+		}
+		clone := *c
+		var b strings.Builder
+		b.WriteString(c.Content)
+		for _, o := range ocrs {
+			text := strings.TrimSpace(o.Content)
+			if text == "" || strings.Contains(b.String(), text) {
+				continue
+			}
+			b.WriteByte('\n')
+			b.WriteString(text)
+		}
+		clone.Content = b.String()
+		out = append(out, &clone)
+	}
+	for _, o := range orphans {
+		clone := *o
+		clone.ChunkType = types.ChunkTypeText
+		out = append(out, &clone)
+	}
+	return out
+}
+
+// scannedOCRForWiki returns enabled OCR chunks whose parent is only an image
+// link, ordered by the parent text chunk and then the PDF page.
+func scannedOCRForWiki(chunks []*types.Chunk) []*types.Chunk {
+	parentIndex := make(map[string]int, len(chunks))
+	disabledParent := make(map[string]bool)
+	for _, c := range chunks {
+		if c == nil || (c.ChunkType != types.ChunkTypeText && c.ChunkType != "") {
+			continue
+		}
+		parentIndex[c.ID] = c.ChunkIndex
+		if !c.IsEnabled {
+			disabledParent[c.ID] = true
+		}
+	}
+	enabled := make([]*types.Chunk, 0, len(chunks))
+	for _, c := range chunks {
+		if c == nil || !c.IsEnabled || disabledParent[c.ParentChunkID] {
+			continue
+		}
+		enabled = append(enabled, c)
+	}
+	var ocr []*types.Chunk
+	for _, c := range selectGraphChunks(enabled) {
+		if c != nil && c.ChunkType == types.ChunkTypeImageOCR {
+			ocr = append(ocr, c)
+		}
+	}
+	sort.SliceStable(ocr, func(i, j int) bool {
+		pi, pj := parentIndex[ocr[i].ParentChunkID], parentIndex[ocr[j].ParentChunkID]
+		if pi != pj {
+			return pi < pj
+		}
+		pageI, pageJ := pdfPageOf(ocr[i]), pdfPageOf(ocr[j])
+		if pageI != pageJ {
+			return pageI < pageJ
+		}
+		if ocr[i].ChunkIndex != ocr[j].ChunkIndex {
+			return ocr[i].ChunkIndex < ocr[j].ChunkIndex
+		}
+		return ocr[i].StartAt < ocr[j].StartAt
+	})
+	return ocr
+}
+
+func pdfPageOf(c *types.Chunk) int {
+	if c == nil {
+		return 0
+	}
+	for _, loc := range c.SourceLocators {
+		if loc.Type == types.SourceLocatorPDF && loc.Page > 0 {
+			return loc.Page
+		}
+	}
+	return 0
+}
+
 // slugify creates a URL-friendly slug from a string
 func slugify(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
@@ -3042,15 +3436,6 @@ func slugify(s string) string {
 		s = s[:200]
 	}
 	return s
-}
-
-// truncateString truncates a string to maxLen runes
-func truncateString(s string, maxLen int) string {
-	runes := []rune(s)
-	if len(runes) <= maxLen {
-		return s
-	}
-	return string(runes[:maxLen]) + "..."
 }
 
 // appendUnique appends a string to a StringArray if not already present
@@ -3109,7 +3494,14 @@ var (
 	// e.g. <image url="...">. Capture both double- and single-quoted forms.
 	imageURLAttrRE = regexp.MustCompile(`(?i)<image\b[^>]*\surl\s*=\s*(?:"([^"]*)"|'([^']*)')`)
 
-	imagePlaceholderTokenRE = regexp.MustCompile(`wkimg:[A-Za-z0-9_-]+`)
+	imagePlaceholderTokenRE = regexp.MustCompile(`(?i)wkimg\s*[:：/_\-]?\s*[0-9]{1,6}`)
+
+	// looseImagePlaceholderTokenRE matches a whole token that the synthesis
+	// model may have rewritten with a different separator (wkimg/0010,
+	// wkimg_0010, wkimg-0010, "wkimg 0010", full-width colon). The numeric
+	// suffix still identifies the image, so these are normalised back to the
+	// canonical wkimg:0010 form before lookup.
+	looseImagePlaceholderTokenRE = regexp.MustCompile(`(?i)^wkimg\s*[:：/_\-]?\s*([0-9]{1,6})$`)
 )
 
 func maskTemplateDataImageURLs(data map[string]string) (map[string]string, map[string]string) {
@@ -3215,13 +3607,36 @@ func unmaskImageURLs(out string, urlMap map[string]string) string {
 			}
 			return match[:idx+1] + realURL + ")"
 		}
-		if strings.HasPrefix(url, "wkimg:") {
+		if canonical, ok := canonicalImagePlaceholder(url); ok {
+			realURL, known := urlMap[canonical]
+			if !known {
+				return ""
+			}
+			idx := strings.LastIndex(match, "(")
+			if idx < 0 {
+				return match
+			}
+			return match[:idx+1] + realURL + ")"
+		}
+		if strings.HasPrefix(strings.ToLower(url), "wkimg") {
 			return ""
 		}
 		return match
 	})
 
 	return replaceImagePlaceholderTokensOutsideMarkdown(out, urlMap)
+}
+
+// canonicalImagePlaceholder normalises the separator variants a model may
+// introduce and reports whether token is a whole image placeholder. Only the
+// separator is normalised: the digits are preserved verbatim so an invented
+// index such as wkimg:9999 does not accidentally resolve to a real image.
+func canonicalImagePlaceholder(token string) (string, bool) {
+	m := looseImagePlaceholderTokenRE.FindStringSubmatch(strings.TrimSpace(token))
+	if m == nil {
+		return "", false
+	}
+	return "wkimg:" + m[1], true
 }
 
 func replaceImagePlaceholderTokensOutsideMarkdown(s string, urlMap map[string]string) string {
@@ -3247,7 +3662,11 @@ func replaceImagePlaceholderTokensOutsideMarkdown(s string, urlMap map[string]st
 
 func replaceImagePlaceholderTokens(s string, urlMap map[string]string) string {
 	return imagePlaceholderTokenRE.ReplaceAllStringFunc(s, func(token string) string {
-		if realURL, ok := urlMap[token]; ok {
+		canonical, ok := canonicalImagePlaceholder(token)
+		if !ok {
+			return ""
+		}
+		if realURL, ok := urlMap[canonical]; ok {
 			return realURL
 		}
 		return ""

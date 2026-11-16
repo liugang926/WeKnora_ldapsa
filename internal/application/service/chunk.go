@@ -5,9 +5,11 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -208,6 +210,57 @@ func (s *chunkService) ListPagedChunksByKnowledgeID(ctx context.Context,
 
 	logger.Infof(ctx, "Retrieved %d chunks out of %d total chunks", len(chunks), total)
 	return types.NewPageResult(total, page, chunks), nil
+}
+
+// ListImagesByKnowledgeBaseID lists one page of a KB's image assets. Each image
+// is one entry of a chunk's image_info array (a chunk may hold several),
+// de-duplicated by URL. The repository answers from the chunk_images
+// projection, so filtering, sorting and paging cost one indexed query and the
+// total reflects the filter.
+func (s *chunkService) ListImagesByKnowledgeBaseID(
+	ctx context.Context,
+	kbID string,
+	page *types.Pagination,
+	filter *types.ImageListFilter,
+) (*types.PageResult, error) {
+	tenantID := types.MustTenantIDFromContext(ctx)
+
+	if filter == nil || filter.AuthorizeSource == nil {
+		return nil, ErrResourceAccessDenied
+	}
+	query := buildImageAssetQuery(filter, page)
+	query.AuthorizeSource = filter.AuthorizeSource
+	rows, total, err := s.chunkRepository.ListImageAssets(ctx, tenantID, kbID, query)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, map[string]interface{}{"kb_id": kbID, "tenant_id": tenantID})
+		return nil, err
+	}
+
+	assets := make([]types.ImageAsset, 0, len(rows))
+	for _, row := range rows {
+		attrs := map[string]any{}
+		if err := json.Unmarshal([]byte(row.AttrsJSON), &attrs); err != nil || attrs == nil {
+			attrs = map[string]any{}
+		}
+		assets = append(assets, types.ImageAsset{
+			ID:          row.ChunkID + "#" + strconv.Itoa(row.ImageIndex),
+			ChunkID:     row.ChunkID,
+			SourceName:  row.SourceName,
+			KnowledgeID: row.KnowledgeID,
+			ChunkType:   row.ChunkType,
+			URL:         row.URL,
+			OriginalURL: row.OriginalURL,
+			Caption:     row.Caption,
+			OCRText:     row.OCRText,
+			Attrs:       attrs,
+			IsEnabled:   row.IsEnabled,
+			Status:      row.Status,
+			CreatedAt:   row.CreatedAt,
+			UpdatedAt:   row.UpdatedAt,
+		})
+	}
+
+	return types.NewPageResult(total, page, assets), nil
 }
 
 // updateChunk updates a chunk
@@ -480,6 +533,10 @@ func (s *chunkService) UpdateDocumentChunk(
 		chunk.SourceContent = chunk.Content
 	}
 	bodyChanged := newContent != chunk.Content
+	if bodyChanged {
+		// Edited evidence no longer maps to the uploaded original.
+		chunk.SourceLocators = nil
+	}
 	chunk.Content = newContent
 	chunk.IsEnabled = newEnabled
 	chunk.ContentRevision++
@@ -559,7 +616,7 @@ func (s *chunkService) syncEditedChunkImages(ctx context.Context, chunk *types.C
 	}
 	contentURLs := searchutil.ImageURLsInContent(chunk.Content)
 	for _, child := range children {
-		if child.ChunkType != types.ChunkTypeImageOCR && child.ChunkType != types.ChunkTypeImageCaption {
+		if !types.IsImageChildChunkType(child.ChunkType) {
 			continue
 		}
 		desiredEnabled := chunk.IsEnabled && imageChildMatchesContent(child, contentURLs)
@@ -662,6 +719,7 @@ func (s *chunkService) rebuildParentContent(ctx context.Context, edited *types.C
 			append(append([]rune{}, baseRunes[:repl.start]...), []rune(repl.content)...),
 			baseRunes[repl.end:]...)
 	}
+	parent.SourceLocators = nil // Child edits invalidate the original parent evidence.
 	parent.Content = string(baseRunes)
 	for _, conflict := range conflicts {
 		parent.Content = searchutil.JoinChunkContent(parent.Content, conflict.content, "\n\n")
@@ -691,6 +749,11 @@ func (s *chunkService) syncChunkIndex(ctx context.Context, chunk *types.Chunk) e
 	)
 	if err != nil {
 		return err
+	}
+	if chunk.ChunkType == types.ChunkTypeImageVector {
+		// Its index row holds the image's own vector; re-embedding Content
+		// would replace it with the caption's. Only the enabled flag follows.
+		return engine.BatchUpdateChunkEnabledStatus(ctx, map[string]bool{chunk.ID: chunk.IsEnabled})
 	}
 	if err := engine.DeleteByChunkIDList(ctx, []string{chunk.ID}, embedder.GetDimensions(), kb.Type); err != nil {
 		return err

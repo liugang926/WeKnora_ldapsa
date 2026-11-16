@@ -8,6 +8,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/agent/skills"
 	"github.com/Tencent/WeKnora/internal/config"
+	"github.com/Tencent/WeKnora/internal/sandbox"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -65,6 +66,91 @@ type QuestionOriginInfo struct {
 	KnowledgeBaseID   string
 	KnowledgeBaseName string
 	Document          *SelectedDocumentInfo // nil when only the base is known
+}
+
+// PageContextAgent is a tenant-visible agent; IDs remain raw in model context.
+type PageContextAgent struct {
+	ID   string
+	Name string
+}
+
+// PageContextInfo contains only resources verified as visible in this turn.
+type PageContextInfo struct {
+	Page              string // known page identifier, e.g. "settings_models"; may be empty
+	Section           string // part of the page in view, e.g. "tools"; only with Page
+	Agent             *PageContextAgent
+	KnowledgeBaseID   string
+	KnowledgeBaseName string
+	Document          *SelectedDocumentInfo // nil unless a document is open
+	WikiPage          *PageContextWikiPage  // nil unless a Wiki page is open
+	WikiIssues        []*PageContextWikiIssue
+	Model             *PageContextModel
+	MCPService        *PageContextMCPService
+	Message           *PageContextMessage
+	// Title, View and Selection come from the page as the client reports it;
+	// they are what the user sees, not verified resources.
+	Title     string
+	View      string
+	Selection *types.PageSelection
+}
+
+// Empty reports whether nothing on the page was verified.
+func (p *PageContextInfo) Empty() bool {
+	return p == nil || (p.Page == "" && p.Agent == nil && p.KnowledgeBaseID == "" &&
+		p.Model == nil && p.MCPService == nil && p.Message == nil && p.Title == "" &&
+		p.View == "" && p.Selection == nil)
+}
+
+// PageContextModel is the model open in the model settings. It never
+// carries the endpoint or credentials.
+type PageContextModel struct {
+	ID        string
+	Name      string
+	Type      string
+	Source    string
+	IsBuiltin bool
+}
+
+// PageContextMCPService is the MCP service open in the MCP settings. It
+// never carries the URL, headers or credentials.
+type PageContextMCPService struct {
+	ID        string
+	Name      string
+	Transport string
+	Enabled   bool
+}
+
+// PageContextMessage is the chat message the user pointed the assistant at,
+// with excerpts of the exchange it belongs to.
+type PageContextMessage struct {
+	SessionID  string
+	MessageID  string
+	Role       string
+	AgentID    string
+	Question   string
+	Answer     string
+	References []*PageContextReference
+}
+
+// PageContextReference is one source a chat answer cited.
+type PageContextReference struct {
+	KnowledgeID     string
+	KnowledgeBaseID string
+	Title           string
+}
+
+// PageContextWikiPage is the Wiki page open in a page context.
+type PageContextWikiPage struct {
+	Slug  string
+	Title string
+}
+
+// PageContextWikiIssue is a Wiki issue shown on the page the user has open.
+type PageContextWikiIssue struct {
+	ID        string
+	Slug      string
+	IssueType string
+	Status    string
 }
 
 // PinnedMCPServiceInfo describes an MCP service explicitly @mentioned for this turn.
@@ -276,10 +362,10 @@ func formatSkillsMetadata(skillsMetadata []*skills.SkillMetadata, shellExecEnabl
 // formatToolGuidance uses the actual registry, so disabled capabilities never
 // leak into the runtime instructions. Mechanics and limits live in tool schemas.
 func formatToolGuidance(names []string) string {
-	return formatToolGuidanceForMode(names, false)
+	return formatToolGuidanceForMode(names, false, sandbox.WorkspaceLayout{})
 }
 
-func formatToolGuidanceForMode(names []string, skillInstallMode bool) string {
+func formatToolGuidanceForMode(names []string, skillInstallMode bool, layout sandbox.WorkspaceLayout) string {
 	if len(names) == 0 {
 		return ""
 	}
@@ -308,13 +394,52 @@ func formatToolGuidanceForMode(names []string, skillInstallMode bool) string {
 			"read_file(path=skill://<name>/<file_path or SKILL.md>) and read_sandbox_file to read_file.\n")
 	}
 	if !skillInstallMode && (has("shell_exec") || has("write_sandbox_file")) {
-		b.WriteString("Session workspace: /workspace. Preserve uploaded originals in /workspace/input. " +
-			skills.ArtifactOutputDir() + " is the only directory collected for download, " +
-			"so it takes finished deliverables only; " +
-			"keep drafts and intermediate files in another directory under /workspace. " +
-			"Commands start from their specified working directory on every call. " +
-			"Files and installed packages persist within the session.\n")
-		b.WriteString(sandboxArtifactReferenceGuidance())
+		if layout.IsHost() {
+			// A host root is a directory the user picked. PromptSafePath
+			// refuses names carrying newlines or markup rather than
+			// sanitizing them, so a forged instruction cannot reach the
+			// model and a real path is never shown altered. Without a
+			// usable root the workspace line is omitted entirely, which is
+			// the same fail-closed shape as a failed layout lookup.
+			if root := sandbox.PromptSafePath(layout.Root); root != "" {
+				b.WriteString("Session workspace: ")
+				b.WriteString(root)
+				b.WriteString(". That folder is the default place to edit, along with directories the user " +
+					"has already approved for this session. Commands start from ")
+				b.WriteString(root)
+				b.WriteString(" on every call unless work_dir names a subdirectory or an approved directory. " +
+					"shell_exec may try a path outside the workspace; the sandbox asks the user before opening it. " +
+					"Deletes ask even inside the workspace. Files persist on the user's machine.\n")
+			}
+		} else if layout.IsSharedRemote() {
+			root := sandbox.PromptSafePath(layout.Root)
+			input := sandbox.PromptSafePath(layout.InputDir)
+			output := sandbox.PromptSafePath(layout.OutputDir)
+			if root != "" && input != "" && output != "" {
+				b.WriteString("Session workspace: ")
+				b.WriteString(root)
+				b.WriteString(". Preserve uploaded originals in ")
+				b.WriteString(input)
+				b.WriteString(". ")
+				b.WriteString(output)
+				b.WriteString(" is the only directory collected for download, so it takes finished " +
+					"deliverables only; keep drafts and intermediate files in another directory under ")
+				b.WriteString(root)
+				b.WriteString(". Commands start from ")
+				b.WriteString(root)
+				b.WriteString(" unless work_dir names a subdirectory.\n")
+				b.WriteString(sandboxArtifactReferenceGuidance())
+			}
+		} else {
+			b.WriteString("Session workspace: /workspace. Preserve uploaded originals in /workspace/input. ")
+			b.WriteString(skills.ArtifactOutputDir())
+			b.WriteString(" is the only directory collected for download, " +
+				"so it takes finished deliverables only; " +
+				"keep drafts and intermediate files in another directory under /workspace. " +
+				"Commands start from their specified working directory on every call. " +
+				"Files and installed packages persist within the session.\n")
+			b.WriteString(sandboxArtifactReferenceGuidance())
+		}
 	}
 	if !skillInstallMode && has("shell_exec") && has("read_file") {
 		b.WriteString("For listed skills, run bundled scripts and your own scripts with " +
@@ -410,6 +535,7 @@ type BuildSystemPromptOptions struct {
 	Config           *config.Config // Config for reading prompt templates; nil leaves the default base empty
 	MemoryPrompt     string
 	ProtocolPrompt   string
+	WorkspaceLayout  sandbox.WorkspaceLayout
 }
 
 // BuildSystemPrompt builds the progressive RAG system prompt
@@ -498,6 +624,10 @@ func BuildSystemPromptSections(
 		names = options.SelectedTools
 	}
 	skillInstallMode := options != nil && options.SkillInstallMode
+	var layout sandbox.WorkspaceLayout
+	if options != nil {
+		layout = options.WorkspaceLayout
+	}
 	sources := formatGroundingGuidance(names)
 	if skillInstallMode {
 		sources = "Installation verification: inspect the supplied skill and dependency " +
@@ -506,7 +636,7 @@ func BuildSystemPromptSections(
 			"as part of installation."
 	}
 	sections = append(sections, SystemPromptSection{"sources", sources},
-		SystemPromptSection{"tools", formatToolGuidanceForMode(names, skillInstallMode)},
+		SystemPromptSection{"tools", formatToolGuidanceForMode(names, skillInstallMode, layout)},
 		SystemPromptSection{"output", types.SourcedAnswerOutputPrompt})
 	if options != nil {
 		if !skillInstallMode && slices.Contains(names, "read_file") && len(options.SkillsMetadata) > 0 {

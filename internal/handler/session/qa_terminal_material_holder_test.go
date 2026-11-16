@@ -13,7 +13,6 @@ import (
 	"github.com/Tencent/WeKnora/internal/application/access"
 	applicationservice "github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/event"
-	"github.com/Tencent/WeKnora/internal/storageurl"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
@@ -169,9 +168,7 @@ func TestLiveSSEProducerErrorWithRefusedOriginalMaterialHolder(t *testing.T) {
 					},
 				})
 				setSSEHeaders(c)
-				rewriter := storageurl.NewStreamRewriter(
-					storageurl.NewRequestRewriter(ctx, storageurl.ModePublic, nil, nil),
-				)
+				rewriter := publicStreamRewriter()
 				rewriter.Push(ctx, "held", "private held source ![", false, nil)
 				h.handleAgentEventsForSSE(ctx, c, "session", "assistant", "request", bus, true, rewriter, message)
 			})

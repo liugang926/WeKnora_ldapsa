@@ -14,7 +14,12 @@ func TestKnowledgeGraphModelProjectionKeepsActualGraphAttributesAndChunkHandles(
 			Success: true,
 			Output:  "raw fallback",
 			Data: map[string]any{
-				"display_type": "graph_query_results",
+				"display_type":    "graph_query_results",
+				"errors":          []string{"some <failure>"},
+				"relations_total": 2,
+				"relations": []map[string]any{
+					{"source": "unbound source", "target": "unbound target", "type": "OTHER"},
+				},
 				"graph": map[string]any{
 					"nodes": []map[string]any{
 						{"name": "Graph <entity>", "attributes": []string{"model-independent actual graph fact"}},
@@ -39,6 +44,9 @@ func TestKnowledgeGraphModelProjectionKeepsActualGraphAttributesAndChunkHandles(
 	require.Contains(t, output, "Graph &lt;entity&gt;")
 	require.Contains(t, output, `type="REL"`)
 	require.Contains(t, output, "actual snapshot body")
-	require.Contains(t, output, `id="c1"`)
+	require.Contains(t, output, `id="chunk://1"`)
+	require.Contains(t, output, `relations_shown="1" relations_total="2"`)
+	require.Contains(t, output, "<error>some &lt;failure&gt;</error>")
+	require.NotContains(t, output, "unbound")
 	require.NotContains(t, output, "raw fallback")
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Tencent/WeKnora/internal/middleware"
+	"github.com/Tencent/WeKnora/internal/storageurl"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -23,6 +24,16 @@ type stubResourceFileService struct {
 	interfaces.FileService
 	url string
 }
+
+func stubRequestResolver(
+	_ context.Context, files interfaces.FileService, _ interfaces.StorageBackendResolver,
+) storageurl.Resolver {
+	return stubURLResolver{files}
+}
+
+type stubURLResolver struct{ files interfaces.FileService }
+
+func (r stubURLResolver) ResolveFileService(string) interfaces.FileService { return r.files }
 
 func (s *stubResourceFileService) GetFileURL(context.Context, string) (string, error) {
 	return s.url, nil
@@ -51,7 +62,8 @@ func newResourceURLTestRouter(t *testing.T, messages []*types.Message) *gin.Engi
 				return messages, nil
 			},
 		},
-		FileService: &stubResourceFileService{url: "https://cdn.example.com/signed.png"},
+		FileService:         &stubResourceFileService{url: "https://cdn.example.com/signed.png"},
+		ResourceURLResolver: stubRequestResolver,
 	}
 	r.GET("/messages/:session_id/load", h.LoadMessages)
 	return r

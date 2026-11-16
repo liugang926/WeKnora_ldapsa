@@ -14,6 +14,7 @@ import (
 	chatpipeline "github.com/Tencent/WeKnora/internal/application/service/chat_pipeline"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -22,69 +23,11 @@ func TestIMRealMessageProducerBothOutputPaths(t *testing.T) {
 	for _, fault := range []string{"none", "unknown", "revoked"} {
 		for _, stream := range []bool{false, true} {
 			t.Run(map[bool]string{false: "plain", true: "stream"}[stream]+fault, func(t *testing.T) {
-				db := newLifecycleTestDB(t)
-				sqlDB, _ := db.DB()
-				sqlDB.SetMaxOpenConns(1)
-				require.NoError(t,
-					db.Exec("CREATE TABLE sessions(id TEXT PRIMARY KEY,tenant_id "+
-						"INTEGER,user_id TEXT,deleted_at DATETIME)").Error)
-				require.NoError(t, db.AutoMigrate(&types.Message{}))
-				require.NoError(t, db.Exec("ALTER TABLE messages ADD COLUMN artifacts TEXT").Error)
-				ddl, err := os.ReadFile("../../migrations/sqlite/000070_message_original_materials.up.sql")
-				require.NoError(t, err)
-				require.NoError(t, db.Exec(string(ddl)).Error)
-				for _, name := range []string{
-					"000023_message_artifacts_table.up.sql",
-					"000026_message_artifacts_deleted_at.up.sql",
-				} {
-
-					ddl, e := os.ReadFile("../../migrations/sqlite/" + name)
-					require.NoError(t, e)
-					require.NoError(t, db.Exec(string(ddl)).Error)
-				}
-				store := repository.NewKnowledgeInputProvenanceStore(db)
-				factory := func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
-					s := repository.NewKnowledgeInputProvenanceStore(tx)
-					repository.ConfigureKnowledgeInputActorGroupAccess(
-						s,
-						appservice.NewGroupAccessService(repository.NewGroupAccessRepository(
-							tx)))
-					return s
-				}
-				repository.ConfigureKnowledgeDisplayInputWriters(store, nil, nil, factory)
-				repository.ConfigureKnowledgeInputActorGroupAccess(
-					store,
-					appservice.NewGroupAccessService(repository.NewGroupAccessRepository(
-						db)))
-				messages := appservice.NewMessageService(
-					repository.NewMessageRepository(db),
-					repository.NewSessionRepository(db),
-					nil,
-					nil,
-					nil,
-					nil,
-					nil,
-					nil,
-					nil)
-				appservice.ConfigureMessageMaterialProvenance(messages, store)
-				appservice.ConfigureMessageSourceLineage(
-					messages,
-					nil,
-					&appservice.SessionForkService{},
-					chatpipeline.NewEventManager(),
-					access.NewNextcloudSourceLineageGuard(nil,
-						nil,
-						nil,
-						nil,
-						appservice.NewGroupAccessService(repository.NewGroupAccessRepository(
-							db)),
-						nil,
-						store))
+				db, messages := newIMPublicationMessages(t)
 				var valid atomic.Bool
 				valid.Store(true)
 				ctx := withIMIdentity(context.Background(),
-					7,
-					"channel",
+					&IMChannel{TenantID: 7, ID: "channel"},
 					&IncomingMessage{
 						Platform: PlatformDingtalk,
 						UserID:   "sender",
@@ -238,4 +181,41 @@ func TestIMCompletionCannotReusePrefixForUnknownAnswer(t *testing.T) {
 	p.observe(event.Event{SourceLineage: lineage, Data: event.AgentFinalAnswerData{Content: "known prefix"}})
 	p.observe(event.Event{Data: event.AgentCompleteData{FinalAnswer: "unknown replacement"}})
 	require.Error(t, p.lineage.RequireComplete())
+}
+
+func newIMPublicationMessages(t *testing.T) (*gorm.DB, interfaces.MessageService) {
+	t.Helper()
+	db := newLifecycleTestDB(t)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.Exec(
+		"CREATE TABLE sessions(id TEXT PRIMARY KEY,tenant_id INTEGER,user_id TEXT,deleted_at DATETIME)",
+	).Error)
+	require.NoError(t, db.AutoMigrate(&types.Message{}))
+	require.NoError(t, db.Exec("ALTER TABLE messages ADD COLUMN artifacts TEXT").Error)
+	for _, name := range []string{
+		"000023_message_artifacts_table.up.sql", "000026_message_artifacts_deleted_at.up.sql",
+		"000046_nextcloud_content_leases.up.sql", "000070_message_original_materials.up.sql",
+	} {
+		ddl, err := os.ReadFile("../../migrations/sqlite/" + name)
+		require.NoError(t, err)
+		require.NoError(t, db.Exec(string(ddl)).Error)
+	}
+	newStore := func(tx *gorm.DB) *repository.KnowledgeInputProvenanceStore {
+		store := repository.NewKnowledgeInputProvenanceStore(tx)
+		groups := appservice.NewGroupAccessService(repository.NewGroupAccessRepository(tx))
+		repository.ConfigureKnowledgeInputActorGroupAccess(store, groups)
+		return store
+	}
+	store := newStore(db)
+	repository.ConfigureKnowledgeDisplayInputWriters(store, nil, nil, newStore)
+	messages := appservice.NewMessageService(repository.NewMessageRepository(db), repository.NewSessionRepository(db),
+		nil, &resourceKBLookup{db: db}, nil, nil, nil, nil, nil)
+	appservice.ConfigureMessageMaterialProvenance(messages, store)
+	groups := appservice.NewGroupAccessService(repository.NewGroupAccessRepository(db))
+	guard := access.NewNextcloudSourceLineageGuard(nil, nil, nil, nil, groups, nil, store)
+	appservice.ConfigureMessageSourceLineage(messages, nil, &appservice.SessionForkService{},
+		chatpipeline.NewEventManager(), guard)
+	return db, messages
 }

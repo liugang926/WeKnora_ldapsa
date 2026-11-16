@@ -2,6 +2,8 @@ package chatpipeline
 
 import (
 	"context"
+	"errors"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -35,14 +37,18 @@ func (p *PluginExtractEntity) onLineageExtractEntity(
 	if err != nil {
 		return fail(err)
 	}
-	model, err := p.modelService.GetChatModel(ctx, manage.ChatModelID)
+	model, err := p.modelService.GetChatModel(manage.ChatModelContext(ctx), manage.ChatModelID)
 	if err != nil {
 		return fail(err)
 	}
 	extractor := NewExtractor(model, p.template)
+	query := manage.Query
+	if rewritten := strings.TrimSpace(manage.RewriteQuery); rewritten != "" {
+		query = rewritten
+	}
 	graph, err := extractor.ExtractSourceLineage(
 		ctx,
-		manage.Query,
+		query,
 		input,
 		templateLineage,
 		func(ctx context.Context, lineage *types.SourceLineage) error {
@@ -52,7 +58,7 @@ func (p *PluginExtractEntity) onLineageExtractEntity(
 			return turn.Check(ctx)
 		},
 	)
-	if err != nil {
+	if err != nil && (!errors.Is(err, ErrModelDeclined) || graph == nil) {
 		return fail(err)
 	}
 	if err := turn.Add(graph.SourceLineage); err != nil {
@@ -65,7 +71,7 @@ func (p *PluginExtractEntity) onLineageExtractEntity(
 	for _, node := range graph.Node {
 		manage.Entity = append(manage.Entity, node.Name)
 	}
-	manage.EntityKBIDs = manage.SearchTargets.GetAllKnowledgeBaseIDs()
+	// EntityKBIDs already contains only enabled, resolved targets.
 	manage.EntityKnowledge = map[string]string{}
 	return next()
 }

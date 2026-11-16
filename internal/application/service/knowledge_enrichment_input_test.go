@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"image"
+	"image/png"
 	"io"
 	"os"
 	"strings"
@@ -76,6 +78,21 @@ func (m *enrichmentTestVLM) Predict(_ context.Context, _ [][]byte, _ string) (st
 	}
 	return "Actual recognized document image text for retrieval", nil
 }
+
+func (m *enrichmentTestVLM) PredictWithOptions(
+	ctx context.Context, images [][]byte, prompt string,
+	_ *vlm.PredictOptions,
+) (string, error) {
+	return m.Predict(ctx, images, prompt)
+}
+
+func enrichmentImageBytes(t *testing.T) []byte {
+	t.Helper()
+	var out bytes.Buffer
+	require.NoError(t, png.Encode(&out, image.NewRGBA(image.Rect(0, 0, 8, 8))))
+	return out.Bytes()
+}
+
 func (m *enrichmentTestVLM) GetModelName() string { return "local mock vision" }
 func (m *enrichmentTestVLM) GetModelID() string   { return "vision" }
 
@@ -544,9 +561,10 @@ func runEnrichmentOriginalRoutes(t *testing.T, pg bool) {
 		require.Equal(t, 5, f.model.calls)
 		assertEnrichmentReadable(t, f, []string{f.chunks[0].ID, f.chunks[1].ID})
 	})
-	t.Run("image actual bytes OCR caption atomic receipt readable", func(t *testing.T) {
+	checkImage := func(t *testing.T, ocr, caption bool, params map[string]any, want ...string) {
+		t.Helper()
 		f := newEnrichmentTestFixture(t, pg)
-		imageBytes := []byte("actual original parser image bytes")
+		imageBytes := enrichmentImageBytes(t)
 		d := sha256.Sum256(imageBytes)
 		actual, e := f.store.CaptureKnowledgeEnrichmentInputs(
 			f.build,
@@ -566,9 +584,13 @@ func runEnrichmentOriginalRoutes(t *testing.T, pg bool) {
 			ChunkID:         f.chunks[0].ID,
 			ImageURL:        "local://actual.png",
 			ImageDigest:     hex.EncodeToString(d[:]),
-			EnableOCR:       true,
-			EnableCaption:   true,
+			EnableOCR:       ocr,
+			EnableCaption:   caption,
 			Language:        "en-US",
+		}
+		if params != nil {
+			p.ImagePipelineID = types.ImagePipelineDefault
+			p.ImagePipelineParams = params
 		}
 		p.ProducerInput, e = f.store.AdmitKnowledgeProducerInput(
 			f.build,
@@ -588,11 +610,22 @@ func runEnrichmentOriginalRoutes(t *testing.T, pg bool) {
 			fileSvc:         &enrichmentTestFiles{data: imageBytes},
 			taskEnqueuer:    f.queue,
 		}
+		tampered := p
+		tampered.EnableOCR = !p.EnableOCR
+		require.ErrorIs(
+			t, svc.Handle(context.Background(), enrichmentTask(t, types.TypeImageMultimodal, tampered)),
+			repository.ErrKnowledgeInputChanged,
+		)
+		require.Zero(t, f.vision.calls)
 		require.NoError(t, svc.Handle(context.Background(), enrichmentTask(t, types.TypeImageMultimodal, p)))
-		require.Equal(t, 2, f.vision.calls)
+		require.Equal(t, len(want), f.vision.calls)
 		children, e := f.s.chunkRepo.ListChunksByParentIDs(context.Background(), 7, []string{f.chunks[0].ID})
 		require.NoError(t, e)
-		require.Len(t, children, 2)
+		var produced []string
+		for _, child := range children {
+			produced = append(produced, child.ChunkType)
+		}
+		require.ElementsMatch(t, want, produced)
 		require.Len(t, f.queue.tasks, 1)
 		var next types.KnowledgePostProcessPayload
 		require.NoError(t, json.Unmarshal(f.queue.tasks[0].Payload(), &next))
@@ -601,7 +634,27 @@ func runEnrichmentOriginalRoutes(t *testing.T, pg bool) {
 		for _, c := range children {
 			ids = append(ids, c.ID)
 		}
-		assertEnrichmentReadable(t, f, ids)
+		if len(ids) > 0 {
+			assertEnrichmentReadable(t, f, ids)
+		}
+	}
+	t.Run("image actual bytes OCR caption atomic receipt readable", func(t *testing.T) {
+		checkImage(t, true, true, nil, types.ChunkTypeImageOCR, types.ChunkTypeImageCaption)
+		if pg {
+			return // The switch matrix uses the same queue handler on both databases.
+		}
+		t.Run("legacy OCR only", func(t *testing.T) { checkImage(t, true, false, nil, types.ChunkTypeImageOCR) })
+		t.Run("legacy caption only", func(t *testing.T) {
+			checkImage(t, false, true, nil, types.ChunkTypeImageCaption)
+		})
+		t.Run("legacy neither", func(t *testing.T) { checkImage(t, false, false, nil) })
+		t.Run("pipeline controls", func(t *testing.T) {
+			params := map[string]any{
+				types.SlotKey(string(types.ImagePipelineDefault), ImageOCRSwitchKey):     false,
+				types.SlotKey(string(types.ImagePipelineDefault), ImageCaptionSwitchKey): true,
+			}
+			checkImage(t, true, false, params, types.ChunkTypeImageCaption)
+		})
 	})
 }
 func TestKnowledgeEnrichmentOriginalRoutesSQLite(t *testing.T) { runEnrichmentOriginalRoutes(t, false) }
@@ -828,7 +881,7 @@ func runEnrichmentRejectedChanges(t *testing.T, pg bool) {
 	} {
 		t.Run(mode, func(t *testing.T) {
 			f := newEnrichmentTestFixture(t, pg)
-			image := []byte("actual original image bytes")
+			image := enrichmentImageBytes(t)
 			d := sha256.Sum256(image)
 			actual, e := f.store.CaptureKnowledgeEnrichmentInputs(
 				f.build,

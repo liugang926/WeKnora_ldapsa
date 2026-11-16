@@ -98,11 +98,19 @@ func (v *KeywordsVectorHybridRetrieveEngineService) BatchIndex(ctx context.Conte
 			maxConcurrency = 5
 			windowSize     = batchSize * maxConcurrency
 		)
+		// Image indexing supplies vectors in the original row order. Validate
+		// the full list before any writes, then give each window its own view;
+		// the same precomputed embedder may be shared by multiple engines.
+		precomputed, isPrecomputed := embedder.(*precomputedEmbedder)
+		if isPrecomputed {
+			if _, err := precomputed.take(len(indexInfoList)); err != nil {
+				return err
+			}
+		}
+
 		// Bound both embedding inputs and returned vectors, not just DB write
-		// concurrency (upstream v0.9.0 windowing). Finish saving a window
-		// before embedding the next one so a large document never sends its
-		// whole chunk set to the embedding gateway in one request, and text
-		// indexing does not retain every generated vector at once.
+		// concurrency. Finish saving a window before embedding the next one so
+		// text indexing does not retain every generated vector at once.
 		for start := 0; start < len(indexInfoList); start += windowSize {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -113,7 +121,14 @@ func (v *KeywordsVectorHybridRetrieveEngineService) BatchIndex(ctx context.Conte
 			for i, indexInfo := range window {
 				contentList[i] = sanitizeForEmbedding(ctx, indexInfo.Content)
 			}
-			embeddings, err := batchEmbedWithBackoff(ctx, embedder, contentList)
+			windowEmbedder := embedder
+			if isPrecomputed {
+				windowEmbedder = &precomputedEmbedder{
+					Embedder: precomputed.Embedder,
+					vectors:  precomputed.vectors[start:end],
+				}
+			}
+			embeddings, err := batchEmbedWithBackoff(ctx, windowEmbedder, contentList)
 			if err != nil {
 				return err
 			}

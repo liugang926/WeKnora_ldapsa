@@ -6,6 +6,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -20,9 +21,22 @@ import (
 
 const testResourceHandle = "resource://xifDo7NTSL300Lp1goVutw"
 
-// stubResourceFileService resolves any storage reference to one fixed public URL.
+// stubResourceFileService serves the single registered image in these tests.
 type stubResourceFileService struct {
 	interfaces.FileService
+}
+
+func stubRequestResolver(
+	_ context.Context, files interfaces.FileService, _ interfaces.StorageBackendResolver,
+) storageurl.Resolver {
+	return files.(*stubResourceFileService)
+}
+
+func (s *stubResourceFileService) ResolveFileService(ref string) interfaces.FileService {
+	if ref != testResourceHandle {
+		return nil
+	}
+	return s
 }
 
 func (s *stubResourceFileService) GetFileURL(context.Context, string) (string, error) {
@@ -41,7 +55,7 @@ func (s *stubResourceFileService) GetFile(context.Context, string) (io.ReadClose
 
 func publicStreamRewriter() *storageurl.StreamRewriter {
 	return storageurl.NewStreamRewriter(storageurl.NewRequestRewriter(
-		context.Background(), storageurl.ModePublic, &stubResourceFileService{}, nil))
+		context.Background(), storageurl.ModePublic, &stubResourceFileService{}, nil, stubRequestResolver))
 }
 
 func newTestGinContext(t *testing.T, query string) (*gin.Context, *httptest.ResponseRecorder) {
@@ -240,6 +254,47 @@ func TestStopFormattingFlushesHeldContentBeforeNotification(t *testing.T) {
 	assert.Contains(t, body, `![fig](resource://xifDo7`, "the tail must not be swallowed")
 	assert.Less(t, indexOf(body, `"response_type":"answer"`), indexOf(body, `"response_type":"stop"`),
 		"held content must precede the stop notification")
+}
+
+func TestEmitStreamEvent_UserWaitPushesTheFrameWithAnSSEComment(t *testing.T) {
+	rewriter := storageurl.NewStreamRewriter(storageurl.NewRewriter(nil, "TEST"))
+	for _, eventType := range []types.ResponseType{
+		types.ResponseTypeToolApprovalRequired,
+		types.ResponseTypeMCPOAuthRequired,
+	} {
+		t.Run(string(eventType), func(t *testing.T) {
+			c, recorder := newTestGinContext(t, "")
+			emitStreamEvent(context.Background(), c, interfaces.StreamEvent{
+				ID:   "wait-1",
+				Type: eventType,
+				Data: map[string]interface{}{"pending_id": "p1"},
+			}, "req-1", rewriter)
+
+			body := recorder.Body.String()
+			frame := indexOf(body, `"response_type":"`+string(eventType)+`"`)
+			comment := indexOf(body, "\n: ")
+			require.GreaterOrEqual(t, frame, 0)
+			require.Greater(t, comment, frame)
+			line, rest, found := strings.Cut(body[comment+1:], "\n")
+			require.True(t, found)
+			assert.GreaterOrEqual(t, len(line), 32<<10)
+			assert.Empty(t, rest, "the comment must not dispatch an empty event")
+			assert.NotContains(t, line, "\n")
+		})
+	}
+}
+
+func TestEmitStreamEvent_AnswerIsNotPadded(t *testing.T) {
+	c, recorder := newTestGinContext(t, "")
+	rewriter := storageurl.NewStreamRewriter(storageurl.NewRewriter(nil, "TEST"))
+	emitStreamEvent(context.Background(), c, interfaces.StreamEvent{
+		ID: "answer-1", Type: types.ResponseTypeAnswer, Content: "hello",
+	}, "req-1", rewriter)
+
+	body := recorder.Body.String()
+	assert.Contains(t, body, `"response_type":"answer"`)
+	assert.NotContains(t, body, "\n: ")
+	assert.Less(t, len(body), 8<<10)
 }
 
 func TestHoldbackKeyRoundTrip(t *testing.T) {

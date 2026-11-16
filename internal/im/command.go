@@ -27,6 +27,19 @@ type CommandResult struct {
 	Content string
 	// Action requests a service-level side effect (reset, clear, …).
 	Action CommandAction
+	// sourceKBs are the verified search scopes whose contents will be published.
+	sourceKBs []string
+}
+
+func (r *CommandResult) checkPublication(ctx context.Context) error {
+	if scope, ok := types.IMChannelScopeFromContext(ctx); ok {
+		if err := scope.Check(ctx, scope.TenantID,
+			types.GroupResourceTypeAgent, scope.AgentID, types.ResourceActionUse); err != nil {
+			return err
+		}
+		return types.AuthorizeIMKnowledgeBases(ctx, r.sourceKBs...)
+	}
+	return nil
 }
 
 // CommandContext carries all runtime data a command needs during execution.

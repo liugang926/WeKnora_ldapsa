@@ -178,6 +178,8 @@ type actualSteerHTTPModel struct {
 	followUp     bool
 	claimFailure bool
 	titleCalls   atomic.Int64
+
+	expectedSteerContent string
 }
 
 func (m *actualSteerHTTPModel) GetModelName() string { return "local-original-steer-agent" }
@@ -196,6 +198,10 @@ func (m *actualSteerHTTPModel) ChatStream(
 		return nil, err
 	}
 	assertActualSteerBodyLease(m.t, m.f.db, "", true)
+	expectedSteer := m.expectedSteerContent
+	if expectedSteer == "" {
+		expectedSteer = types.SteerMessageContent(actualSteerHTTPQuery)
+	}
 	parentSeen, steerSeen := false, false
 	for _, item := range input {
 		if item.Content == m.f.parent.Content {
@@ -207,7 +213,9 @@ func (m *actualSteerHTTPModel) ChatStream(
 				"saved history retains its actual original source envelope",
 			)
 		}
-		if strings.Contains(item.Content, "original steer guidance") {
+		orderedInput := m.expectedSteerContent != "" && item.Role == "user" &&
+			strings.HasPrefix(item.Content, "<steer_message>")
+		if strings.Contains(item.Content, "original steer guidance") || orderedInput {
 			steerSeen = true
 			if m.followUp {
 				envelope, authored, ok := strings.Cut(item.Content, "</runtime_context>\n\n")
@@ -222,7 +230,7 @@ func (m *actualSteerHTTPModel) ChatStream(
 				)
 				require.Equal(m.t, actualSteerHTTPQuery, authored)
 			} else {
-				require.Equal(m.t, types.SteerMessageContent(actualSteerHTTPQuery), item.Content)
+				require.Equal(m.t, expectedSteer, item.Content)
 			}
 			require.NoError(m.t, item.SourceLineage.RequireComplete())
 		}
@@ -292,7 +300,7 @@ type actualSteerHTTPModels struct {
 type actualSteerHTTPSessionPort interface {
 	interfaces.SessionService
 	RejectSendIfRewinding(context.Context, string) error
-	HoldSandboxTurn(context.Context, string, string) (func(), error)
+	HoldSandboxTurn(context.Context, string, string) (context.Context, func(), error)
 }
 
 type actualSteerHTTPObservedSessions struct {
@@ -536,6 +544,16 @@ func newActualSteerHTTPHandler(
 			},
 		},
 	}
+	customs := service.NewCustomAgentService(
+		repository.NewCustomAgentRepository(f.db),
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
 	agents := service.NewAgentService(
 		cfg,
 		models,
@@ -559,8 +577,15 @@ func newActualSteerHTTPHandler(
 		nil,
 		nil,
 		nil,
+		service.HostSandboxManager{},
 		nil,
 		nil,
+		nil, // Graph repository.
+		nil, // Background work.
+		nil, // Shell jobs.
+		nil, // Operation dispatcher.
+		customs,
+		nil, // No collaborating assistants.
 	)
 	service.ConfigureAgentRAGChunkHydration(agents, repository.NewRAGChunkSnapshotReader(f.db, f.store))
 	manager := chatpipeline.NewEventManager()
@@ -585,26 +610,20 @@ func newActualSteerHTTPHandler(
 		nil,
 		nil,
 		nil,
+		service.HostSandboxManager{},
 		nil,
 		nil,
 		nil,
 		service.NewSessionBusyGate(),
 		nil,
 		nil,
+		nil, // Background work is outside this HTTP flow.
+		nil, // No interactive prompt is issued.
 	)
 	service.ConfigureMessageSourceLineage(f.messages, sessions, &service.SessionForkService{}, manager, f.guard)
 	groups := service.NewGroupAccessService(repository.NewGroupAccessRepository(f.db))
 	service.ConfigureSessionGroupAccess(sessions, groups)
-	customs := service.NewCustomAgentService(
-		repository.NewCustomAgentRepository(f.db),
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-	)
+
 	mini := miniredis.RunT(t)
 	redis, err := stream.NewRedisStreamManager(mini.Addr(), "", "", 0, actualSteerHTTPPrefix, time.Minute)
 	require.NoError(t, err)
@@ -656,6 +675,8 @@ func newActualSteerHTTPHandler(
 		nil,
 		nil,
 		groups,
+		nil, // Host project directories.
+		nil, // Background work.
 	)
 	return h, observed, redis, raw
 }

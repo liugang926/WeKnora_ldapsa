@@ -119,12 +119,15 @@ func TestMessageMaterialActualHTTPInitializationWaitsForAdmission(t *testing.T) 
 				nil,
 				nil,
 				nil,
+				service.HostSandboxManager{},
 				nil,
 				nil,
 				nil,
 				service.NewSessionBusyGate(),
 				nil,
 				nil,
+				nil, // Background work is outside this HTTP flow.
+				nil, // No interactive prompt is issued.
 			)
 			service.ConfigureMessageSourceLineage(f.messages, sessions, &service.SessionForkService{}, manager, f.guard)
 			mini := miniredis.RunT(t)

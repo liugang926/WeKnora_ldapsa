@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"sync"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/application/readlease"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -150,6 +151,15 @@ func (t *SearchKnowledgeTool) hydrateActualSearchInputs(
 			SourceLineage:     local.lineage,
 			Metadata:          map[string]string{},
 		}
+		// Parser-owned metadata and image references may be rendered in WeKnora ACL
+		// mode after the exact source row has been loaded. Never forward an index
+		// row's MatchedImages, CitationSources, or provider-supplied URLs.
+		turn := types.RAGSourceLineageFromContext(ctx)
+		if !turn.RequiresCompleteProducerLineage() && access.UseWeKnoraReadAuthority() {
+			actual.ParentChunkID = c.ParentChunkID
+			actual.ChunkMetadata = c.Metadata
+			actual.ImageInfo = c.ImageInfo
+		}
 		out = append(
 			out,
 			&searchResultWithMeta{
@@ -157,7 +167,7 @@ func (t *SearchKnowledgeTool) hydrateActualSearchInputs(
 				SourceQuery:       row.SourceQuery,
 				QueryType:         row.QueryType,
 				KnowledgeBaseID:   k.KnowledgeBaseID,
-				KnowledgeBaseType: types.KnowledgeBaseTypeDocument,
+				KnowledgeBaseType: row.KnowledgeBaseType,
 			},
 		)
 		capture.documents[k.ID] = k

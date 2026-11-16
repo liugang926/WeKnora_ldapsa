@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/models/api"
-	"github.com/Tencent/WeKnora/internal/models/catalog"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -24,7 +23,7 @@ func newTestClient(t *testing.T, baseURL string, mutate func(*Config)) *Client {
 			ModelID: "model-123",
 			Auth:    api.HeaderAuth("x-goog-api-key", "test-key"),
 		},
-		Settings:  catalog.DefaultGoogleGenerativeAI(),
+		Settings:  api.DefaultGoogleGenerativeAI(),
 		Reasoning: true,
 	}
 	if mutate != nil {
@@ -196,7 +195,7 @@ func TestBuildRequestBodyGolden(t *testing.T) {
 		{
 			name: "level mode",
 			mutate: func(c *Config) {
-				c.Settings.ThinkingMode = catalog.GoogleThinkingLevel
+				c.Settings.ThinkingMode = api.GoogleThinkingLevel
 				c.ThinkingLevels = api.ThinkingLevelMap{api.ReasoningHigh: api.StringPtr("high")}
 			},
 			thinking: `{"thinkingLevel": "high", "includeThoughts": true}`,
@@ -253,26 +252,26 @@ func TestThinkingConfigVariants(t *testing.T) {
 		},
 		{
 			name:   "mode none",
-			mutate: func(c *Config) { c.Settings.ThinkingMode = catalog.GoogleThinkingNone },
+			mutate: func(c *Config) { c.Settings.ThinkingMode = api.GoogleThinkingNone },
 			opts:   &api.Options{ReasoningEffort: api.ReasoningHigh},
 			want:   "",
 		},
 		{
 			name:   "level off unmapped",
-			mutate: func(c *Config) { c.Settings.ThinkingMode = catalog.GoogleThinkingLevel },
+			mutate: func(c *Config) { c.Settings.ThinkingMode = api.GoogleThinkingLevel },
 			opts:   &api.Options{ReasoningEffort: api.ReasoningOff},
 			want:   "",
 		},
 		{
 			name:   "level auto",
-			mutate: func(c *Config) { c.Settings.ThinkingMode = catalog.GoogleThinkingLevel },
+			mutate: func(c *Config) { c.Settings.ThinkingMode = api.GoogleThinkingLevel },
 			opts:   &api.Options{ReasoningEffort: api.ReasoningAuto},
 			want:   `{"includeThoughts": true}`,
 		},
 		{
 			name: "level clamps unsupported rung",
 			mutate: func(c *Config) {
-				c.Settings.ThinkingMode = catalog.GoogleThinkingLevel
+				c.Settings.ThinkingMode = api.GoogleThinkingLevel
 				c.ThinkingLevels = api.ThinkingLevelMap{
 					api.ReasoningMedium: nil,
 					api.ReasoningHigh:   api.StringPtr("high"),
@@ -696,5 +695,104 @@ func TestChatStreamSurfacesPromptFeedbackBlock(t *testing.T) {
 	}
 	if !sawError {
 		t.Fatal("blocked prompt did not produce an error chunk")
+	}
+}
+
+// Gemini streams end on EOF; the last candidate of a finished message carries
+// a finishReason, so a body that stops without one was cut mid-answer.
+func TestChatStreamEOFWithoutFinishReasonIsIncomplete(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, want string
+	}{
+		{"cut off", `{"candidates":[{"content":{"parts":[{"text":"Hel"}]}}]}`, types.FinishReasonIncomplete},
+		{"finished", `{"candidates":[{"content":{"parts":[{"text":"Hello"}]},"finishReason":"STOP"}]}`, "stop"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SSRF_WHITELIST", "127.0.0.1")
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte("data: " + tc.body + "\n\n"))
+			}))
+			defer srv.Close()
+
+			client := newTestClient(t, srv.URL, nil)
+			ch, err := client.ChatStream(context.Background(), []api.Message{{Role: "user", Content: "hi"}}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var last types.StreamResponse
+			for ev := range ch {
+				last = ev
+			}
+			if last.ResponseType != types.ResponseTypeAnswer || !last.Done || last.FinishReason != tc.want {
+				t.Fatalf("last event = %+v, want finish reason %q", last, tc.want)
+			}
+		})
+	}
+}
+
+// Tokens read by Gemini's built-in tools (URL context, search, code execution)
+// are reported in toolUsePromptTokenCount, apart from promptTokenCount, and
+// totalTokenCount includes them.
+func TestUsageCountsToolUsePromptTokens(t *testing.T) {
+	client := newTestClient(t, "http://example.invalid", nil)
+	cached := 4
+	got := client.usage(rawUsage{
+		PromptTokenCount:        10,
+		ToolUsePromptTokenCount: 6,
+		CandidatesTokenCount:    5,
+		ThoughtsTokenCount:      3,
+		TotalTokenCount:         24,
+		CachedContentTokenCount: &cached,
+	})
+	if got.PromptTokens != 16 {
+		t.Errorf("PromptTokens = %d, want 16", got.PromptTokens)
+	}
+	if got.CompletionTokens != 8 {
+		t.Errorf("CompletionTokens = %d, want 8", got.CompletionTokens)
+	}
+	if got.TotalTokens != 24 {
+		t.Errorf("TotalTokens = %d, want 24", got.TotalTokens)
+	}
+	if got.CacheReadTokens != 4 || got.CacheMissTokens != 12 {
+		t.Errorf("cache read/miss = %d/%d, want 4/12", got.CacheReadTokens, got.CacheMissTokens)
+	}
+}
+
+func TestUsageWithoutTotalSumsToolUsePromptTokens(t *testing.T) {
+	client := newTestClient(t, "http://example.invalid", nil)
+	got := client.usage(rawUsage{PromptTokenCount: 10, ToolUsePromptTokenCount: 6, CandidatesTokenCount: 5})
+	if got.PromptTokens != 16 || got.TotalTokens != 21 {
+		t.Errorf("PromptTokens/TotalTokens = %d/%d, want 16/21", got.PromptTokens, got.TotalTokens)
+	}
+}
+
+func TestMapFinishReason(t *testing.T) {
+	tests := []struct {
+		reason       string
+		hasToolCalls bool
+		want         string
+	}{
+		{"", false, ""},
+		{"STOP", false, "stop"},
+		{"STOP", true, "tool_calls"},
+		{"MAX_TOKENS", false, "length"},
+		{"SAFETY", false, "content_filter"},
+		{"RECITATION", false, "content_filter"},
+		{"LANGUAGE", false, "content_filter"},
+		{"BLOCKLIST", false, "content_filter"},
+		{"PROHIBITED_CONTENT", false, "content_filter"},
+		{"SPII", false, "content_filter"},
+		{"IMAGE_SAFETY", false, "content_filter"},
+		{"IMAGE_PROHIBITED_CONTENT", false, "content_filter"},
+		{"IMAGE_RECITATION", false, "content_filter"},
+		{"OTHER", false, "other"},
+		{"MALFORMED_FUNCTION_CALL", false, "malformed_function_call"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.reason, func(t *testing.T) {
+			if got := mapFinishReason(tt.reason, tt.hasToolCalls); got != tt.want {
+				t.Fatalf("mapFinishReason(%q, %v) = %q, want %q", tt.reason, tt.hasToolCalls, got, tt.want)
+			}
+		})
 	}
 }

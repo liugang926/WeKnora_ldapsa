@@ -373,6 +373,8 @@ func runDirectoryPeriodicActualHTTP(t *testing.T, pg bool) {
 				nil,
 				nil,
 				nil,
+				nil, // No host project directories in this chat fixture.
+				nil, // No background activities.
 			)
 			gin.SetMode(gin.TestMode)
 			router := gin.New()

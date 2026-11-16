@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/golang-migrate/migrate/v4"
+	sqlite3migrate "github.com/golang-migrate/migrate/v4/database/sqlite3"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,6 +24,8 @@ var versionedSQLiteTables = []string{
 	"task_pending_ops",
 	"task_dead_letters",
 	"system_settings",
+	"model_catalog_configs",
+	"chunk_images",
 	"knowledge_processing_spans",
 	"knowledge_tag_relations",
 	"browser_devices",
@@ -29,6 +33,7 @@ var versionedSQLiteTables = []string{
 	"browser_task_interruptions",
 	"fork_snapshot_leases",
 	"mcp_endpoints",
+	"mcp_metadata",
 	"message_artifacts",
 	"directories",
 	"directory_identities",
@@ -85,11 +90,27 @@ var versionedSQLiteTables = []string{
 	"steer_consumption_origins",
 	"steer_control_versions",
 	"message_completion_input_manifests",
+	"tenant_skills",
+	"tenant_skill_snapshots",
+	"tenant_skill_catalog",
+	"tenant_user_env_vars",
+	"agent_prompts",
+	"agent_run_suspensions",
+	"agent_collaborations",
+	"agent_grants",
+	"automations",
+	"automation_runs",
+	"notifications",
+	"session_sandbox_assignments",
+	"sandbox_user_machines",
 }
 
 // versionedSQLiteColumns maps each existing table to the columns that the
 // versioned migrations add and the SQLite baseline was missing.
 var versionedSQLiteColumns = map[string][]string{
+	"automations":                      {"model_id"},                                                  // 000115
+	"automation_runs":                  {"execution_duration_ms"},                                     // 000114
+	"model_catalog_configs":            {"version", "overlay", "history", "updated_by", "updated_at"}, // 000097
 	"nextcloud_capacity_reservations":  {"protocol_version"},
 	"nextcloud_capacity_write_intents": {"physical_path", "object_identity", "orphan_charge_bytes"},
 	"memory_subjects": {
@@ -117,13 +138,27 @@ var versionedSQLiteColumns = map[string][]string{
 		"usage",
 		"sandbox_checkpoint",
 		"context_checkpoint",
-		"source_lineage",
+		"source_lineage", "run_state",
 	}, // 000034/085/097/105/132
 	"sessions": {
 		"title_source_lineage", "description_source_lineage", "title_revision", // PostgreSQL133/SQLite52
+		"kind",
 		"parent_session_id", "forked_from_message_id", "fork_bootstrap", // 000097
-		"sandbox_config_tenant_id", // 000108
+		"sandbox_config_tenant_id", // 000027
+		"host_workspace_dir",       // 000095
+		"owner_auth_source",        // 000112
 	},
+	"session_sandbox_assignments": {"released_at", "cleanup_due_at"}, // 000113
+	"im_channels":                 {"locale"},                        // 000096
+	"chunks":                      {"source_locators"},               // 000099
+	"mcp_services":                {"usage_instructions"},            // 000092
+	"tenant_skills": {
+		"envs", "served", "catalog_id", "install_session_id", "install_message_id",
+	}, // 000094
+	"tenant_skill_snapshots": {"planned_name"}, // 000094
+	"tenant_user_env_vars": {
+		"principal_type", "principal_id", "sandbox_config_id", "skill_id", "name", "value",
+	}, // 000094
 	"tenant_invitations": {
 		"token",
 		"accepted_count",
@@ -136,7 +171,7 @@ var versionedSQLiteColumns = map[string][]string{
 		"principal_id",
 	}, // 000064
 	"mcp_tool_approvals": {
-		"enabled",
+		"enabled", "risk", "observed_risk",
 	}, // 000091
 	"message_artifacts": {
 		"deleted_at",
@@ -357,7 +392,16 @@ func TestSQLiteMigrationsCreateVersionedSchema(t *testing.T) {
 
 	require.True(t, sqliteIndexExists(t, db, "idx_messages_session_created_id"),
 		"SQLite migrations must add the session/created_at index") // 000106
+	require.True(t, sqliteIndexExists(t, db, "idx_messages_live_attachments"),
+		"SQLite migrations must index live user message references")
 	assertSQLiteAgentHistoryQueriesUseTheIndex(t, db)
+
+	var catalogVersion int
+	var catalogOverlay string
+	catalogRow := db.QueryRow("SELECT version, overlay FROM model_catalog_configs WHERE id = 1")
+	require.NoError(t, catalogRow.Scan(&catalogVersion, &catalogOverlay))
+	require.Zero(t, catalogVersion)
+	require.JSONEq(t, `{"providers":{}}`, catalogOverlay)
 
 	assertSQLiteShareLinkInvitationsWork(t, db)
 	assertSQLiteMCPOAuthPrincipalUpsertWorks(t, db)
@@ -520,6 +564,56 @@ func TestSQLiteMigrationsUpgradeV32BackfillsNextcloudEventDispatch(t *testing.T)
 	require.NotEmpty(t, nextAttemptAt)
 	require.Empty(t, lastErrorCode)
 	require.NotEmpty(t, updatedAt)
+}
+
+// The allocation migration must come back off cleanly: both tables disappear,
+// and applying it again restores them including the partial indexes.
+func TestSQLiteSandboxAllocationMigrationRollsBack(t *testing.T) {
+	repoRoot := sqliteRepoRoot(t)
+	chdirAndRestore(t, repoRoot)
+
+	dbPath := filepath.Join(t.TempDir(), "down.db")
+	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: dbPath}))
+
+	db := openSQLiteDB(t, dbPath)
+	version, dirty := sqliteMigrationState(t, db)
+	require.Equal(t, latestSQLiteMigration(t, repoRoot), version)
+	require.False(t, dirty)
+	for _, table := range []string{"session_sandbox_assignments", "sandbox_user_machines"} {
+		require.Truef(t, sqliteTableExists(t, db, table), "up must create %s", table)
+	}
+	require.True(t, sqliteIndexExists(t, db, "idx_session_sandbox_assignments_live_machine"))
+	require.True(t, sqliteIndexExists(t, db, "idx_session_sandbox_assignments_cleanup_due"))
+	require.True(t, sqliteIndexExists(t, db, "idx_sandbox_user_machines_empty"))
+	require.NoError(t, db.Close())
+
+	sqlDB, err := sql.Open("sqlite3", dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	driver, err := sqlite3migrate.WithInstance(sqlDB, &sqlite3migrate.Config{})
+	require.NoError(t, err)
+	m, err := migrate.NewWithDatabaseInstance("file://migrations/sqlite", "sqlite3", driver)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = m.Close() })
+
+	// Target the allocation migration even when newer migrations exist.
+	require.NoError(t, m.Migrate(112))
+	version, dirty = sqliteMigrationState(t, sqlDB)
+	require.Equal(t, 112, version)
+	require.False(t, dirty)
+	for _, table := range []string{"session_sandbox_assignments", "sandbox_user_machines"} {
+		require.Falsef(t, sqliteTableExists(t, sqlDB, table), "down must drop %s", table)
+	}
+	require.True(t, sqliteColumnExists(t, sqlDB, "sessions", "owner_auth_source"),
+		"rolling back the allocation tables keeps the owner source of 000112")
+
+	require.NoError(t, m.Migrate(113))
+	version, dirty = sqliteMigrationState(t, sqlDB)
+	require.Equal(t, 113, version)
+	require.False(t, dirty)
+	require.True(t, sqliteTableExists(t, sqlDB, "session_sandbox_assignments"))
+	require.True(t, sqliteTableExists(t, sqlDB, "sandbox_user_machines"))
+	require.True(t, sqliteIndexExists(t, sqlDB, "idx_session_sandbox_assignments_live_machine"))
 }
 
 func sqliteRepoRoot(t *testing.T) string {
@@ -707,4 +801,41 @@ func copySQLiteMigrationsThrough(t *testing.T, repoRoot string, maxVersion int) 
 	}
 	require.Greater(t, copied, 0)
 	return dest
+}
+
+func TestSQLiteSessionKindBackfillAndRollback(t *testing.T) {
+	repoRoot := sqliteRepoRoot(t)
+	chdirAndRestore(t, copySQLiteMigrationsThrough(t, repoRoot, 104))
+	dbPath := filepath.Join(t.TempDir(), "session-kind.db")
+	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: dbPath}))
+	db := openSQLiteDB(t, dbPath)
+	configs := []any{
+		nil, "invalid JSON", `{"agent_id":"builtin-weknora-assistant"}`, `{}`, `null`, `[]`,
+		`{"agent_id":"another-agent"}`, `{"agent_id":`,
+	}
+	for i, config := range configs {
+		_, err := db.Exec("INSERT INTO sessions (id, tenant_id, agent_config) VALUES (?, 1, ?)", fmt.Sprint(i), config)
+		require.NoError(t, err)
+	}
+	chdirAndRestore(t, repoRoot)
+	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: dbPath}))
+	for i := range configs {
+		var kind string
+		require.NoError(t, db.QueryRow("SELECT kind FROM sessions WHERE id = ?", fmt.Sprint(i)).Scan(&kind))
+		if i == 2 {
+			require.Equal(t, "assistant", kind)
+		} else {
+			require.Empty(t, kind)
+		}
+	}
+	require.True(t, sqliteIndexExists(t, db, "idx_sessions_tenant_kind_user_updated"))
+	down, err := os.ReadFile(filepath.Join(repoRoot, "migrations/sqlite/000105_session_kind.down.sql"))
+	require.NoError(t, err)
+	_, err = db.Exec(string(down))
+	require.NoError(t, err)
+	require.False(t, sqliteColumnExists(t, db, "sessions", "kind"))
+	require.False(t, sqliteIndexExists(t, db, "idx_sessions_tenant_kind_user_updated"))
+	var count int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM sessions").Scan(&count))
+	require.Equal(t, len(configs), count)
 }

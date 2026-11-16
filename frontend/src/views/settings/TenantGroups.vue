@@ -196,6 +196,6 @@ watch(() => props.tenantId, () => void loadGroups(), { immediate: true })
 .group-cell span, .candidate span { color: var(--td-text-color-placeholder); font-size: var(--app-text-sm); overflow-wrap: anywhere; }
 .member-counts { display: flex; flex-wrap: wrap; gap: 6px; }
 .candidate-list { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow: auto; margin: 14px 0; }
-.candidate { width: 100%; padding: 10px 12px; border: 1px solid var(--td-component-border); border-radius: 6px; background: transparent; text-align: left; cursor: pointer; }
+.candidate { width: 100%; padding: 10px 12px; border: 1px solid var(--td-component-border); border-radius: var(--app-radius-sm); background: transparent; text-align: left; cursor: pointer; }
 .candidate:hover, .candidate.selected { border-color: var(--td-brand-color); background: var(--td-brand-color-light); }
 </style>

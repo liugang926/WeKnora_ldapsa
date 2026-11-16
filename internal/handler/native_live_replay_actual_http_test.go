@@ -130,7 +130,7 @@ func nativeRunningHandler(
 	models interfaces.ModelService,
 	files interfaces.FileService,
 ) *sessionhandler.Handler {
-	return sessionhandler.NewHandler(
+	h := sessionhandler.NewHandler(
 		sessions,
 		f.messages,
 		nil,
@@ -163,7 +163,11 @@ func nativeRunningHandler(
 		nil,
 		nil,
 		nil,
+		nil, // Host project directories.
+		nil, // Background work.
 	)
+	h.ResourceURLResolver = stubRequestResolver
+	return h
 }
 
 func nativeRunningRouter(ctx context.Context, h *sessionhandler.Handler) *gin.Engine {
@@ -232,12 +236,15 @@ func TestNativeLiveReplayActualPausedProducerReceiverAndRedisForgery(t *testing.
 				nil,
 				nil,
 				nil,
+				service.HostSandboxManager{},
 				nil,
 				nil,
 				nil,
 				service.NewSessionBusyGate(),
 				nil,
 				nil,
+				nil, // Background work is outside this HTTP flow.
+				nil, // No interactive prompt is issued.
 			)
 			service.ConfigureMessageSourceLineage(f.messages, sessions, &service.SessionForkService{}, manager, f.guard)
 			mini := miniredis.RunT(t)

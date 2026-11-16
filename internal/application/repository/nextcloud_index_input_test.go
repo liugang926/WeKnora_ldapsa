@@ -105,3 +105,30 @@ func TestNextcloudIndexInputRejectsPresentedCrossScopeProof(t *testing.T) {
 		}))
 	}
 }
+
+func TestNextcloudSummaryColumnWriteSealsOnlyItsOutputsAtomically(t *testing.T) {
+	f, ctx, _ := nextcloudIndexInputFixture(t)
+	proof := KnowledgeBuildInputProofFromContext(ctx)
+	repo := NewKnowledgeRepository(f.db)
+	var original types.Knowledge
+	require.NoError(t, f.db.First(&original, "id = ?", proof.KnowledgeID).Error)
+	err := repo.UpdateKnowledgeColumns(ctx, proof.KnowledgeID, map[string]interface{}{
+		"description": "new summary", "title": "unrelated title",
+	})
+	require.ErrorIs(t, err, ErrKnowledgeInputChanged)
+
+	require.NoError(t, f.db.Exec(`CREATE TRIGGER fail_summary_receipt BEFORE UPDATE ON knowledge_input_material_receipts
+		WHEN NEW.row_kind = 'knowledge' BEGIN SELECT RAISE(ABORT, 'receipt unavailable'); END`).Error)
+	values := map[string]interface{}{"description": "new summary", "summary_status": types.SummaryStatusCompleted}
+	require.ErrorContains(t, repo.UpdateKnowledgeColumns(ctx, proof.KnowledgeID, values), "receipt unavailable")
+	var unchanged types.Knowledge
+	require.NoError(t, f.db.First(&unchanged, "id = ?", proof.KnowledgeID).Error)
+	require.Equal(t, original.Description, unchanged.Description)
+	require.Equal(t, original.Title, unchanged.Title)
+	require.Equal(t, original.SummaryStatus, unchanged.SummaryStatus)
+	require.NoError(t, CheckKnowledgeProducerInput(ctx))
+
+	require.NoError(t, f.db.Exec("DROP TRIGGER fail_summary_receipt").Error)
+	require.NoError(t, repo.UpdateKnowledgeColumns(ctx, proof.KnowledgeID, values))
+	require.NoError(t, CheckKnowledgeProducerInput(ctx))
+}

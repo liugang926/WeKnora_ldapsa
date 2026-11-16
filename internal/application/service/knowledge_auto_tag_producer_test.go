@@ -390,7 +390,6 @@ func runKnowledgeAutoTagActualEnqueueOriginalActorManifestAndSQLWriter(t *testin
 				knowledgeRepo:   knowledge,
 				tagRepo:         tags,
 				kbService:       &autoTagKBService{kb: &kb},
-				chunkService:    &autoTagChunkService{chunks: []*types.Chunk{chunk}},
 				modelService:    &stubModelService{chatModel: model},
 				knowledgeInputs: store,
 				lineageChecker:  checker,

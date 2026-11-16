@@ -74,13 +74,24 @@ type ContextConfig struct {
 	SummarizeThreshold int `json:"summarize_threshold"`
 }
 
+// SessionKindAssistant keeps assistant conversations out of ordinary chat listings.
+const SessionKindAssistant = "assistant"
+
+// SessionKindAgentDelegated retains a child transcript outside ordinary listings.
+const SessionKindAgentDelegated = "agent_delegated"
+
+// IsValidSessionKind restricts API kinds to ordinary chats (empty) and assistant history.
+func IsValidSessionKind(kind string) bool {
+	return kind == "" || kind == SessionKindAssistant
+}
+
 // Session represents the session
 type Session struct {
 	NextcloudScoped bool `json:"nextcloud_scoped,omitempty" gorm:"not null;default:false"`
 	// ID
-	ID string `json:"id"          gorm:"type:varchar(36);primaryKey"`
+	ID string `json:"id"          gorm:"type:varchar(36);primaryKey" extensions:"x-agent=session_id,x-agent-response"`
 	// Title
-	Title              string         `json:"title"`
+	Title              string         `json:"title" extensions:"x-agent,x-agent-response"`
 	TitleSourceLineage *SourceLineage `json:"-" gorm:"type:jsonb;column:title_source_lineage"`
 	TitleRevision      uint64         `json:"-" gorm:"column:title_revision;not null;default:0"`
 	TitleAuthorized    bool           `json:"-" gorm:"-"`
@@ -90,11 +101,20 @@ type Session struct {
 	DescriptionAuthorized    bool           `json:"-" gorm:"-"`
 	// Workspace ID
 	TenantID uint64 `json:"tenant_id"   gorm:"index"`
+	// Kind is empty for ordinary chats and SessionKindAssistant for assistant
+	// conversations; it is set at creation and never updated.
+	Kind string `json:"kind" gorm:"column:kind;type:varchar(32);not null;default:''"`
 	// UserID is the owner scope for this session. WeKnora user UUIDs, API
 	// external-user principals, and embed visitor principals all use this column.
 	UserID string `json:"user_id,omitempty" gorm:"type:varchar(512);index"`
+	// OwnerAuthSource records, server-side, how UserID was authenticated when
+	// the session was created or its owner first bound (AuthSource*).
+	// Per-user sandbox allocation reads it; client input never sets it
+	// (CreateSession overwrites). Empty on rows created before the column
+	// existed, which means "unknown".
+	OwnerAuthSource string `json:"owner_auth_source,omitempty" gorm:"type:varchar(32);not null;default:''"`
 	// IsPinned indicates whether the session is pinned in the list.
-	IsPinned bool `json:"is_pinned" gorm:"default:false"`
+	IsPinned bool `json:"is_pinned" gorm:"default:false" extensions:"x-agent,x-agent-response"`
 	// PinnedAt records when the session was pinned; nil when not pinned.
 	PinnedAt *time.Time `json:"pinned_at,omitempty"`
 
@@ -125,6 +145,15 @@ type Session struct {
 	// created by an agent the session's workspace owns, plus pins written
 	// before the column existed.
 	SandboxConfigTenantID uint64 `json:"-" gorm:"column:sandbox_config_tenant_id;type:bigint;default:0"`
+
+	// HostWorkspaceDir is the user-selected project directory this session
+	// operates in, for the WeKnora Lite host sandbox only. Empty means the session
+	// gets an auto-allocated workspace instead.
+	//
+	// Written once at creation and never updated: re-pointing a live session
+	// at a different directory would leave its transcript describing files
+	// that are no longer there. Standard edition never writes it.
+	HostWorkspaceDir string `json:"host_workspace_dir,omitempty" gorm:"type:varchar(1024)"`
 
 	// ParentSessionID names the session this one was forked from. Empty for
 	// ordinary sessions. Deliberately not a foreign key: the parent may be
@@ -160,8 +189,8 @@ type Session struct {
 	// AgentConfig       *SessionAgentConfig `json:"agent_config"       gorm:"type:jsonb"` // Agent 配置（会话级别，仅存储enabled和knowledge_bases）
 	// ContextConfig     *ContextConfig      `json:"context_config"     gorm:"type:jsonb"` // 上下文管理配置（可选）
 
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	CreatedAt time.Time      `json:"created_at" extensions:"x-agent,x-agent-response"`
+	UpdatedAt time.Time      `json:"updated_at" extensions:"x-agent,x-agent-response"`
 	DeletedAt gorm.DeletedAt `json:"deleted_at" gorm:"index"`
 
 	// IMPlatform is the originating IM platform (e.g. "feishu", "wecom") when
@@ -264,6 +293,7 @@ func SanitizeClientSessionDescription(incoming, existing string) string {
 // (e.g. "feishu", "wechat"). IM and embed sources are also Admin+ only.
 // AgentID currently only filters sessions that have an IM channel mapping.
 type SessionListQuery struct {
+	Kind     string
 	TenantID uint64
 	UserID   string
 	Keyword  string
@@ -337,6 +367,7 @@ type SessionLastRequestState struct {
 	AgentID             string         `json:"agent_id,omitempty"`
 	AgentEnabled        bool           `json:"agent_enabled"`
 	ModelID             string         `json:"model_id,omitempty"`
+	ReasoningEffort     string         `json:"reasoning_effort,omitempty"`
 	KnowledgeBaseIDs    []string       `json:"knowledge_base_ids,omitempty"`
 	KnowledgeIDs        []string       `json:"knowledge_ids,omitempty"`
 	TagIDs              []string       `json:"tag_ids,omitempty"`

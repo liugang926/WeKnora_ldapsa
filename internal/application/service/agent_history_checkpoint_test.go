@@ -141,6 +141,36 @@ func TestLoadAgentHistoryTagsEveryMessageWithItsTurn(t *testing.T) {
 	}
 }
 
+// A turn sent as only an image has no stored text. Replaying it empty lets the
+// sanitizer drop the user message and merge the two answers around it.
+func TestLoadAgentHistoryAsksTheUploadOnlyQuestionForAnImageOnlyTurn(t *testing.T) {
+	messages, _, _, _, ctx, session := messageMaterialActualFixture(t)
+	ctx = context.WithValue(ctx, types.LanguageContextKey, "en-US")
+	for i, question := range []*types.Message{
+		{Images: types.MessageImages{{URL: "resource://img"}}},
+		{Content: "question 2"},
+	} {
+		question.SessionID, question.RequestID = session.ID, fmt.Sprintf("upload-history-%d", i)
+		question.Role, question.IsCompleted = "user", true
+		user, err := messages.CreateMessage(ctx, question)
+		require.NoError(t, err)
+		answer, err := messages.CreateMessage(ctx, &types.Message{
+			SessionID: session.ID, RequestID: user.RequestID, Role: "assistant",
+		})
+		require.NoError(t, err)
+		answer.Content, answer.IsCompleted = "answer", true
+		answer.SourceLineage, _ = types.NewCompleteSourceLineage()
+		require.NoError(t, messages.UpdateMessage(ctx, answer))
+	}
+	ctx = WithMessageMaterialOutputBoundary(ctx)
+	defer CloseMessageMaterialOutputBoundary(ctx)
+	got, _, err := LoadAgentHistory(ctx, messages.messageRepo, session.ID, unlimitedBudget, false,
+		messageLineageHistoryAdmission{verifier: messages})
+	require.NoError(t, err)
+
+	require.Equal(t, []string{types.UploadOnlyQuestion("en-US"), "question 2"}, questions(got))
+}
+
 // The turn count no longer bounds history: every turn that fits the budget is
 // replayed, however many there are.
 func TestLoadAgentHistoryIsNotCappedByTurnCount(t *testing.T) {

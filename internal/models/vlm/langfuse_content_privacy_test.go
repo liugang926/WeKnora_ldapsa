@@ -63,11 +63,19 @@ func privacyContexts() []context.Context {
 type privacyVLMSpy struct {
 	ctx       context.Context
 	recording bool
+	opts      *PredictOptions
 }
 
 func (s *privacyVLMSpy) GetModelName() string { return "controlled" }
 func (s *privacyVLMSpy) GetModelID() string   { return "controlled" }
-func (s *privacyVLMSpy) Predict(ctx context.Context, _ [][]byte, prompt string) (string, error) {
+func (s *privacyVLMSpy) Predict(ctx context.Context, images [][]byte, prompt string) (string, error) {
+	return s.PredictWithOptions(ctx, images, prompt, nil)
+}
+
+func (s *privacyVLMSpy) PredictWithOptions(
+	ctx context.Context, _ [][]byte, prompt string, opts *PredictOptions,
+) (string, error) {
+	s.opts = opts
 	s.ctx = ctx
 	s.recording = trace.SpanFromContext(ctx).IsRecording()
 	return prompt, nil
@@ -85,6 +93,12 @@ func TestSourceContentVLMTelemetryBypassPreservesOrdinary(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "PRIVATE_SOURCE_PROMPT", response)
 		require.True(t, spy.ctx == ctx)
+		require.False(t, spy.recording)
+		opts := &PredictOptions{}
+		response, err = wrapper.PredictWithOptions(ctx, nil, "PRIVATE_OPTIONS_PROMPT", opts)
+		require.NoError(t, err)
+		require.Equal(t, "PRIVATE_OPTIONS_PROMPT", response)
+		require.Same(t, opts, spy.opts)
 		require.False(t, spy.recording)
 	}
 	require.NoError(t, mgr.Shutdown(context.Background()))

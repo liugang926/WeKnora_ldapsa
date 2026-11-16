@@ -3,39 +3,108 @@ package storageurl
 import (
 	"context"
 	"encoding/json"
+	"slices"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
 
-// NewRequestRewriter builds the Rewriter for one API request or response stream.
-//
-// ModeHandle yields a disabled Rewriter, so the default path resolves nothing
-// and costs no access-grant rows. The tenant is taken from ctx because a
-// reference may live on a tenant-configured storage backend rather than the
-// process-wide default.
-//
-// No extra authorization gate applies here, unlike the `/files` proxy which
-// rejects KB-restricted API keys. That gate exists because `/files` takes an
-// arbitrary caller-supplied path it cannot bind to a KB allow-list. Here the
-// references come from a response the caller is already authorized to receive,
-// so the server — not the client — chooses which resources get a URL.
+// RequestResolver selects an authorized file service for each reference in an HTTP response.
+type RequestResolver func(context.Context, interfaces.FileService, interfaces.StorageBackendResolver) Resolver
+
+// NewHTTPResourceResolver wires the same live workspace and knowledge-base checks used
+// to publish HTTP search results. The result text can contain caller-supplied handles.
+func NewHTTPResourceResolver(
+	catalog interfaces.ResourceCatalog, tenants interfaces.TenantService, guard *access.NextcloudSourceLineageGuard,
+) RequestResolver {
+	return func(
+		ctx context.Context, fallback interfaces.FileService, backends interfaces.StorageBackendResolver,
+	) Resolver {
+		tenant, _ := types.TenantInfoFromContext(ctx)
+		callerID := types.CallerFromContext(ctx).TenantID
+		if callerID == 0 || catalog == nil || tenants == nil || guard == nil || backends == nil {
+			return nil
+		}
+		if tenant == nil || tenant.ID != callerID {
+			var err error
+			tenant, err = tenants.GetTenantByID(ctx, callerID)
+			if err != nil || tenant == nil || tenant.ID != callerID {
+				return nil
+			}
+		}
+		resolver := NewFileServiceResolver(tenant, fallback, backends)
+		resolver.httpPublication = true
+		return resolver.WithContext(ctx).WithResources(catalog, tenants).
+			WithAuthorization(func(ctx context.Context, reference string) error {
+				return authorizeHTTPResource(ctx, catalog, guard, reference)
+			})
+	}
+}
+
+func authorizeHTTPResource(
+	ctx context.Context, catalog interfaces.ResourceCatalog,
+	guard *access.NextcloudSourceLineageGuard, reference string,
+) error {
+	physical, resource, err := catalog.ResolvePath(ctx, reference)
+	if err != nil {
+		return err
+	}
+	owner := secutils.ParseTenantIDFromStoragePath(physical)
+	if resource != nil {
+		owner = resource.TenantID
+	}
+	if owner == 0 || secutils.ValidateStoragePathTenant(physical, owner) != nil {
+		return access.ErrForbidden
+	}
+	if owner != types.CallerFromContext(ctx).TenantID {
+		ids, err := catalog.ListKnowledgeBaseIDs(ctx, owner, reference)
+		if err != nil {
+			return err
+		}
+		// Only a registered derived resource, explicitly bound to a currently accessible KB,
+		// can select another workspace's storage credentials.
+		if _, handle := types.ParseResourcePath(reference); !handle || resource == nil || len(ids) == 0 ||
+			secutils.ValidateKBScopedStoragePath(physical, owner) != nil {
+			return access.ErrForbidden
+		}
+	}
+	lookup, ok := catalog.(interfaces.ResourceKnowledgeLookup)
+	if !ok {
+		return access.ErrForbidden
+	}
+	owners, known, err := lookup.ListResourceKnowledgeOwners(ctx, owner, reference)
+	if err != nil {
+		return err
+	}
+	if !known || (owner != types.CallerFromContext(ctx).TenantID && len(owners) == 0) {
+		return access.ErrForbidden
+	}
+	scope := access.LineageReadScope{}
+	for _, knowledge := range owners {
+		if knowledge == nil || knowledge.DeletedAt.Valid ||
+			knowledge.TenantID != owner || knowledge.KnowledgeBaseID == "" {
+			return access.ErrForbidden
+		}
+		scope.Targets = append(scope.Targets, &types.SearchTarget{
+			KnowledgeBaseID: knowledge.KnowledgeBaseID, TenantID: owner,
+		})
+	}
+	return guard.CheckWorkspaceRead(ctx, scope)
+}
+
+// NewRequestRewriter builds a response rewriter. Public URLs require a resolver
+// wired to current credentials and catalog bindings. Without it, handles remain
+// available to the authenticated file proxy.
 func NewRequestRewriter(
-	ctx context.Context,
-	mode Mode,
-	defaultSvc interfaces.FileService,
-	storageResolver interfaces.StorageBackendResolver,
+	ctx context.Context, mode Mode, defaultSvc interfaces.FileService,
+	storageResolver interfaces.StorageBackendResolver, resources ...RequestResolver,
 ) *Rewriter {
-	if mode != ModePublic {
+	if mode != ModePublic || len(resources) != 1 || resources[0] == nil {
 		return NewRewriter(nil, "API")
 	}
-	tenant, _ := types.TenantInfoFromContext(ctx)
-	var resolvers []interfaces.StorageBackendResolver
-	if storageResolver != nil {
-		resolvers = append(resolvers, storageResolver)
-	}
-	resolver := NewFileServiceResolver(tenant, defaultSvc, resolvers...).WithContext(ctx)
-	return NewRewriter(resolver, "API")
+	return NewRewriter(resources[0](ctx, defaultSvc, storageResolver), "API")
 }
 
 // RewriteMessagesResponse returns rewritten message copies so callers can keep
@@ -102,6 +171,10 @@ func (w *Rewriter) CopyReferences(ctx context.Context, refs []*types.SearchResul
 		rewritten.Content = w.String(ctx, ref.Content)
 		rewritten.MatchedContent = w.String(ctx, ref.MatchedContent)
 		rewritten.ImageInfo = w.String(ctx, ref.ImageInfo)
+		rewritten.MatchedImages = slices.Clone(ref.MatchedImages)
+		for j := range rewritten.MatchedImages {
+			rewritten.MatchedImages[j].URL = w.Ref(ctx, ref.MatchedImages[j].URL)
+		}
 		out[i] = &rewritten
 	}
 	return out
@@ -120,6 +193,16 @@ func (w *Rewriter) CopyData(ctx context.Context, data map[string]interface{}) ma
 	}
 	out, _ := rewritten.(map[string]interface{})
 	return out
+}
+
+// CopyValue is CopyData for a decoded JSON value of any shape (object, array
+// or scalar). Unchanged values are returned as-is.
+func (w *Rewriter) CopyValue(ctx context.Context, value interface{}) interface{} {
+	if !w.Enabled() {
+		return value
+	}
+	rewritten, _ := w.copyValue(ctx, value, 0)
+	return rewritten
 }
 
 // maxDataDepth bounds recursion into tool-defined metadata. Renderable content

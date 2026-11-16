@@ -49,17 +49,7 @@ if [ "$bsk_source" = "tarball" ]; then
   mkdir -p "$build_dir/source"
   curl -fsSL "https://codeload.github.com/Tencent/BrowserSkill/tar.gz/${source_commit}" \
     | tar -xz --strip-components=1 -C "$build_dir/source"
-  # Materialise a repository snapshot so patch application and the daemon
-  # build below see the same tree shape as the clone path.
-  git -C "$build_dir/source" init -q
-  git -C "$build_dir/source" add -A
-  git -C "$build_dir/source" -c user.email=build@localhost -c user.name=build \
-    commit -qm "BrowserSkill ${source_commit} (tarball snapshot)"
 fi
-for patch in "$repo_root"/patches/browserskill/*.patch; do
-  git -C "$build_dir/source" apply --check "$patch"
-  git -C "$build_dir/source" apply "$patch"
-done
 (
   cd "$build_dir/source"
   npx --yes pnpm@10.17.0 install --frozen-lockfile
@@ -68,8 +58,8 @@ done
 cp "$build_dir/source/apps/extension/dist/browser-skillextension-${extension_version}-chrome.zip" "$output_dir/browser-skill-weknora-${extension_version}.zip"
 cp "$build_dir/source/LICENSE" "$output_dir/BrowserSkill-LICENSE"
 
-# Build the daemon from the same source and apply our navigation-response
-# deadline fix; published CLI binaries do not include this downstream patch.
+# Build the daemon from the same pinned source; upstream has not published a
+# matching CLI 0.3.1 binary.
 cargo_target_dir="${CARGO_TARGET_DIR:-$build_dir/target}"
 mkdir -p "$cargo_target_dir"
 cargo_target_dir="$(cd "$cargo_target_dir" && pwd)"

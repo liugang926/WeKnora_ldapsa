@@ -3,8 +3,10 @@ package service
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
 )
@@ -159,8 +161,19 @@ func TestKnowledgePostProcessWithoutSummaryCompletionFailure(t *testing.T) {
 			}
 			f := attachPostProcessOriginalInputs(t, svc, &repo.wikiEnqueueFailureKnowledgeRepo,
 				svc.kbService.(*wikiEnqueueFailureKBService).kb, svc.chunkRepo.(*wikiEnqueueFailureChunkRepo).chunks)
-			task := postProcessOriginalTask(t, f)
-			err := svc.Handle(f.build, task)
+			db := f.db
+			require.NoError(t, db.Exec(
+				"CREATE UNIQUE INDEX span_tuple ON knowledge_processing_spans(knowledge_id, attempt, span_id)",
+			).Error)
+			migration, err := os.ReadFile("../../../migrations/sqlite/000057_processing_span_original_inputs.up.sql")
+			require.NoError(t, err)
+			require.NoError(t, db.Exec(string(migration)).Error)
+			svc.spanTracker = NewSpanTracker(repository.NewKnowledgeSpanRepository(db), db)
+			ctx := types.WithTaskRetryMetadata(f.build, 0, 3)
+			_, attempt, err := svc.spanTracker.OpenAttempt(ctx, knowledge.ID, "")
+			require.NoError(t, err)
+			task := postProcessOriginalTaskForAttempt(t, f, attempt)
+			err = svc.Handle(ctx, task)
 			require.ErrorIs(t, err, tc.err)
 			require.Empty(t, queue.taskTypes)
 			require.Equal(t, types.ParseStatusProcessing, knowledge.ParseStatus)
@@ -170,9 +183,20 @@ func TestKnowledgePostProcessWithoutSummaryCompletionFailure(t *testing.T) {
 				Count(&handoffs).Error)
 			require.Zero(t, handoffs, "failed or skipped completion must not own child work")
 			if tc.err != nil {
+				status, code, message := rootSpan(t, db, knowledge.ID, attempt)
+				require.Equal(t, types.SpanStatusRunning, status)
+				require.Empty(t, code)
+				require.Empty(t, message)
 				repo.completionErr = nil
-				require.NoError(t, svc.Handle(f.build, task))
-				require.Equal(t, types.ParseStatusCompleted, knowledge.ParseStatus)
+				require.NoError(t, svc.Handle(types.WithTaskRetryMetadata(f.build, 1, 3), task))
+				stored, err := f.s.repo.GetKnowledgeByIDOnly(f.build, knowledge.ID)
+				require.NoError(t, err)
+				require.Equal(t, types.ParseStatusCompleted, stored.ParseStatus)
+				require.Zero(t, stored.PendingSubtasksCount)
+				status, code, message = rootSpan(t, db, knowledge.ID, attempt)
+				require.Equal(t, types.SpanStatusDone, status)
+				require.Empty(t, code)
+				require.Empty(t, message)
 				require.Equal(t, []string{types.TypeKnowledgeAutoTag}, queue.taskTypes)
 				assertPostProcessQueuedOriginals(t, f, queue)
 				var op types.TaskPendingOp

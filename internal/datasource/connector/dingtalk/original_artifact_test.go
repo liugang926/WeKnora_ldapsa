@@ -200,3 +200,20 @@ func TestOriginalArtifactInvocationBinding(t *testing.T) {
 	_, err = VerifyOriginalFetchedArtifactForInvocation(invocation, &decoded)
 	require.Error(t, err)
 }
+
+// FolderPublicationFixture supplies two identically named documents under different
+// DingTalk folders. Only the remote API is simulated; FetchAll seals the items.
+func FolderPublicationFixture(firstFolder string, preserve bool) (*Connector, *types.DataSourceConfig) {
+	connector, api, cfg := artifactFixture()
+	api.workspaces[0].Name = "Workspace"
+	api.nodes["root"][0].Name = firstFolder
+	api.nodes["root"] = append(api.nodes["root"], node{ID: "other", Type: "FOLDER", WorkspaceID: "w", Name: "Other"})
+	other := api.nodes["folder"][0]
+	other.ID = "second"
+	api.nodes["other"] = []node{other}
+	api.blocks[other.ID] = api.blocks["doc"]
+	if preserve {
+		cfg.Settings["preserve_folder_structure"] = true
+	}
+	return connector, cfg
+}

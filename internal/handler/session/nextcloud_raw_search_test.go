@@ -30,12 +30,12 @@ type rawSearchSessionStub struct {
 }
 
 func (s *rawSearchSessionStub) SearchKnowledge(context.Context, []string, []string,
-	[]types.TagScope, string,
-) ([]*types.SearchResult, error) {
+	[]types.TagScope, string, *types.KnowledgeSearchOptions,
+) (*types.RetrievalResult, error) {
 	if s.onSearch != nil {
 		s.onSearch()
 	}
-	return s.results, nil
+	return &types.RetrievalResult{Results: s.results}, nil
 }
 
 type rawSearchKnowledgeStub struct {

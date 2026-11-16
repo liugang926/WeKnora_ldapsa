@@ -82,6 +82,27 @@ func TestRAGSourceLineageCheckedSnapshotReauthorizesConcurrentSourceAddition(t *
 	}
 }
 
+func TestWeKnoraACLSourceLineageRefusalInvalidatesPendingAuthorization(t *testing.T) {
+	var turn *RAGSourceLineage
+	turn = NewWeKnoraACLSourceLineage(func(context.Context, *SourceLineage) error {
+		turn.RefuseOutput() // A subscriber rejects the prefix while the snapshot is being checked.
+		return nil
+	})
+	if err := turn.Add(UnknownSourceLineage()); err != nil {
+		t.Fatalf("unexpected rejection of legacy input: %v", err)
+	}
+	if _, err := turn.CheckedSnapshot(context.Background()); !errors.Is(err, ErrSourceLineageUnknown) {
+		t.Fatalf("refused prefix passed the pending check: %v", err)
+	}
+	complete, _ := NewCompleteSourceLineage()
+	if err := turn.Add(complete); !errors.Is(err, ErrSourceLineageUnknown) {
+		t.Fatalf("accepted new input after refusal: %v", err)
+	}
+	if err := turn.Snapshot().RequireComplete(); !errors.Is(err, ErrSourceLineageUnknown) {
+		t.Fatalf("refused prefix produced a reusable receipt: %v", err)
+	}
+}
+
 func TestWeKnoraACLSourceLineageNormalizesUnknownWithoutDroppingKnownSources(t *testing.T) {
 	checks := 0
 	turn := NewWeKnoraACLSourceLineage(func(_ context.Context, proof *SourceLineage) error {

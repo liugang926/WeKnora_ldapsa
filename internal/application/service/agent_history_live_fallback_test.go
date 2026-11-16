@@ -68,6 +68,8 @@ func (e *safeCurrentTurnEngine) SetWeKnoraACLSourceLineageVerifier(check func(co
 // SetRoundGuard retains the actual current Agent grant at execution.
 func (e *safeCurrentTurnEngine) SetRoundGuard(check func(context.Context) error) { e.round = check }
 
+func (e *safeCurrentTurnEngine) SetRunMode(types.RunMode) {}
+
 func (e *safeCurrentTurnEngine) SetContextCheckpointSink(types.ContextCheckpointSink) {
 	e.checkpointCalls++
 }
@@ -79,6 +81,8 @@ type safeCurrentTurnAgent struct {
 	excluded      bool
 	sandboxCalls  int
 }
+
+var _ sessionAttachmentStager = (*safeCurrentTurnAgent)(nil)
 
 func (a *safeCurrentTurnAgent) CreateAgentEngine(
 	_ context.Context,
@@ -108,6 +112,7 @@ func (a *safeCurrentTurnAgent) stageSessionAttachments(
 	string,
 	uint64,
 	types.MessageAttachments,
+	sandbox.WorkspaceLayout,
 ) ([]stagedSessionAttachment, error) {
 	return nil, nil
 }

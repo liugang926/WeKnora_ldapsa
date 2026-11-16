@@ -39,6 +39,12 @@ packaged CLI with all application readers stopped. The app has `AUTO_MIGRATE=fal
 Production releases require local/PR tests and review before
 merging; image compilation does not replace behavioral acceptance.
 
+The v0.9.0 bundle upgrades ParadeDB from 0.22.6 to 0.25.11 on PostgreSQL 17.
+The installed protocol-2 updater uses the explicit PostgreSQL reference and
+config digest in the manifest. Recovery uses the previous release's image IDs
+and its cold backup, including the database files from before the extension
+upgrade.
+
 The production server does not need a GitHub token, inbound GitHub webhook,
 build toolchain, Docker Hub access, or a self-hosted Actions runner. The fork is
 public; release assets contain code/images only, never runtime secrets/data.

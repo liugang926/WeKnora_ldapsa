@@ -103,16 +103,52 @@ type EditSandboxFileInput struct {
 // EditSandboxFileTool applies an exact string replacement to a sandbox file.
 type EditSandboxFileTool struct {
 	BaseTool
+	sessionBound
 	editor SandboxFileEditor
 }
 
 // NewEditSandboxFileTool constructs the tool. `editor` MUST NOT be nil.
 func NewEditSandboxFileTool(editor SandboxFileEditor) *EditSandboxFileTool {
 	return &EditSandboxFileTool{
-		BaseTool: editSandboxFileTool,
-		editor:   editor,
+		BaseTool: BaseTool{
+			name:   editSandboxFileTool.name,
+			schema: editSandboxFileTool.schema,
+		},
+		editor: editor,
 	}
 }
+
+// Description is built from the session sandbox layout so host paths never
+// hard-code /workspace.
+func (t *EditSandboxFileTool) Description() string {
+	layout := t.boundLayout()
+	if layout.IsHost() {
+		return fmt.Sprintf(hostEditSandboxFileDescription, layoutRootOrGeneric(layout))
+	}
+	return rewriteRemoteWorkspaceCopy(editSandboxFileTool.description, layout)
+}
+
+// Parameters rewrites workspace paths in the schema to match the session layout.
+func (t *EditSandboxFileTool) Parameters() json.RawMessage {
+	return schemaForLayout(editSandboxFileTool.schema, t.boundLayout())
+}
+
+func (t *EditSandboxFileTool) boundLayout() sandbox.WorkspaceLayout {
+	if t == nil {
+		return sandbox.RemoteWorkspaceLayout()
+	}
+	return t.describeLayout(t.editor)
+}
+
+const hostEditSandboxFileDescription = "Apply exact text replacements to an existing text file in %s, " +
+	"or in a directory the user has already approved for this session. " +
+	"Paths outside that are refused; use shell_exec when the user should be asked to open a new directory.\n" +
+	"Read the relevant content first. Send edits as an array, even for one replacement. \n" +
+	"Every old_string matches the original file, must be unique unless replace_all=true, " +
+	"and must not overlap another edit. \n" +
+	"Include enough surrounding text to identify the intended occurrence.\n" +
+	"All replacements are validated before writing; a failed match leaves the file unchanged. " +
+	"The result includes a diff. Use write_sandbox_file for new files."
 
 // Execute reads the file, applies the replacement, and writes it back.
 func (t *EditSandboxFileTool) Execute(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
@@ -133,14 +169,6 @@ func (t *EditSandboxFileTool) Execute(ctx context.Context, args json.RawMessage)
 		}, nil
 	}
 
-	trimmed := strings.TrimSpace(input.Path)
-	if trimmed == "" {
-		return &types.ToolResult{
-			Success: false,
-			Error:   "path is required; edit a file inside the session sandbox (not /workspace/input)",
-		}, nil
-	}
-
 	sessionID := resolveSessionID(ctx)
 	if sessionID == "" {
 		return &types.ToolResult{
@@ -149,12 +177,28 @@ func (t *EditSandboxFileTool) Execute(ctx context.Context, args json.RawMessage)
 		}, nil
 	}
 
-	clean := sandbox.ResolveWorkspacePath(trimmed)
-	rootDir, ok := matchingWritableRoot(clean)
+	layout, layoutErr := executeWorkspaceLayout(ctx, sessionID, t.editor)
+	if layoutErr != nil {
+		return layoutErr, nil
+	}
+
+	trimmed := strings.TrimSpace(input.Path)
+	if trimmed == "" {
+		return &types.ToolResult{
+			Success: false,
+			Error: fmt.Sprintf(
+				"path is required; edit a file inside the session sandbox (not %s)",
+				modelSafeLayoutPath(layout.InputDir, "the attachment directory"),
+			),
+		}, nil
+	}
+
+	clean := resolveIn(layout, trimmed)
+	rootDir, ok := writableRootIn(layout, clean)
 	if !ok {
 		return &types.ToolResult{
 			Success: false,
-			Error:   workspaceWriteScopeError(input.Path),
+			Error:   writeScopeErrorIn(layout, input.Path),
 		}, nil
 	}
 
@@ -204,7 +248,8 @@ func (t *EditSandboxFileTool) Execute(ctx context.Context, args json.RawMessage)
 	if isBinaryShellOutput(string(raw)) {
 		return &types.ToolResult{
 			Success: false,
-			Error:   "binary files cannot be edited; write a text script and have it produce binary artifacts under /workspace/output",
+			Error: "binary files cannot be edited; write a text script and have it produce binary artifacts under " +
+				modelSafeLayoutPath(layout.OutputDir, "the artifact output directory"),
 		}, nil
 	}
 
@@ -288,7 +333,7 @@ func (t *EditSandboxFileTool) Execute(ctx context.Context, args json.RawMessage)
 	return &types.ToolResult{
 		Success:     true,
 		Output:      output,
-		OutputFiles: sandboxOutputLinks(clean),
+		OutputFiles: sandboxOutputLinksIn(layoutOutputDir(layout), clean),
 		Data:        data,
 	}, nil
 }
@@ -326,7 +371,11 @@ func applySandboxEdits(content string, edits []SandboxEdit) (string, int, error)
 		if err := validateSandboxEdit(e, i, multi); err != nil {
 			return "", 0, err
 		}
-		found := indexAllNonOverlapping(content, e.OldString)
+		step := 1 // Uniqueness includes occurrences that overlap each other.
+		if e.ReplaceAll {
+			step = len(e.OldString)
+		}
+		found := indexSandboxMatches(content, e.OldString, step)
 		if len(found) == 0 {
 			return "", 0, notFoundSandboxEditError(i, multi)
 		}
@@ -366,14 +415,21 @@ func applySandboxEdits(content string, edits []SandboxEdit) (string, int, error)
 // counting the same way strings.Count does: after a match, scanning resumes
 // past it rather than one byte in.
 func indexAllNonOverlapping(content, sub string) []int {
+	return indexSandboxMatches(content, sub, len(sub))
+}
+
+func indexSandboxMatches(content, sub string, step int) []int {
 	var found []int
+	if sub == "" {
+		return found
+	}
 	for offset := 0; ; {
 		i := strings.Index(content[offset:], sub)
 		if i < 0 {
 			return found
 		}
 		found = append(found, offset+i)
-		offset += i + len(sub)
+		offset += i + step
 	}
 }
 

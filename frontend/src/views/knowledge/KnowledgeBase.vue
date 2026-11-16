@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useAssistantDataChange } from '@/utils/assistantDataChange';
 import { ref, onMounted, onUnmounted, watch, reactive, computed, nextTick } from "vue";
 import { MessagePlugin } from "tdesign-vue-next";
 import DocContent from "@/components/doc-content.vue";
@@ -49,6 +50,7 @@ import FAQEntryManager from './components/FAQEntryManager.vue';
 import DocumentListView from './components/DocumentListView.vue';
 import DocumentCardView from './components/DocumentCardView.vue';
 import DocumentBatchBar from './components/DocumentBatchBar.vue';
+import AssistantActionsButton from '@/components/assistant/AssistantActionsButton.vue';
 import KbUploadSourceDropdown from './components/KbUploadSourceDropdown.vue';
 import KbFolderTree from './components/KbFolderTree.vue';
 import BatchTagDialog from './components/BatchTagDialog.vue';
@@ -56,24 +58,37 @@ import type { KnowledgeProcessOverrides } from '@/types/knowledgeProcess';
 import { useUploadConfirmStore, type UploadConfirmResult } from '@/stores/uploadConfirm';
 import { useUploadTasksStore } from '@/stores/uploadTasks';
 import WikiBrowser from './wiki/WikiBrowser.vue';
+import ImageGallery from './gallery/ImageGallery.vue';
 import { getWikiStats } from '@/api/wiki';
 import {
   isKnowledgeParseInFlight,
   knowledgeNeedsStatusPolling,
   shouldRefreshWikiStatusAfterKnowledgePoll,
 } from './wikiStatusRefresh';
+import { stalledMinutes, STALLED_POLL_INTERVAL_MS } from '@/utils/knowledgeProcessingStall';
 import { listMoveTargets, moveKnowledge, getKnowledgeMoveProgress } from '@/api/knowledge-base';
 import { resolveKnowledgeDownloadFileName } from './knowledgeDownloadFileName';
 import {
   buildUploadFileName,
   canMoveFolderTo,
+  childFolders,
   folderBreadcrumbs as buildFolderBreadcrumbs,
+  folderDocumentCounts,
   folderPathExists as folderExistsInTree,
   isFilteringDocuments,
   ROOT_FOLDER_PATH,
 } from './folderTree';
+import {
+  DEFAULT_DOCUMENT_SORT,
+  DOCUMENT_SORT_OPTIONS,
+  getDocumentSortOption,
+  getDocumentSortParams,
+  type DocumentSortOption,
+  type DocumentSortValue,
+} from './documentSorting';
 import { useI18n } from 'vue-i18n';
 import { useMarqueeSelect } from '@/hooks/useMarqueeSelect';
+import { useAssistantPageContext } from '@/composables/useAssistantPageContext';
 import type { ParserEngineInfo } from '@/api/system';
 const route = useRoute();
 const { t } = useI18n();
@@ -84,7 +99,7 @@ const kbLoading = ref(false);
 const docListLoading = ref(true);
 const isFAQ = computed(() => (kbInfo.value?.type || '') === 'faq');
 const isWiki = computed(() => !!kbInfo.value?.indexing_strategy?.wiki_enabled);
-const validTabs = ['documents', 'wiki', 'graph'] as const
+const validTabs = ['documents', 'wiki', 'graph', 'gallery'] as const
 type KbTab = typeof validTabs[number]
 const initTab = validTabs.includes(route.query.tab as any) ? (route.query.tab as KbTab) : 'documents'
 const activeKbTab = ref<KbTab>(initTab);
@@ -101,6 +116,27 @@ const wikiIndexingTip = computed(() => {
   if (!wikiIsIndexing.value) return ''
   return t('knowledgeEditor.wikiBrowser.queueStatus', { count: wikiStatus.value.pendingTasks || 0 })
 })
+// The views of this knowledge base, in header order. Wiki and graph only
+// exist on wiki KBs; a stale wiki/graph tab on another KB renders documents,
+// so the header marks documents active then too.
+const kbViewTabs = computed(() => {
+  const w = 'knowledgeEditor.wikiBrowser'
+  const tabs: Array<{ key: KbTab; icon: string; label: string; tip: string; indexing?: boolean }> = [
+    { key: 'documents', icon: 'file', label: t(`${w}.tabDocuments`), tip: t(`${w}.tabDocumentsTip`) },
+  ]
+  if (isWiki.value) {
+    const indexing = wikiIsIndexing.value
+    tabs.push(
+      { key: 'wiki', icon: 'book-open', label: 'Wiki', tip: indexing ? wikiIndexingTip.value : t(`${w}.tabWikiTip`), indexing },
+      { key: 'graph', icon: 'relation', label: t(`${w}.tabGraph`), tip: indexing ? wikiIndexingTip.value : t(`${w}.tabGraphTip`), indexing },
+    )
+  }
+  tabs.push({ key: 'gallery', icon: 'image', label: t(`${w}.tabGallery`), tip: t(`${w}.tabGalleryTip`) })
+  return tabs
+})
+const shownKbTab = computed<KbTab>(() =>
+  kbViewTabs.value.some((tab) => tab.key === activeKbTab.value) ? activeKbTab.value : 'documents',
+)
 const onWikiStatusChange = (payload: { pendingTasks: number; isActive: boolean; pendingIssues: number }) => {
   wikiStatus.value = payload
 }
@@ -252,7 +288,8 @@ const isOwner = computed(() => {
   // those as tenant-owned so the role gate applies (Admin+ can manage,
   // Viewer cannot).
   if (!creatorId) return false;
-  return creatorId === userId;
+  // A creator demoted to Viewer no longer manages it (access.CreatorRoleFloor).
+  return creatorId === userId && authStore.hasRole('contributor');
 });
 
 // Current KB's shared record (when accessed via organization share)
@@ -283,7 +320,7 @@ const effectiveKBPermission = computed(() => orgStore.getKBPermission(kbId.value
 // the KB. The backend's RBAC middleware authorizes based on the active
 // tenant, not on creator_id, so a creator viewing their own KB from a
 // different tenant context will be 403'd on write. Otherwise: KB creator
-// (any role) or tenant Admin+ in the home tenant.
+// (Contributor+) or tenant Admin+ in the home tenant.
 //
 // A resolved cross-tenant permission (org share or shared-agent visibility,
 // already capped server-side by effective = min(share, org_role, tenant_role))
@@ -412,7 +449,26 @@ const onCardMoreVisibleChange = (visible: boolean, item: KnowledgeCard) => {
   }
 };
 let isCardDetails = ref(false);
+useAssistantPageContext(() => {
+  if (!kbId.value) return null;
+  const docOpen = isCardDetails.value && !!details.id;
+  return {
+    page: 'knowledge_base',
+    section: kbInfo.value?.id === kbId.value && isFAQ.value ? 'faq' : undefined,
+    knowledgeBaseId: kbId.value,
+    knowledgeBaseName: kbInfo.value?.id === kbId.value ? kbInfo.value?.name : undefined,
+    chatModelId: kbInfo.value?.id === kbId.value ? kbInfo.value?.summary_model_id || undefined : undefined,
+    knowledgeId: docOpen ? details.id : undefined,
+    knowledgeTitle: docOpen ? details.title : undefined,
+  };
+});
+const STATUS_POLL_INTERVAL_MS = 1500;
+// UUID 放在 GET 查询串中，限制单次长度，避免大批量重建触发代理的请求行上限。
+const STATUS_QUERY_BATCH_SIZE = 100;
 let timeout: ReturnType<typeof setTimeout> | null = null;
+let statusPollGeneration = 0;
+let statusPollRequest: object | null = null;
+let statusPollingDisposed = false;
 let knowledgeScroll = ref()
 let page = 1;
 let pageSize = 35;
@@ -446,6 +502,17 @@ watch(viewMode, (v) => {
 // Multi-select state — shared between grid and list views.
 // Vue 3.5 tracks Set#add/delete natively, so direct mutation is reactive.
 const selectedIds = ref<Set<string>>(new Set());
+const selectedDocumentAssistantActions = computed(() => {
+  const scope = { kb: kbId.value, ids: JSON.stringify([...selectedIds.value]) };
+  return [
+    { key: 'summarize', label: t('assistant.actions.summarizeSelected'), query: t('assistant.prompts.summarizeDocuments', scope) },
+    { key: 'compare', label: t('assistant.actions.compareDocuments'), query: t('assistant.prompts.compareDocuments', scope), disabled: selectedIds.value.size < 2 },
+    ...(canMutateKnowledge.value ? [
+      { key: 'tags', label: t('assistant.actions.suggestTags'), query: t('assistant.prompts.tagDocuments', scope) },
+      { key: 'folders', label: t('assistant.actions.organizeDocuments'), query: t('assistant.prompts.organizeDocuments', scope) },
+    ] : []),
+  ];
+});
 let lastSelectedIndex = -1;
 const batchDeleting = ref(false);
 const batchReparsing = ref(false);
@@ -528,14 +595,31 @@ const batchTagPreSelectedIds = computed(() => {
   }
   return Array.from(firstTagIds);
 });
-// IDs submitted for async batch reparse; hold optimistic pending until the worker updates DB.
-const pendingReparseAck = ref<Set<string>>(new Set());
+// 批量接口成功只表示任务已入队，后台可能还没更新状态。
+// 暂时保留 pending；若重建很快、轮询没看到处理中状态，也要在期限后恢复真实状态。
+const BATCH_REPARSE_ACK_TIMEOUT_MS = 12000;
+const pendingReparseAck = new Map<string, ReturnType<typeof setTimeout>>();
+// 等待结束后仍保留重建版本，避免迟到的旧查询再次被当成当前结果。
+const reparseVersionById = new Map<string, number>();
+
+const clearReparseAck = (id: string) => {
+  const timer = pendingReparseAck.get(id);
+  if (timer !== undefined) clearTimeout(timer);
+  pendingReparseAck.delete(id);
+};
 
 const applyOptimisticBatchReparse = (ids: string[]) => {
   const idSet = new Set(ids);
   for (const card of cardList.value) {
     if (!idSet.has(card.id)) continue;
-    pendingReparseAck.value.add(card.id);
+    clearReparseAck(card.id);
+    reparseVersionById.set(card.id, (reparseVersionById.get(card.id) ?? 0) + 1);
+    const timer = setTimeout(() => {
+      if (pendingReparseAck.get(card.id) !== timer) return;
+      pendingReparseAck.delete(card.id);
+      updateStatus(cardList.value.filter(needsStatusPolling), 0);
+    }, BATCH_REPARSE_ACK_TIMEOUT_MS);
+    pendingReparseAck.set(card.id, timer);
     card.parse_status = 'pending';
     card.summary_status = undefined;
     card.description = '';
@@ -544,26 +628,16 @@ const applyOptimisticBatchReparse = (ids: string[]) => {
   }
 };
 
-const syncReparseAckFromServer = (ids: string[]) => {
-  for (const id of ids) {
-    if (!pendingReparseAck.value.has(id)) continue;
-    const card = cardList.value.find((c) => c.id === id);
-    if (card && isParseInFlight(card.parse_status)) {
-      pendingReparseAck.value.delete(id);
-    }
-  }
-};
-
-const awaitBatchReparseReflection = async (ids: string[]) => {
-  const maxPolls = 30;
-  const delayMs = 400;
-  for (let i = 0; i < maxPolls && pendingReparseAck.value.size > 0; i++) {
-    await loadKnowledgeFiles(kbId.value);
-    syncReparseAckFromServer(ids);
-    applyOptimisticBatchReparse(Array.from(pendingReparseAck.value));
-    await new Promise<void>((r) => setTimeout(r, delayMs));
-  }
-  pendingReparseAck.value.clear();
+// 切换知识库、目录或离开页面时，让定时任务和未返回的请求一起失效。
+// 新页面的轮询不必等待旧请求结束。
+const resetStatusPolling = () => {
+  statusPollGeneration++;
+  if (timeout !== null) clearTimeout(timeout);
+  timeout = null;
+  statusPollRequest = null;
+  for (const id of pendingReparseAck.keys()) clearReparseAck(id);
+  reparseVersionById.clear();
+  batchReparsing.value = false;
 };
 
 const confirmBatchReparse = async () => {
@@ -596,23 +670,27 @@ const confirmBatchReparse = async () => {
   if (skipped > 0) {
     MessagePlugin.warning(t('knowledgeBase.batchReparseSkippedInFlight', { count: skipped }));
   }
+  const submissionGeneration = statusPollGeneration;
+  const targetKbId = kbId.value;
   batchReparsing.value = true;
   try {
-    const res: any = await batchReparseKnowledge(kbId.value, ids);
+    const res: any = await batchReparseKnowledge(targetKbId, ids);
+    if (statusPollingDisposed || submissionGeneration !== statusPollGeneration) return;
     if (res?.success) {
       MessagePlugin.success(t('knowledgeBase.batchReparseSuccess', { count: ids.length }));
       applyOptimisticBatchReparse(ids);
       clearSelection();
       batchMode.value = false;
       scheduleWikiStatusProbes();
-      void awaitBatchReparseReflection(ids);
     } else {
       MessagePlugin.error(res?.message || t('knowledgeBase.batchReparseFailed'));
     }
   } catch (e: any) {
-    MessagePlugin.error(e?.message || t('knowledgeBase.batchReparseFailed'));
+    if (!statusPollingDisposed && submissionGeneration === statusPollGeneration) {
+      MessagePlugin.error(e?.message || t('knowledgeBase.batchReparseFailed'));
+    }
   } finally {
-    batchReparsing.value = false;
+    if (submissionGeneration === statusPollGeneration) batchReparsing.value = false;
   }
 };
 
@@ -683,6 +761,7 @@ const sourceOptions = computed(() => [
   { label: t('knowledgeBase.channelYuque'), value: 'yuque' },
   { label: t('knowledgeBase.channelConfluence'), value: 'confluence' },
   { label: t('knowledgeBase.channelGitLab'), value: 'gitlab' },
+  { label: t('knowledgeBase.channelSeafile'), value: 'seafile' },
   { label: t('knowledgeBase.channelIma'), value: 'ima' },
   { label: t('knowledgeBase.channelWechat'), value: 'wechat' },
   { label: t('knowledgeBase.channelWecom'), value: 'wecom' },
@@ -706,6 +785,52 @@ const clearDocumentFilters = () => {
 };
 // Disable any date after today so users cannot filter into the future.
 const disableFutureDate = { after: new Date(new Date().setHours(23, 59, 59, 999)) };
+const documentSortPanelVisible = ref(false);
+const selectedDocumentSort = ref<DocumentSortValue>(DEFAULT_DOCUMENT_SORT);
+
+const documentSortOptionLabel = (option: DocumentSortOption) => {
+  switch (option.labelKey) {
+    case 'earliestUpdated':
+      return t('knowledgeBase.sort.earliestUpdated');
+    case 'newestCreated':
+      return t('knowledgeBase.sort.newestCreated');
+    case 'earliestCreated':
+      return t('knowledgeBase.sort.earliestCreated');
+    case 'nameAscending':
+      return t('knowledgeBase.sort.nameAscending');
+    case 'nameDescending':
+      return t('knowledgeBase.sort.nameDescending');
+    default:
+      return t('knowledgeBase.sort.recentlyUpdated');
+  }
+};
+
+const documentSortGroups = computed(() => [
+  {
+    key: 'updated_at',
+    label: t('knowledgeBase.sort.updatedTime'),
+    description: t('knowledgeBase.sort.updatedTimeDescription'),
+    options: DOCUMENT_SORT_OPTIONS.filter((option) => option.sortBy === 'updated_at'),
+  },
+  {
+    key: 'created_at',
+    label: t('knowledgeBase.sort.createdTime'),
+    description: t('knowledgeBase.sort.createdTimeDescription'),
+    options: DOCUMENT_SORT_OPTIONS.filter((option) => option.sortBy === 'created_at'),
+  },
+  {
+    key: 'file_name',
+    label: t('knowledgeBase.sort.fileName'),
+    description: t('knowledgeBase.sort.fileNameDescription'),
+    options: DOCUMENT_SORT_OPTIONS.filter((option) => option.sortBy === 'file_name'),
+  },
+]);
+
+const activeDocumentSortLabel = computed(() => {
+  const option = getDocumentSortOption(selectedDocumentSort.value);
+  const group = documentSortGroups.value.find((item) => item.key === option.sortBy);
+  return `${group?.label || ''} · ${documentSortOptionLabel(option)}`;
+});
 
 // ── Folder tree (documents uploaded as a folder keep their relative path) ──
 // The directory sidebar is now the sole folder navigation and starts expanded.
@@ -730,6 +855,7 @@ const folderTreeLoading = ref(false);
 // The folder being browsed; ROOT_FOLDER_PATH ('') is the knowledge base top
 // level, a real node of the tree rather than a separate mode.
 const selectedFolderPath = ref<string>(ROOT_FOLDER_PATH);
+watch([kbId, selectedFolderPath], resetStatusPolling, { flush: 'sync' });
 const folderTreeCollapsed = ref(readStoredFlag(FOLDER_TREE_COLLAPSED_KEY));
 const hasFolders = computed(() => (folderTree.value?.folders?.length ?? 0) > 0);
 // The folder column only earns its space once the knowledge base actually has
@@ -749,7 +875,52 @@ const isFiltering = computed(() =>
 );
 // A row's folder is worth showing only when the list can span folders.
 const showDocumentFolderPath = computed(() => hasFolders.value && isFiltering.value);
+// Folders belong in the sidebar tree. The document pane only lists them when
+// that tree is collapsed, so navigation still works. Filtering already returns
+// matching documents from the whole subtree, so folder entries would be noise.
+const visibleSubFolders = computed(() => {
+  if (isFiltering.value) return []
+  if (showFolderTree.value && !folderTreeCollapsed.value) return []
+  return childFolders(folderTree.value, selectedFolderPath.value)
+});
 const folderBreadcrumbs = computed(() => buildFolderBreadcrumbs(selectedFolderPath.value));
+// What the breadcrumb reports is the folder's own contents the way a file
+// manager counts them: the documents this list can show plus its direct
+// sub-folders, which the sidebar tree lists as rows. A recursive document total
+// here would not match what the page shows, so that number stays on the tree row
+// and in the empty state below. Filtering searches the subtree instead and
+// reports only the flat result set, so it adds no folder number.
+const folderContentsCount = computed<{ documents: number; folders: number }>(() => ({
+  documents: total.value,
+  folders: isFiltering.value ? 0 : childFolders(folderTree.value, selectedFolderPath.value).length,
+}));
+// A folder with no sub-folders would otherwise end the breadcrumb with
+// "/ 0 folders"; the document-only message is the whole truth there.
+const showFolderContentsCount = computed(
+  () => !isFiltering.value && folderContentsCount.value.folders > 0,
+);
+const folderContentsMessage = computed(() => ({
+  documents: folderContentsCount.value.documents,
+  folders: folderContentsCount.value.folders,
+  // vue-i18n selects the plural form from `count`; folders are the noun that
+  // changes with the number.
+  count: folderContentsCount.value.folders,
+}));
+// Documents below the selected folder rather than directly inside it; this is
+// what tells "documents live in the sub-folders" apart from "nothing here yet".
+const folderSubfolderDocumentCount = computed(() => {
+  const counts = folderDocumentCounts(folderTree.value, selectedFolderPath.value);
+  if (!counts) return 0;
+  return Math.max(0, counts.total - counts.direct);
+});
+// Which empty state the document list needs: a search without matches, a folder
+// whose documents are all below it, a plain empty folder, or the onboarding
+// panel for a knowledge base that has no folders at all.
+const folderEmptyState = computed<'search' | 'subfolders' | 'folder' | 'none'>(() => {
+  if (isFiltering.value) return 'search';
+  if (folderSubfolderDocumentCount.value > 0) return 'subfolders';
+  return hasFolders.value || selectedFolderPath.value ? 'folder' : 'none';
+});
 
 const filterParams = computed(() => {
   const [start, end] = updatedTimeRange.value || [];
@@ -761,11 +932,27 @@ const filterParams = computed(() => {
     source: selectedSource.value || undefined,
     start_time: start ? `${start} 00:00:00` : undefined,
     end_time: end ? `${end} 23:59:59` : undefined,
+    ...getDocumentSortParams(selectedDocumentSort.value),
     folder_path: selectedFolderPath.value,
     // Filtering searches descendants; browsing shows this folder's documents.
     folder_recursive: isFiltering.value,
   };
 });
+
+const handleDocumentSortSelect = (value: DocumentSortValue) => {
+  documentSortPanelVisible.value = false;
+  if (selectedDocumentSort.value === value) return;
+
+  selectedDocumentSort.value = value;
+  clearSelection();
+  resetPage();
+  if (knowledgeScroll.value) {
+    knowledgeScroll.value.scrollTop = 0;
+  }
+  if (kbId.value && !isFAQ.value) {
+    loadKnowledgeFiles(kbId.value);
+  }
+};
 const tagMap = computed<Record<string, any>>(() => {
   const map: Record<string, any> = {};
   tagList.value.forEach((tag) => {
@@ -1269,13 +1456,20 @@ onUnmounted(() => {
   window.removeEventListener('weknora:knowledge-file-drop', handleKnowledgeFileDrop as EventListener);
   window.removeEventListener('weknora:open-knowledge', handleOpenKnowledgeEvent as EventListener);
   stopMovePoll();
-  if (timeout !== null) {
-    clearTimeout(timeout);
-    timeout = null;
-  }
+  statusPollingDisposed = true;
+  resetStatusPolling();
 });
 watch(() => cardList.value, (newValue) => {
   if (isFAQ.value) return;
+  // 排序、筛选或上传后的列表刷新，可能读到后台尚未更新的旧状态。
+  // 保留已提交文档的 pending，但不延长原来的等待期限。
+  for (const card of newValue) {
+    if (pendingReparseAck.has(card.id) && !isParseInFlight(card.parse_status)) {
+      card.parse_status = 'pending';
+      card.summary_status = undefined;
+      card.description = '';
+    }
+  }
   docListLoading.value = false;
 
   // Auto-open document if navigated with ?knowledge_id=xxx.
@@ -1291,7 +1485,8 @@ watch(() => cardList.value, (newValue) => {
     timeout = null;
   }
   if (analyzeList.length) {
-    updateStatus(analyzeList)
+    // The deep watch refires as stalled_minutes ticks; keep the backoff.
+    updateStatus(analyzeList, pollDelayFor(analyzeList))
   }
 
 }, { deep: true })
@@ -1313,6 +1508,11 @@ type KnowledgeCard = {
   metadata?: any;
   error_message?: string;
   tags?: Array<{ id: string; name: string; color?: string }>;
+  last_activity_at?: string;
+  // Minutes without progress while in flight; 0 unless it looks stuck.
+  stalled_minutes?: number;
+  // Server verdict on a quiet row: 'queued' (backlogged) or 'stalled'.
+  stall_state?: string;
 };
 // needsStatusPolling decides whether a card row is still "in flight"
 // enough that the doc list should keep refreshing it. Keep in sync with
@@ -1324,68 +1524,105 @@ const needsStatusPolling = (item: KnowledgeCard) => {
   return knowledgeNeedsStatusPolling(item);
 };
 
-const updateStatus = (analyzeList: KnowledgeCard[]) => {
+// Back off once every in-flight row looks stuck: nothing is moving, and a
+// page left open on it should not keep hammering the batch endpoint.
+const pollDelayFor = (items: KnowledgeCard[]) =>
+  items.length > 0 && items.every(item => (item.stalled_minutes ?? 0) > 0)
+    ? STALLED_POLL_INTERVAL_MS
+    : STATUS_POLL_INTERVAL_MS;
+
+const updateStatus = (analyzeList: KnowledgeCard[], delay = STATUS_POLL_INTERVAL_MS) => {
   if (timeout !== null) {
     clearTimeout(timeout);
     timeout = null;
   }
-  if (!analyzeList.length) return;
+  if (statusPollingDisposed || statusPollRequest || !analyzeList.length) return;
 
-  let query = ``;
-  for (let i = 0; i < analyzeList.length; i++) {
-    query += `ids=${analyzeList[i].id}&`;
-  }
-  timeout = setTimeout(() => {
-    batchQueryKnowledge(query).then((result: any) => {
+  const generation = statusPollGeneration;
+  const targetKbId = kbId.value;
+  timeout = setTimeout(async () => {
+    timeout = null;
+    if (statusPollingDisposed || generation !== statusPollGeneration) return;
+    // 定时器等待期间可能又提交了一批；发请求时以当前列表为准。
+    const requestedIds = cardList.value.filter(needsStatusPolling).map(item => item.id);
+    if (!requestedIds.length) return;
+    const request = {};
+    statusPollRequest = request;
+    const isCurrentRequest = () => !statusPollingDisposed
+      && generation === statusPollGeneration && statusPollRequest === request;
+
+    try {
       let shouldRefreshWikiStatus = false;
-      if (result.success && result.data) {
+      // 整轮串行查询共用一个请求锁，避免监听器或确认定时器插入重叠轮询。
+      for (let offset = 0; offset < requestedIds.length; offset += STATUS_QUERY_BATCH_SIZE) {
+        if (!isCurrentRequest()) return;
+        const batchIds = requestedIds.slice(offset, offset + STATUS_QUERY_BATCH_SIZE);
+        const batchIdSet = new Set(batchIds);
+        const query = batchIds.map(id => `ids=${encodeURIComponent(id)}`).join('&');
+        // 每个子请求各自记录版本，先前发出的查询不能覆盖其后提交的新一轮重建。
+        const reparseVersions = new Map(batchIds.map(id => [id, reparseVersionById.get(id)]));
+        const hasSameReparse = (id: string) => reparseVersionById.get(id) === reparseVersions.get(id);
+        let result: any;
+        try {
+          result = await batchQueryKnowledge(query, targetKbId);
+        } catch {
+          if (!isCurrentRequest()) return;
+          // 失败子批次保留待查状态；继续查询后续文档，下一轮再重试失败的部分。
+          continue;
+        }
+        if (!isCurrentRequest()) return;
+        if (!result?.success || !Array.isArray(result.data)) continue;
+
         (result.data as KnowledgeCard[]).forEach((item: KnowledgeCard) => {
           const index = cardList.value.findIndex(card => card.id == item.id);
-          if (index == -1) return;
+          if (!batchIdSet.has(item.id) || index == -1 || !hasSameReparse(item.id)) return;
 
           let parseStatus = item.parse_status;
-          if (pendingReparseAck.value.has(item.id)) {
+          if (pendingReparseAck.has(item.id)) {
             if (isParseInFlight(item.parse_status)) {
-              pendingReparseAck.value.delete(item.id);
+              clearReparseAck(item.id);
             } else {
               parseStatus = 'pending';
             }
           }
 
-          if (cardList.value[index].parse_status !== parseStatus ||
-            cardList.value[index].summary_status !== item.summary_status ||
-            cardList.value[index].description !== item.description) {
+          const card = cardList.value[index];
+          card.last_activity_at = item.last_activity_at;
+          card.stall_state = item.stall_state;
+          card.stalled_minutes = stalledMinutes({ parse_status: parseStatus, last_activity_at: item.last_activity_at });
+
+          if (card.parse_status !== parseStatus ||
+            card.summary_status !== item.summary_status ||
+            card.description !== item.description) {
             shouldRefreshWikiStatus ||= shouldRefreshWikiStatusAfterKnowledgePoll(
-              cardList.value[index],
+              card,
               { ...item, parse_status: parseStatus },
             );
-
-            // Always update the card data
-            cardList.value[index].parse_status = parseStatus;
-            cardList.value[index].summary_status = item.summary_status;
-            cardList.value[index].description = item.description;
+            card.parse_status = parseStatus;
+            card.summary_status = item.summary_status;
+            card.description = item.description;
             delete traceAvailableById[item.id];
-            }
+          }
         });
+        // 只有成功子批次能判定缺失，未查询、查询失败或重新提交的文档都要保留。
+        const returnedIds = new Set((result.data as KnowledgeCard[]).map(item => item.id));
+        const goneIds = new Set(batchIds.filter(id => !returnedIds.has(id) && hasSameReparse(id)));
+        if (goneIds.size > 0) {
+          const before = cardList.value.length;
+          cardList.value = cardList.value.filter(card => !goneIds.has(card.id));
+          total.value = Math.max(0, total.value - (before - cardList.value.length));
+          goneIds.forEach(clearReparseAck);
+        }
       }
-      if (shouldRefreshWikiStatus) {
-        void fetchWikiStatusOnce();
+      if (shouldRefreshWikiStatus) void fetchWikiStatusOnce();
+    } finally {
+      if (isCurrentRequest()) {
+        statusPollRequest = null;
+        const stillPending = cardList.value.filter(needsStatusPolling);
+        if (stillPending.length > 0) updateStatus(stillPending, pollDelayFor(stillPending));
       }
-      // If there are no changes, the watch won't trigger, so we must manually poll again
-      // Even if there are changes, we can manually poll again just to be safe.
-      // The watch will clear this timeout if it triggers.
-      const stillPending = cardList.value.filter(needsStatusPolling);
-      if (stillPending.length > 0) {
-        updateStatus(stillPending);
-      }
-    }).catch((_err) => {
-      // 错误处理
-      const stillPending = cardList.value.filter(needsStatusPolling);
-      if (stillPending.length > 0) {
-        updateStatus(stillPending);
-      }
-    });
-  }, 1500);
+    }
+  }, delay);
 };
 
 
@@ -1394,6 +1631,81 @@ const updateStatus = (analyzeList: KnowledgeCard[]) => {
 const closeDoc = () => {
   isCardDetails.value = false;
 };
+
+useAssistantDataChange((changes) => {
+  const targetKbId = kbId.value;
+  if (!targetKbId) return;
+  const relevant = changes.filter(change => change.ids.knowledgeBaseIds.includes(targetKbId)
+    || (['knowledge', 'chunk'].includes(change.area) && change.ids.knowledgeIds.some(id =>
+      cardList.value.some(item => item.id === id) || (isCardDetails.value && details.id === id)))
+    // ID-only operations may affect a document outside the loaded folder or page.
+    || (change.area === 'knowledge' && change.ids.knowledgeBaseIds.length === 0));
+  if (!relevant.length) return;
+  if (relevant.some(change => change.operation === 'knowledge_base.delete')) {
+    MessagePlugin.warning(t('knowledgeBase.assistantDeleted'));
+    handleNavigateToKbList();
+    return;
+  }
+  if (isCardDetails.value && relevant.some(change => change.ids.knowledgeIds.includes(details.id))) {
+    if (relevant.some(change => change.ids.knowledgeIds.includes(details.id)
+      && LEAVING_OPERATIONS.includes(change.operation))) {
+      closeDoc();
+    } else {
+      getCardDetails({ id: details.id });
+    }
+  }
+  const reload = () => {
+    if (!isCurrentKb(targetKbId)) return;
+    resetPage();
+    void loadKnowledgeFiles(targetKbId);
+    void loadFolderTree(targetKbId);
+    void loadTags(targetKbId, true);
+  };
+  if (relevant.some(change => change.area === 'knowledge_base')) {
+    resetPage();
+    void loadKnowledgeBaseInfo(targetKbId, true);
+  } else {
+    reload();
+  }
+  // Deletes and moves only start here; the list changes once they finish.
+  const loaded = new Set(cardList.value.map(item => item.id));
+  const leaving = new Set<string>();
+  const arriving = new Set<string>();
+  for (const change of relevant) {
+    if (!LEAVING_OPERATIONS.includes(change.operation) && change.operation !== 'knowledge.move') continue;
+    for (const id of change.ids.knowledgeIds) {
+      if (change.operation === 'knowledge.move' && !loaded.has(id)) arriving.add(id);
+      else leaving.add(id);
+    }
+  }
+  if (leaving.size || arriving.size) void settleThenReload(targetKbId, [...leaving], [...arriving], reload);
+}, { areas: ['knowledge_base', 'knowledge', 'chunk'] });
+
+const LEAVING_OPERATIONS = ['knowledge.delete', 'knowledge.batch_delete', 'knowledge.move'];
+
+const settleThenReload = async (
+  targetKbId: string, leaving: string[], arriving: string[], reload: () => void,
+) => {
+  const isActive = () => isCurrentKb(targetKbId);
+  const fetchRows = async (ids: string[]) => {
+    const query = new URLSearchParams();
+    ids.forEach(id => query.append('ids', id));
+    return await batchQueryKnowledge(query.toString(), targetKbId) as any;
+  };
+  try {
+    if (leaving.length) await waitForKnowledgeDeletion(leaving, fetchRows, { isActive });
+    for (let i = 0; arriving.length && i < 30 && isActive(); i++) {
+      const res = await fetchRows(arriving);
+      const present = new Set(((res?.data ?? []) as KnowledgeCard[]).map(row => row.id));
+      if (arriving.every(id => present.has(id))) break;
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  } catch {
+    // Reload whatever the server shows now.
+  }
+  reload();
+};
+
 const openCardDetails = (item: KnowledgeCard) => {
   isCardDetails.value = true;
   getCardDetails(item);
@@ -2206,29 +2518,17 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
                 </template>
               </button>
               <t-icon name="chevron-right" class="breadcrumb-separator" />
-              <template v-if="isWiki">
-                <span :class="['breadcrumb-tab', { active: activeKbTab === 'documents' }]"
-                  @click="activeKbTab = 'documents'">{{ $t('knowledgeEditor.wikiBrowser.tabDocuments') }}</span>
-                <span class="breadcrumb-tab-sep">/</span>
-                <span :class="['breadcrumb-tab', { active: activeKbTab === 'wiki', indexing: wikiIsIndexing }]"
-                  @click="activeKbTab = 'wiki'">
-                  Wiki
-                  <t-tooltip v-if="wikiIsIndexing" :content="wikiIndexingTip" placement="bottom">
-                    <t-loading size="small" class="breadcrumb-tab-indicator" />
-                  </t-tooltip>
-                </span>
-                <span class="breadcrumb-tab-sep">/</span>
-                <t-tooltip :content="$t('knowledgeEditor.wikiBrowser.tabGraphTip')" placement="bottom">
-                  <span :class="['breadcrumb-tab', { active: activeKbTab === 'graph', indexing: wikiIsIndexing }]"
-                    @click="activeKbTab = 'graph'">
-                    {{ $t('knowledgeEditor.wikiBrowser.tabGraph') }}
-                    <t-tooltip v-if="wikiIsIndexing" :content="wikiIndexingTip" placement="bottom">
-                      <t-loading size="small" class="breadcrumb-tab-indicator" />
-                    </t-tooltip>
-                  </span>
+              <div class="kb-view-tabs" role="tablist" :aria-label="$t('knowledgeEditor.wikiBrowser.viewTabs')">
+                <t-tooltip v-for="tab in kbViewTabs" :key="tab.key" :content="tab.tip" placement="bottom">
+                  <button type="button" role="tab" class="kb-view-tab"
+                    :class="{ active: shownKbTab === tab.key, indexing: tab.indexing }"
+                    :aria-selected="shownKbTab === tab.key" @click="activeKbTab = tab.key">
+                    <t-loading v-if="tab.indexing" size="small" class="kb-view-tab__indicator" />
+                    <t-icon v-else :name="tab.icon" size="16px" />
+                    <span>{{ tab.label }}</span>
+                  </button>
                 </t-tooltip>
-              </template>
-              <span v-else class="breadcrumb-current">{{ $t('knowledgeEditor.document.title') }}</span>
+              </div>
             </h2>
             <!-- 标题行右侧的动作锚点：聚拢"信息"和"设置"两个圆形按钮。 -->
             <div class="kb-title-actions">
@@ -2242,7 +2542,7 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
             </div>
           </div>
           <p v-if="kbInfo?.description" class="document-subtitle">{{ kbInfo.description }}</p>
-          <p v-if="unsupportedFileTypes.length" class="parser-hint" @click="goToParserSettings">
+          <p v-if="canEdit && unsupportedFileTypes.length" class="parser-hint" @click="goToParserSettings">
             <t-icon name="info-circle" class="parser-hint-icon" />
             <span>{{$t('knowledgeBase.unsupportedTypesHint', {
               types: unsupportedFileTypes.map(t => '.' + t).join('、')
@@ -2265,7 +2565,12 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
           @view-graph="onViewWikiInGraph" />
       </div>
 
-      <template v-if="activeKbTab === 'documents' || !isWiki">
+      <!-- Image Gallery (4th tab) -->
+      <ImageGallery v-if="activeKbTab === 'gallery' && kbId" :knowledge-base-id="kbId" @open-source-doc="openSourceDoc" />
+
+      <!-- wiki/graph tabs only exist on wiki KBs; a stale tab (?tab= or one
+           carried over from a previous KB) falls back to documents. -->
+      <template v-if="activeKbTab === 'documents' || (!isWiki && activeKbTab !== 'gallery')">
         <div class="knowledge-main">
           <KbFolderTree v-if="showFolderTree && !folderTreeCollapsed" :tree="folderTree" :selected-path="selectedFolderPath"
             :loading="folderTreeLoading" :can-edit="canEdit" :root-label="kbInfo?.name"
@@ -2290,7 +2595,11 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
                     <span v-if="index === folderBreadcrumbs.length - 1" class="doc-folder-path__crumb is-current" :title="crumb.name" aria-current="page">{{ crumb.name }}</span>
                     <button v-else type="button" class="doc-folder-path__crumb" :title="crumb.name" @click="handleFolderSelect(crumb.path)">{{ crumb.name }}</button>
                   </template>
-                  <span v-if="!docListLoading" class="doc-folder-path__count">{{ $t(isFiltering ? 'knowledgeBase.folderTree.filteredCount' : 'knowledgeBase.documentCount', { count: total }) }}</span>
+                  <span v-if="!docListLoading" class="doc-folder-path__count">
+                    <template v-if="isFiltering">{{ $t('knowledgeBase.folderTree.filteredCount', { count: folderContentsCount.documents }) }}</template>
+                    <template v-else-if="showFolderContentsCount">{{ $t('knowledgeBase.folderTree.folderContentsCount', folderContentsMessage) }}</template>
+                    <template v-else>{{ $t('knowledgeBase.documentCount', { count: folderContentsCount.documents }) }}</template>
+                  </span>
                   <t-tooltip v-if="showFolderTree && isFiltering" :content="$t('knowledgeBase.folderTree.searchingSubtree')">
                     <t-icon name="info-circle" class="doc-folder-path__sep" />
                   </t-tooltip>
@@ -2365,6 +2674,39 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
                     <t-icon :name="batchMode ? 'close' : 'check-rectangle'" size="16px" />
                     {{ $t(batchMode ? 'common.cancel' : 'menu.batchManage') }}
                   </button>
+                  <t-popup v-model:visible="documentSortPanelVisible" trigger="click" placement="bottom-right"
+                    overlay-class-name="document-sort-popup" :overlay-inner-style="{ padding: 0 }">
+                    <template #content>
+                      <div class="document-sort-panel" role="menu" :aria-label="$t('knowledgeBase.sort.title')">
+                        <section v-for="group in documentSortGroups" :key="group.key" class="document-sort-group">
+                          <div class="document-sort-group__heading">
+                            <div class="document-sort-group__label">{{ group.label }}</div>
+                            <div class="document-sort-group__description">{{ group.description }}</div>
+                          </div>
+                          <div class="document-sort-group__options">
+                            <button v-for="option in group.options" :key="option.value" type="button"
+                              class="document-sort-option"
+                              :class="{ active: selectedDocumentSort === option.value }"
+                              role="menuitemradio" :aria-checked="selectedDocumentSort === option.value"
+                              @click.stop="handleDocumentSortSelect(option.value)">
+                              <span>{{ documentSortOptionLabel(option) }}</span>
+                              <t-icon v-if="selectedDocumentSort === option.value" name="check" size="14px" />
+                            </button>
+                          </div>
+                        </section>
+                      </div>
+                    </template>
+                    <button type="button" class="doc-sort-trigger" :class="{ active: documentSortPanelVisible }"
+                      :title="`${$t('knowledgeBase.sort.title')}: ${activeDocumentSortLabel}`"
+                      :aria-label="`${$t('knowledgeBase.sort.title')}: ${activeDocumentSortLabel}`">
+                      <t-icon name="filter-sort" size="16px" />
+                      <span class="doc-sort-trigger__label">
+                        {{ $t('knowledgeBase.sort.title') }} · {{ activeDocumentSortLabel }}
+                      </span>
+                      <t-icon name="chevron-down" size="14px" class="doc-sort-trigger__caret"
+                        :class="{ open: documentSortPanelVisible }" />
+                      </button>
+                    </t-popup>
                   <div class="doc-view-toggle" role="group" :aria-label="$t('knowledgeBase.viewModeToggle')">
                     <t-tooltip :content="$t('knowledgeBase.viewModeGrid')" placement="top">
                       <button type="button" class="doc-view-toggle-btn" :class="{ active: viewMode === 'grid' }"
@@ -2390,7 +2732,7 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
               </div>
               <div class="doc-scroll-container"
                 :class="{
-                  'is-empty': !cardList.length && !docListLoading,
+                  'is-empty': !cardList.length && !visibleSubFolders.length && !docListLoading,
                   'is-marquee-active': docMarqueeVisible,
                 }"
                 ref="knowledgeScroll" @scroll="handleScroll" @mousedown="onDocMarqueeMouseDown">
@@ -2418,10 +2760,11 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
                     </div>
                   </div>
                 </div>
-                <template v-else-if="cardList.length && viewMode === 'grid'">
+                <template v-else-if="(cardList.length || visibleSubFolders.length) && viewMode === 'grid'">
                   <DocumentCardView :kb-id="kbId"
                     :items="cardList"
                     :folder-options="folderOptions"
+                    :sub-folders="visibleSubFolders"
                     :selected-ids="selectedIds"
                     :batch-mode="batchMode"
                     :can-edit="canEdit"
@@ -2449,8 +2792,9 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
                     @update:move-mode="(mode: any) => moveMode = mode"
                   />
                 </template>
-                <template v-else-if="cardList.length && viewMode === 'list'">
+                <template v-else-if="(cardList.length || visibleSubFolders.length) && viewMode === 'list'">
                   <DocumentListView :kb-id="kbId" :items="cardList" :folder-options="folderOptions"
+                    :sub-folders="visibleSubFolders"
                     :selected-ids="selectedIds"
                     :can-edit="canEdit" :can-download="canDownloadKnowledge" :can-mutate-knowledge="canMutateKnowledge"
                     :can-delete-knowledge="canLegacyEdit" :can-batch-edit="canBatchEditKnowledge"
@@ -2476,10 +2820,14 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
                 </template>
                 <template v-else-if="!docListLoading">
                   <div class="doc-empty-state">
-                    <p v-if="hasFolders || selectedFolderPath || isFiltering" class="doc-empty-folder">
-                      {{ isFiltering
-                        ? $t('knowledgeBase.folderTree.emptySearch')
-                        : $t('knowledgeBase.folderTree.emptyFolder') }}
+                    <p v-if="folderEmptyState === 'search'" class="doc-empty-folder">
+                      {{ $t('knowledgeBase.folderTree.emptySearch') }}
+                    </p>
+                    <p v-else-if="folderEmptyState === 'subfolders'" class="doc-empty-folder">
+                      {{ $t('knowledgeBase.folderTree.emptyFolderWithSubfolders', { count: folderSubfolderDocumentCount }) }}
+                    </p>
+                    <p v-else-if="folderEmptyState === 'folder'" class="doc-empty-folder">
+                      {{ $t('knowledgeBase.folderTree.emptyFolder') }}
                     </p>
                     <EmptyKnowledge v-else />
                   </div>
@@ -2494,7 +2842,13 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
                   :show-move-to-folder="canEdit" :folder-options="folderOptions"
                   @cancel="handleBatchCancel" @delete="confirmBatchDelete" @reparse="confirmBatchReparse"
                   @batch-tag="handleBatchTag" @download="handleBatchDownload" @select-loaded="toggleSelectAll(true)"
-                  @move-to-folder="(path: string) => moveKnowledgeIntoFolder(Array.from(selectedIds), path)" />
+                  @move-to-folder="(path: string) => moveKnowledgeIntoFolder(Array.from(selectedIds), path)">
+                  <template #assistant>
+                    <AssistantActionsButton v-if="selectedIds.size" :label="$t('assistant.actions.processSelected')"
+                      :actions="selectedDocumentAssistantActions"
+                      :disabled="batchDeleting || batchReparsing || batchTagging || batchDownloading" />
+                  </template>
+                </DocumentBatchBar>
               </div>
             </div>
           </div>
@@ -2552,42 +2906,57 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
   box-sizing: border-box;
 }
 
-// Breadcrumb tab switch (文档/Wiki in breadcrumb)
-.breadcrumb-tab {
-  cursor: pointer;
-  color: var(--td-text-color-placeholder);
-  font-weight: 400;
-  transition: color var(--app-motion-fast);
+// View switch (文档 / Wiki / 图谱 / 画廊): a segmented control after the
+// breadcrumb, drawn like the documents tab's view toggle so the four views
+// read as siblings rather than as another breadcrumb level.
+.kb-view-tabs {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
+  margin-left: 2px;
+  padding: 3px;
+  border-radius: var(--app-radius-lg);
+  background: var(--td-bg-color-secondarycontainer);
+}
+
+.kb-view-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--app-radius-md);
+  background: transparent;
+  color: var(--td-text-color-secondary);
+  font-family: var(--app-font-family);
+  font-size: var(--app-text-base);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--app-motion-fast) ease, background-color var(--app-motion-fast) ease;
 
   &:hover {
     color: var(--td-text-color-primary);
   }
 
   &.active {
+    background: var(--td-bg-color-container);
     color: var(--td-brand-color);
     font-weight: 600;
+    box-shadow: 0 1px 3px rgb(0 0 0 / 8%);
   }
 
-  &.indexing {
+  &:focus-visible {
+    outline: 2px solid var(--app-focus-border);
+    outline-offset: 1px;
+  }
+
+  &__indicator {
+    display: inline-flex;
     color: var(--td-brand-color);
   }
-}
-
-.breadcrumb-tab-indicator {
-  display: inline-flex;
-  align-items: center;
-  color: var(--td-brand-color);
-  font-size: var(--app-text-sm);
-  line-height: 1;
-}
-
-.breadcrumb-tab-sep {
-  margin: 0 6px;
-  color: var(--td-text-color-disabled);
-  font-weight: 400;
 }
 
 .wiki-main-area {
@@ -2645,16 +3014,28 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
   container-name: doc-card-area;
 }
 
-// One navigation row; filters open in a single anchored panel.
+// Wrap by content as well as pane width: long paths must not squeeze out actions.
 .doc-filter-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   flex-shrink: 0;
   padding: 0 0 16px;
   border-bottom: 1px solid var(--td-component-stroke);
-  &__trailing { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  &__trailing {
+    display: flex;
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    min-width: 0;
+    max-width: 100%;
+    margin-left: auto;
+    > :not(.doc-search-input) { flex-shrink: 0; }
+  }
   .doc-search-input { width: 220px; min-width: 100px; }
   :deep(.doc-search-input .t-input) {
     background: transparent;
@@ -2673,6 +3054,7 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
 }
 .doc-folder-path {
   display: flex;
+  flex: 1 1 auto;
   align-items: baseline;
   gap: 6px;
   min-width: 0;
@@ -2784,6 +3166,71 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
     :deep(.t-date-range-picker) { width: 100%; }
   }
 }
+
+.document-sort-panel {
+  width: 330px;
+  max-width: min(330px, calc(100vw - 32px));
+  padding: 6px;
+  box-sizing: border-box;
+  color: var(--td-text-color-primary);
+}
+
+.document-sort-group {
+  padding: 7px 6px 8px;
+
+  & + & {
+    border-top: 1px solid var(--td-component-stroke);
+  }
+
+  &__heading {
+    padding: 0 4px 6px;
+  }
+
+  &__label {
+    font-size: var(--app-text-md);
+    line-height: 20px;
+    font-weight: 600;
+  }
+
+  &__description {
+    margin-top: 1px;
+    color: var(--td-text-color-secondary);
+    font-size: var(--app-text-xs);
+    line-height: 17px;
+  }
+
+  &__options {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+  }
+}
+
+.document-sort-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--td-text-color-primary);
+  font-family: var(--app-font-family);
+  font-size: var(--app-text-md);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--td-bg-color-secondarycontainer);
+  }
+
+  &.active {
+    background: var(--td-brand-color-light);
+    color: var(--td-brand-color);
+    font-weight: 500;
+  }
+}
 .doc-filter-tags {
   margin-top: 16px;
   padding-top: 14px;
@@ -2815,6 +3262,43 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
   .doc-filter-bar { flex-wrap: wrap; gap: 12px; }
   .doc-filter-bar__trailing { width: 100%; }
   .doc-filter-bar .doc-search-input { flex: 1; width: auto; }
+}
+
+.doc-sort-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  max-width: 220px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: var(--app-radius-md);
+  background: transparent;
+  color: var(--td-text-color-secondary);
+  font: inherit;
+  font-size: var(--app-text-md);
+  cursor: pointer;
+
+  &:hover,
+  &.active {
+    color: var(--td-text-color-primary);
+    background: var(--td-bg-color-secondarycontainer);
+  }
+
+  &__label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__caret {
+    flex-shrink: 0;
+    transition: transform 0.2s ease;
+
+    &.open { transform: rotate(180deg); }
+  }
 }
 
 @container doc-card-area (max-width: 540px) {
@@ -2909,7 +3393,9 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
   .document-breadcrumb {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 6px;
+    row-gap: 8px;
     margin: 0;
     font-size: var(--app-text-3xl);
     font-weight: 600;
@@ -2927,6 +3413,7 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
     display: inline-flex;
     align-items: center;
     gap: 4px;
+    white-space: nowrap;
     border-radius: var(--app-radius-sm);
     transition: all var(--app-motion-instant) ease;
 
@@ -3165,7 +3652,7 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
   background: var(--td-bg-color-container);
   position: relative;
   cursor: pointer;
-  transition: border-color var(--app-motion-base) ease, box-shadow var(--app-motion-base) ease, background-color var(--app-motion-base) ease;
+  transition: background-color var(--app-motion-base) ease;
 
   .card-content {
     flex: 1;
@@ -3200,8 +3687,7 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
 }
 
 .knowledge-card:hover {
-  border-color: color-mix(in srgb, var(--td-component-stroke) 55%, var(--td-brand-color));
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.07);
+  background: var(--td-bg-color-container-hover);
 }
 
 </style>

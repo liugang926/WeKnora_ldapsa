@@ -211,6 +211,8 @@ def resolve_images(manifest):
         raise ImageIdentityError('Invalid release image identity metadata')
     if set(references) - _KEYS or set(expected_configs) - _KEYS:
         raise ImageIdentityError('Unknown release image identity key')
+    # Legacy manifests predate image_references and shipped ParadeDB 0.22.6.
+    # New releases supply their own reference, including across image upgrades.
     fallback = {
         'APP_IMAGE': 'weknora-production-app:' + commit,
         'UI_IMAGE': 'weknora-production-ui:' + commit,

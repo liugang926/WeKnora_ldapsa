@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/config"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -54,14 +55,7 @@ import (
 // attribute and the cluster-wide flag must be true; either alone is
 // not enough.
 func IsCrossTenantSuperuser(ctx context.Context, cfg *config.Config) bool {
-	if cfg == nil || cfg.Tenant == nil || !cfg.Tenant.EnableCrossTenantAccess {
-		return false
-	}
-	u, ok := ctx.Value(types.UserContextKey).(*types.User)
-	if !ok || u == nil {
-		return false
-	}
-	return u.CanAccessAllTenants
+	return access.IsCrossTenantSuperuser(ctx, cfg)
 }
 
 // IsTenantAccessible reports whether `user` is allowed to operate inside

@@ -242,40 +242,27 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 		if err != nil {
 			return nil, fmt.Errorf("list default chat models for evaluation: %w", err)
 		}
-		for _, model := range models {
-			if model != nil && model.Type == types.ModelTypeKnowledgeQA {
-				chatModelID = model.ID
-				break
-			}
-		}
-		if chatModelID == "" {
+		model := types.PickChatModel(models, "")
+		if model == nil {
 			return nil, errors.New("no default chat model found")
 		}
+		chatModelID = model.ID
 		logger.Infof(ctx, "Using default chat model: %s", chatModelID)
 	}
 
 	// Handle knowledge base creation if not provided
 	if knowledgeBaseID == "" {
 		logger.Info(ctx, "No knowledge base ID provided, creating new knowledge base")
-		// Create new knowledge base with default evaluation settings
-		// Resolve the embedding model if the caller did not select one.
-		models, err := e.modelService.ListModels(ctx)
-		if err != nil {
-			logger.Errorf(ctx, "Failed to list models: %v", err)
-			return nil, err
-		}
-
-		for _, model := range models {
-			if model == nil {
-				continue
-			}
-			if model.Type == types.ModelTypeEmbedding && embeddingModelID == "" {
-				embeddingModelID = model.ID
-			}
-		}
-
 		if embeddingModelID == "" {
-			return nil, errors.New("no default embedding model found for evaluation")
+			models, err := e.modelService.ListModels(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("list default embedding models for evaluation: %w", err)
+			}
+			model := types.PickDefaultModel(models, types.ModelTypeEmbedding)
+			if model == nil {
+				return nil, errors.New("no default embedding model found for evaluation")
+			}
+			embeddingModelID = model.ID
 		}
 
 		kb, err := e.createEvaluationKnowledgeBase(ctx, embeddingModelID, chatModelID)
@@ -320,14 +307,8 @@ func (e *EvaluationService) Evaluation(ctx context.Context,
 		// 获取默认的重排模型
 		models, err := e.modelService.ListModels(ctx)
 		if err == nil {
-			for _, model := range models {
-				if model == nil {
-					continue
-				}
-				if model.Type == types.ModelTypeRerank {
-					rerankModelID = model.ID
-					break
-				}
+			if model := types.PickDefaultModel(models, types.ModelTypeRerank); model != nil {
+				rerankModelID = model.ID
 			}
 		}
 		if rerankModelID == "" {

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -13,9 +14,13 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var ErrKnowledgeNotFound = errors.New("knowledge not found")
+
+// ErrSubtaskSlotReleased marks a follow-up failure after the slot release transaction succeeded.
+var ErrSubtaskSlotReleased = errors.New("subtask slot already released")
 
 // likeEscapeChar is the SQL ESCAPE character paired with escapeLikeKeyword.
 const likeEscapeChar = `\`
@@ -151,7 +156,10 @@ func applyKnowledgeListFilter(query *gorm.DB, filter types.KnowledgeListFilter) 
 		// / `search sessions` filters. Plain LIKE is case-sensitive in
 		// Postgres, which surprised callers searching with lowercase.
 		escaped := strings.ToLower(escapeLikeKeyword(filter.Keyword))
-		query = query.Where("(LOWER(file_name) LIKE ? OR LOWER(title) LIKE ?)", "%"+escaped+"%", "%"+escaped+"%")
+		query = query.Where(
+			"(LOWER(file_name) LIKE ? ESCAPE ? OR LOWER(title) LIKE ? ESCAPE ?)",
+			"%"+escaped+"%", likeEscapeChar, "%"+escaped+"%", likeEscapeChar,
+		)
 	}
 	// FileType and Source share the same special-case routing onto `type` for
 	// the "manual" / "url" values, so callers can pick either control.
@@ -208,6 +216,25 @@ func applyKnowledgeListFilter(query *gorm.DB, filter types.KnowledgeListFilter) 
 	return query
 }
 
+// knowledgeListOrderClause 只从固定白名单生成排序语句，避免将请求参数直接拼入 SQL。
+func knowledgeListOrderClause(filter types.KnowledgeListFilter) string {
+	// 零值保留仓储层和公开接口原有的创建时间倒序行为。
+	column := "created_at"
+	switch filter.SortBy {
+	case types.KnowledgeListSortByUpdatedAt:
+		column = "updated_at"
+	case types.KnowledgeListSortByFileName:
+		// 与前端展示名称保持一致：文件名为空时依次使用标题和来源。
+		column = "LOWER(COALESCE(NULLIF(file_name, ''), NULLIF(title, ''), source))"
+	}
+
+	direction := "DESC"
+	if filter.SortOrder == types.KnowledgeListSortAscending {
+		direction = "ASC"
+	}
+	return fmt.Sprintf("%s %s", column, direction)
+}
+
 // ListPagedKnowledgeByKnowledgeBaseID lists all knowledge in a knowledge base with pagination
 func (r *knowledgeRepository) ListPagedKnowledgeByKnowledgeBaseID(
 	ctx context.Context,
@@ -231,7 +258,9 @@ func (r *knowledgeRepository) ListPagedKnowledgeByKnowledgeBaseID(
 	}
 
 	if err := scope(r.db.WithContext(ctx)).
-		Order("created_at DESC, id DESC").
+		Order(knowledgeListOrderClause(filter)).
+		// 相同排序值使用主键兜底，保证 OFFSET 分页顺序稳定。
+		Order("id ASC").
 		Offset(page.Offset()).
 		Limit(page.Limit()).
 		Find(&knowledges).Error; err != nil {
@@ -482,9 +511,23 @@ func (r *knowledgeRepository) GetKnowledgeBatch(
 	ctx context.Context, tenantID uint64, ids []string,
 ) ([]*types.Knowledge, error) {
 	var knowledge []*types.Knowledge
-	if err := r.db.WithContext(ctx).Debug().
+	if err := r.db.WithContext(ctx).
 		Where("tenant_id = ? AND id IN ?", tenantID, ids).
 		Find(&knowledge).Error; err != nil {
+		return nil, err
+	}
+	return knowledge, nil
+}
+
+// GetKnowledgeBatchByIDOnly gets knowledge in batch without a tenant filter.
+func (r *knowledgeRepository) GetKnowledgeBatchByIDOnly(
+	ctx context.Context, ids []string,
+) ([]*types.Knowledge, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var knowledge []*types.Knowledge
+	if err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&knowledge).Error; err != nil {
 		return nil, err
 	}
 	return knowledge, nil
@@ -507,6 +550,10 @@ func (r *knowledgeRepository) CheckKnowledgeExists(
 	query := r.db.WithContext(ctx).Model(&types.Knowledge{}).
 		Where("tenant_id = ? AND knowledge_base_id = ? AND parse_status NOT IN ?",
 			tenantID, kbID, []string{"failed", "deleting"})
+
+	if params.ExcludeKnowledgeID != "" {
+		query = query.Where("id <> ?", params.ExcludeKnowledgeID)
+	}
 
 	switch params.Type {
 	case "file":
@@ -754,24 +801,50 @@ func (r *knowledgeRepository) UpdateKnowledgeColumns(
 			); err != nil {
 				return err
 			}
-			if _, err := validateKnowledgeInputWrite(
-				ctx,
-				tx,
-				guard.proof.TenantID,
-				guard.proof.KnowledgeBaseID,
-				id,
-			); err != nil {
+			row := tx.Model(&types.Knowledge{}).Where(
+				"id = ? AND tenant_id = ? AND knowledge_base_id = ?",
+				id, guard.proof.TenantID, guard.proof.KnowledgeBaseID,
+			)
+			// A generated summary changes the material digest. Lock the current
+			// row before checking its receipt, then seal the new display fields
+			// in the same transaction without saving a stale whole-row snapshot.
+			producer, _ := ctx.Value(knowledgeProducerInputContextKey{}).(knowledgeProducerInputContext)
+			_, description := values["description"]
+			_, profile := values["profile"]
+			sealSummary := producer.proof != nil && producer.proof.Purpose == "summary" && (description || profile)
+			if sealSummary {
+				for column := range values {
+					switch column {
+					case "description", "profile", "summary_status", "updated_at":
+					default:
+						return ErrKnowledgeInputChanged
+					}
+				}
+				var locked types.Knowledge
+				lock := row.Session(&gorm.Session{}).Select("id").Clauses(clause.Locking{Strength: "UPDATE"})
+				if err := lock.Take(&locked).Error; err != nil {
+					return err
+				}
+			}
+			admission, err := validateKnowledgeInputWrite(
+				ctx, tx, guard.proof.TenantID, guard.proof.KnowledgeBaseID, id,
+			)
+			if err != nil {
 				return err
 			}
-			return tx.Model(&types.Knowledge{}).
-				Where(
-					"id = ? AND tenant_id = ? AND knowledge_base_id = ?",
-					id,
-					guard.proof.TenantID,
-					guard.proof.KnowledgeBaseID,
-				).
-				Updates(values).
-				Error
+			if err := row.Session(&gorm.Session{}).Updates(values).Error; err != nil {
+				return err
+			}
+			if !sealSummary {
+				return nil
+			}
+			// Scan into a fresh value so JSON fields cleared by the update
+			// cannot retain their previous in-memory contents.
+			var saved types.Knowledge
+			if err := row.Take(&saved).Error; err != nil {
+				return err
+			}
+			return sealKnowledgeInputMaterial(tx, admission.AdmissionID, &saved, nil)
 		})
 	}
 	_, hasMetadata := values["metadata"]
@@ -855,6 +928,8 @@ func (r *knowledgeRepository) UpdateActiveDeletingKnowledgeColumns(
 // across PostgreSQL and SQLite. The promote UPDATE's WHERE clause
 // (parse_status='finalizing' AND pending_subtasks_count=0) makes it
 // safe to run from any number of concurrent callers — at most one wins.
+// Both run in one transaction: a promote that failed after its decrement
+// committed left the counter at zero with nobody left to promote the row.
 func (r *knowledgeRepository) FinalizeSubtask(
 	ctx context.Context, id string,
 ) (int, bool, error) {
@@ -863,7 +938,6 @@ func (r *knowledgeRepository) FinalizeSubtask(
 			return 0, false, err
 		}
 	}
-	now := time.Now()
 	var promoted bool
 	write := func(tx *gorm.DB) error {
 		if guard, ok := ctx.Value(knowledgeBuildInputKey{}).(knowledgeBuildInputContext); ok {
@@ -913,45 +987,11 @@ func (r *knowledgeRepository) FinalizeSubtask(
 				return nil
 			}
 		}
-		// 1) Atomic decrement, clamped at zero. The `pending_subtasks_count > 0`
-		//    guard is purely a safety net for accounting bugs — under normal
-		//    operation each subtask handler decrements at most once per task,
-		//    so the counter cannot go negative.
-		res := tx.Model(&types.Knowledge{}).
-			Where("id = ? AND pending_subtasks_count > 0", id).
-			Updates(map[string]interface{}{
-				"pending_subtasks_count": gorm.Expr("pending_subtasks_count - 1"),
-				"updated_at":             now,
-			})
-		if res.Error != nil {
-			return res.Error
+		var err error
+		promoted, err = finalizeSubtask(tx, id)
+		if err != nil {
+			return err
 		}
-
-		// 2) Guarded promote. EVERY caller unconditionally attempts this after
-		//    decrementing — we must NOT gate it on a separate SELECT of the
-		//    counter. That read can be served by a lagging read-replica (or a
-		//    stale connection snapshot) and return a non-zero value even after
-		//    the counter has truly reached zero on the primary; if every caller
-		//    trusts that stale read, NONE of them runs the promote and the row
-		//    is stranded in `finalizing` forever (the observed "stuck
-		//    pending_subtasks_count" bug). The promote is a WRITE, so it executes
-		//    on the primary and its `pending_subtasks_count = 0` WHERE clause is
-		//    the single authoritative, atomic check on the live row: only the
-		//    caller whose decrement actually brought the counter to zero matches,
-		//    and cancel/delete cannot be clobbered by a late promote.
-		promoteRes := tx.Model(&types.Knowledge{}).
-			Where("id = ? AND parse_status = ? AND pending_subtasks_count = 0",
-				id, types.ParseStatusFinalizing).
-			Updates(map[string]interface{}{
-				"parse_status":  types.ParseStatusCompleted,
-				"error_message": "",
-				"processed_at":  now,
-				"updated_at":    now,
-			})
-		if promoteRes.Error != nil {
-			return promoteRes.Error
-		}
-		promoted = promoteRes.RowsAffected > 0
 		if promoted && r.completionHandoff != nil {
 			return r.completionHandoff(ctx, tx, id)
 		}
@@ -975,22 +1015,18 @@ func (r *knowledgeRepository) FinalizeSubtask(
 			}
 			return write(tx)
 		})
-	} else if _, guarded := ctx.Value(
-		knowledgeBuildInputKey{},
-	).(knowledgeBuildInputContext); guarded || r.completionHandoff != nil {
-		writeErr = r.db.WithContext(ctx).Transaction(write)
 	} else {
-		writeErr = write(r.db.WithContext(ctx))
+		writeErr = r.db.WithContext(ctx).Transaction(write)
 	}
 	if writeErr != nil {
 		return 0, false, writeErr
 	}
 	if err := r.maybePublishNextcloudVersion(ctx, id); err != nil {
-		return 0, promoted, err
+		return 0, promoted, fmt.Errorf("%w: %w", ErrSubtaskSlotReleased, err)
 	}
 	if promoted && r.completionObserver != nil {
 		if err := r.completionObserver(ctx, id); err != nil {
-			return 0, promoted, err
+			return 0, promoted, fmt.Errorf("%w: %w", ErrSubtaskSlotReleased, err)
 		}
 	}
 
@@ -1007,6 +1043,52 @@ func (r *knowledgeRepository) FinalizeSubtask(
 		return 0, promoted, nil
 	}
 	return snap.PendingSubtasksCount, promoted, nil
+}
+
+// finalizeSubtask releases one finalizing slot on db, which may be a
+// transaction: decrement, then promote when the counter reaches zero.
+func finalizeSubtask(db *gorm.DB, id string) (bool, error) {
+	now := time.Now()
+	// 1) Atomic decrement, clamped at zero. The `pending_subtasks_count > 0`
+	//    guard is purely a safety net for accounting bugs — under normal
+	//    operation each subtask handler decrements at most once per task,
+	//    so the counter cannot go negative.
+	res := db.Model(&types.Knowledge{}).
+		Where("id = ? AND pending_subtasks_count > 0", id).
+		Updates(map[string]interface{}{
+			"pending_subtasks_count": gorm.Expr("pending_subtasks_count - 1"),
+			"updated_at":             now,
+		})
+	if res.Error != nil {
+		return false, res.Error
+	}
+
+	// 2) Guarded promote. EVERY caller unconditionally attempts this after
+	//    decrementing — we must NOT gate it on a separate SELECT of the
+	//    counter. That read can be served by a lagging read-replica (or a
+	//    stale connection snapshot) and return a non-zero value even after
+	//    the counter has truly reached zero on the primary; if every caller
+	//    trusts that stale read, NONE of them runs the promote and the row
+	//    is stranded in `finalizing` forever (the observed "stuck
+	//    pending_subtasks_count" bug). The promote is a WRITE, so it executes
+	//    on the primary and its `pending_subtasks_count = 0` WHERE clause is
+	//    the single authoritative, atomic check on the live row: only the
+	//    caller whose decrement actually brought the counter to zero matches,
+	//    and cancel/delete cannot be clobbered by a late promote.
+	promoteRes := db.Model(&types.Knowledge{}).
+		Where("id = ? AND parse_status = ? AND pending_subtasks_count = 0",
+			id, types.ParseStatusFinalizing).
+		Updates(map[string]interface{}{
+			"parse_status":  types.ParseStatusCompleted,
+			"error_message": "",
+			"processed_at":  now,
+			"updated_at":    now,
+		})
+	if promoteRes.Error != nil {
+		return false, promoteRes.Error
+	}
+	promoted := promoteRes.RowsAffected > 0
+	return promoted, nil
 }
 
 // SetFinalizing atomically transitions a row from 'processing' to
@@ -1282,9 +1364,8 @@ func (r *knowledgeRepository) SearchKnowledge(
 	if keyword != "" {
 		escaped := strings.ToLower(escapeLikeKeyword(keyword))
 		query = query.Where(
-			"(LOWER(knowledges.file_name) LIKE ? OR LOWER(knowledges.title) LIKE ?)",
-			"%"+escaped+"%",
-			"%"+escaped+"%",
+			"(LOWER(knowledges.file_name) LIKE ? ESCAPE ? OR LOWER(knowledges.title) LIKE ? ESCAPE ?)",
+			"%"+escaped+"%", likeEscapeChar, "%"+escaped+"%", likeEscapeChar,
 		)
 	}
 
@@ -1409,9 +1490,8 @@ func (r *knowledgeRepository) SearchKnowledgeInScopes(
 	if keyword != "" {
 		escaped := strings.ToLower(escapeLikeKeyword(keyword))
 		query = query.Where(
-			"(LOWER(knowledges.file_name) LIKE ? OR LOWER(knowledges.title) LIKE ?)",
-			"%"+escaped+"%",
-			"%"+escaped+"%",
+			"(LOWER(knowledges.file_name) LIKE ? ESCAPE ? OR LOWER(knowledges.title) LIKE ? ESCAPE ?)",
+			"%"+escaped+"%", likeEscapeChar, "%"+escaped+"%", likeEscapeChar,
 		)
 	}
 

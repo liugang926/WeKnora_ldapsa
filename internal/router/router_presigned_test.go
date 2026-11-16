@@ -284,3 +284,7 @@ func TestPresignedFile_RestrictedKnowledgeBase_403BeforeStorage(t *testing.T) {
 		t.Fatalf("status=%d, want %d", w.Code, http.StatusForbidden)
 	}
 }
+
+func (s *stubTenantService) UpdateTenantProfile(context.Context, uint64, *string, *string) (*types.Tenant, error) {
+	panic("unexpected UpdateTenantProfile call")
+}

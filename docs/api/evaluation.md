@@ -1,15 +1,15 @@
 # 评估功能 API
 
-[返回目录](./README.md)
+[评估功能说明](../../website-docs/03-features/15-evaluation.md) · [API 概览](../../website-docs/04-api/01-api-overview.md)
 
 | 方法 | 路径           | 描述                  |
 | ---- | -------------- | --------------------- |
-| GET  | `/evaluation/` | 获取评估任务结果       |
-| POST | `/evaluation/` | 创建评估任务          |
+| GET  | `/evaluation` | 获取评估任务结果       |
+| POST | `/evaluation` | 创建评估任务          |
 | PUT  | `/evaluation/:taskId/cases/:questionId/review` | 保存逐题人工复核（管理员 JWT） |
 | PUT  | `/evaluation/:taskId/chat-cost` | 保存对话 API 价格快照与费用估算（管理员 JWT） |
 
-> 注：服务端路由带尾斜杠（Gin 会自动从 `/evaluation` 重定向到 `/evaluation/`），下方示例为方便阅读用了 `/evaluation`。
+以下路径均相对 `/api/v1`。创建和查询任务需要工作区管理员权限，API Key 还需要 `run_evaluations` 能力或 full-access。
 
 ## GET `/evaluation` - 获取评估任务结果
 
@@ -17,12 +17,12 @@
 
 | 字段     | 类型   | 必填 | 说明                                                |
 | -------- | ------ | ---- | --------------------------------------------------- |
-| task_id  | string | 是   | 从 `POST /evaluation` 返回的任务 ID                  |
+| task_id  | string | 否   | 创建接口返回的任务 ID；省略时列出当前空间最近 20 次运行                  |
 
 **请求**:
 
 ```bash
-curl --location 'http://localhost:8080/api/v1/evaluation?task_id=c34563ad-b09f-4858-b72e-e92beb80becb' \
+curl --location 'http://localhost:8080/api/v1/evaluation?task_id=evaluation_1_1758600000000_1a2b3c4d_default' \
 --header 'X-API-Key: sk-xxxxx' \
 --header 'Content-Type: application/json'
 ```
@@ -33,7 +33,7 @@ curl --location 'http://localhost:8080/api/v1/evaluation?task_id=c34563ad-b09f-4
 {
     "data": {
         "task": {
-            "id": "c34563ad-b09f-4858-b72e-e92beb80becb",
+            "id": "evaluation_1_1758600000000_1a2b3c4d_default",
             "tenant_id": 1,
             "dataset_id": "default",
             "start_time": "2025-08-12T14:54:26.221804768+08:00",
@@ -98,11 +98,13 @@ curl --location 'http://localhost:8080/api/v1/evaluation?task_id=c34563ad-b09f-4
 
 | 字段              | 类型   | 必填 | 说明                                            |
 | ----------------- | ------ | ---- | ----------------------------------------------- |
-| dataset_id        | string | 是   | 只读挂载的评估数据集 ID；仓库内 `synthetic-*` 仅为虚构回归夹具 |
-| knowledge_base_id | string | 否   | 评估使用的知识库 ID；省略时创建并清理临时知识库 |
-| chat_id           | string | 是   | 评估使用的对话模型 ID                            |
-| rerank_id         | string | 是   | 评估使用的重排序模型 ID                          |
-| embedding_id      | string | 建议 | 临时知识库的 Embedding 模型 ID                   |
+| dataset_id        | string | 否   | 默认使用内置样本 `default`，也可指定只读挂载的数据集 ID；仓库内 `synthetic-*` 仅为虚构回归夹具 |
+| knowledge_base_id | string | 否   | 参考知识库 ID；临时评估库使用该库的 Embedding 模型，并在运行结束时清理 |
+| chat_id           | string | 自定义题集必填 | 入库摘要和最终答复共用的对话模型 ID                            |
+| rerank_id         | string | 自定义题集必填 | 评估使用的重排序模型 ID                          |
+| embedding_id      | string | 自定义题集必填 | 临时库的 Embedding 模型 ID；使用参考库时须与其一致                   |
+
+内置样本可使用工作区默认模型。命名数据集及通过 `EVALUATION_DEFAULT_DATASET_DIR` 替换的默认样本必须显式指定三个模型。
 
 **请求**:
 
@@ -124,7 +126,7 @@ curl --location 'http://localhost:8080/api/v1/evaluation' \
 {
     "data": {
         "task": {
-            "id": "c34563ad-b09f-4858-b72e-e92beb80becb",
+            "id": "evaluation_1_1758600000000_1a2b3c4d_default",
             "tenant_id": 1,
             "dataset_id": "default",
             "start_time": "2025-08-12T14:54:26.221804768+08:00",

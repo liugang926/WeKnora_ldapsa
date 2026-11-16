@@ -3,6 +3,7 @@ package service_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/service"
+	"github.com/Tencent/WeKnora/internal/handler"
 	sessionhandler "github.com/Tencent/WeKnora/internal/handler/session"
 	"github.com/Tencent/WeKnora/internal/middleware"
 	"github.com/Tencent/WeKnora/internal/models/chat"
@@ -234,9 +236,9 @@ func (m *normalReferencesActualModel) ChatStream(
 // Keep the durable contract independent from SSE shape and provider call count.
 // Source-only Nextcloud metadata changes are permitted by the current contract;
 // Live actor, original-material and sender refusals remain incomplete. A user
-// stop intentionally saves the partial assistant as completed without an answer.
+// stop saves a partial assistant. A provider failure saves the public diagnostic.
 type normalReferencesHTTPExpectation struct {
-	denied     bool
+	noAnswer   bool
 	completed  int64
 	modelCalls int64
 }
@@ -249,13 +251,13 @@ func normalReferencesHTTPExpectationFor(t *testing.T, mode string) normalReferen
 		return normalReferencesHTTPExpectation{completed: 1, modelCalls: 1}
 	case "empty-fixed":
 		return normalReferencesHTTPExpectation{completed: 1}
-	case "producer-stop":
-		return normalReferencesHTTPExpectation{denied: true, completed: 1, modelCalls: 1}
+	case "producer-stop", "model-error", "eof-no-done":
+		return normalReferencesHTTPExpectation{noAnswer: true, completed: 1, modelCalls: 1}
 	case "actor-before-refs", "lease-before-refs", "unknown-prefix", "references-refuse", "empty-fixed-refuse":
-		return normalReferencesHTTPExpectation{denied: true}
-	case "lease-after-start", "thinking-refuse", "model-error", "eof-no-done",
+		return normalReferencesHTTPExpectation{noAnswer: true}
+	case "lease-after-start", "thinking-refuse",
 		"late-idle-actor", "late-idle-body-lease":
-		return normalReferencesHTTPExpectation{denied: true, modelCalls: 1}
+		return normalReferencesHTTPExpectation{noAnswer: true, modelCalls: 1}
 	default:
 		t.Fatalf("missing explicit HTTP terminal expectation for %q", mode)
 		return normalReferencesHTTPExpectation{}
@@ -321,6 +323,8 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 		nil,
 		nil,
 		nil,
+		nil, // No host project directories in this chat fixture.
+		nil, // No background activities.
 	)
 
 	gin.SetMode(gin.TestMode)
@@ -334,6 +338,7 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	})
 	router.POST("/knowledge-chat/:session_id", h.KnowledgeQA)
 	router.POST("/sessions/:session_id/stop", h.StopSession)
+	router.GET("/messages/:session_id/load", handler.NewMessageHandler(f.Messages, nil, nil, nil).LoadMessages)
 	httpReturned := make(chan struct{}, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
@@ -399,7 +404,6 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	require.NotContains(t, content, "source_lineage", "internal lineage must not leak anywhere in raw SSE")
 	// Terminal expectations are explicit for every current material/transport
 	// state; model invocation alone cannot establish durable completion.
-	denied := expectation.denied
 	require.EqualValues(t, expectation.modelCalls, model.calls.Load())
 	if expectation.modelCalls == 1 {
 		require.True(t, model.preflightPassed.Load(),
@@ -425,7 +429,7 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 			t.Fatal("stopped message update did not return")
 		}
 	}
-	if denied {
+	if expectation.noAnswer {
 		require.NotContains(t, content, "CURRENT ADMITTED NORMAL ANSWER")
 		if mode != "producer-stop" {
 			require.Contains(t, content, `"response_type":"error"`)
@@ -438,7 +442,9 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 			t, saved.Content, "CURRENT ADMITTED NORMAL ANSWER",
 			"refused output is not persisted as an answer",
 		)
-
+		if mode == "model-error" || mode == "eof-no-done" {
+			requireProviderFailureHistory(t, client, server.URL, content, &saved)
+		}
 	} else if mode == "empty-fixed" {
 		require.Contains(t, content, "CURRENT FIXED SAFE FALLBACK")
 		require.Contains(t, content, `"response_type":"complete"`)
@@ -507,6 +513,38 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 		}
 		return true
 	}, 5*time.Second, 10*time.Millisecond)
+}
+
+func requireProviderFailureHistory(
+	t *testing.T, client *http.Client, baseURL, content string, saved *types.Message,
+) {
+	t.Helper()
+	const failureText = "Generation could not complete; please retry after checking access"
+	require.Contains(t, content, failureText)
+	require.True(t, saved.IsCompleted)
+	require.Equal(t, failureText, saved.Content)
+	reloaded, err := client.Get(baseURL + "/messages/" + saved.SessionID + "/load")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, reloaded.Body.Close()) }()
+	require.Equal(t, http.StatusOK, reloaded.StatusCode)
+	var historyBytes bytes.Buffer
+	_, err = historyBytes.ReadFrom(reloaded.Body)
+	require.NoError(t, err)
+	require.NotContains(t, historyBytes.String(), "untrusted controlled provider diagnostic")
+	var history struct {
+		Data []types.Message `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(historyBytes.Bytes(), &history))
+	var assistants []types.Message
+	for _, message := range history.Data {
+		if message.Role == "assistant" {
+			assistants = append(assistants, message)
+		}
+	}
+	require.Len(t, assistants, 1)
+	require.Equal(t, saved.ID, assistants[0].ID)
+	require.True(t, assistants[0].IsCompleted)
+	require.Equal(t, failureText, assistants[0].Content)
 }
 
 func TestNormalReferencesActualHTTPSQLite(t *testing.T)   { runNormalReferencesActualHTTP(t, false) }

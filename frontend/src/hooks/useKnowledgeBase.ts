@@ -5,6 +5,7 @@ import {
   listKnowledgeFiles,
   getKnowledgeDetails,
   getKnowledgeDetailsCon,
+  type ListKnowledgeFilesParams,
 } from "@/api/knowledge-base/index";
 import { knowledgeStore } from "@/stores/knowledge";
 import { useRoute } from 'vue-router';
@@ -36,22 +37,11 @@ export default function (knowledgeBaseId?: string) {
     tags: [] as Array<{ id: string; name: string; color?: string }>,
   });
   let knowledgeListGeneration = 0;
+  let detailRequestGeneration = 0;
   let chunkRequestGeneration = 0;
   let activeKnowledgeId = '';
   const getKnowled = (
-    query: {
-      page: number;
-      page_size: number;
-      tag_ids?: string;
-      keyword?: string;
-      file_type?: string;
-      parse_status?: string;
-      source?: string;
-      start_time?: string;
-      end_time?: string;
-      folder_path?: string;
-      folder_recursive?: boolean;
-    } = { page: 1, page_size: 35 },
+    query: ListKnowledgeFilesParams = { page: 1, page_size: 35 },
     kbId?: string,
   ): Promise<void> => {
     const targetKbId = kbId || knowledgeBaseId;
@@ -101,6 +91,7 @@ export default function (knowledgeBaseId?: string) {
     }
   };
   const getCardDetails = (item: any) => {
+    const requestGeneration = ++detailRequestGeneration;
     activeKnowledgeId = item.id;
     chunkRequestGeneration++;
     Object.assign(details, {
@@ -122,6 +113,7 @@ export default function (knowledgeBaseId?: string) {
     });
     getKnowledgeDetails(item.id)
       .then((result: any) => {
+        if (requestGeneration !== detailRequestGeneration || activeKnowledgeId !== item.id) return;
         if (result.success && result.data) {
           const { data } = result;
           Object.assign(details, {

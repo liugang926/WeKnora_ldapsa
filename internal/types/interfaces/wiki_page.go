@@ -94,6 +94,8 @@ type WikiPageService interface {
 	GetStats(ctx context.Context, kbID string) (*types.WikiStats, error)
 
 	// RebuildLinks re-parses all pages and rebuilds bidirectional link references.
+	// It is best-effort: pages that could not be written are skipped, and any
+	// such failure is returned as a joined error counting the failed pages.
 	RebuildLinks(ctx context.Context, kbID string) error
 
 	// InjectCrossLinks scans specified pages and injects [[wiki-links]] for mentions
@@ -154,9 +156,9 @@ type WikiPageService interface {
 	// Used by rebuildIndexPage's first-time generation path.
 	ListByTypeRecent(ctx context.Context, kbID string, pageType string, limit int) ([]types.WikiIndexEntry, error)
 
-	// FindSimilarPages performs a pg_trgm similarity search over
-	// page titles. Used by the dedup pre-filter to surface candidate
-	// merge targets server-side.
+	// FindSimilarPages performs a title similarity search over page titles.
+	// PostgreSQL uses pg_trgm; Lite uses a SQLite-compatible fallback. Used by
+	// the dedup pre-filter to surface candidate merge targets server-side.
 	FindSimilarPages(
 		ctx context.Context,
 		kbID string,
@@ -245,6 +247,10 @@ type WikiPageService interface {
 
 	// SearchPages performs full-text search over wiki pages.
 	SearchPages(ctx context.Context, kbID string, query string, limit int) ([]*types.WikiPage, error)
+
+	// SearchPagesAcross searches wiki pages across multiple knowledge bases
+	// with the same ranking as SearchPages, then returns a global top-N.
+	SearchPagesAcross(ctx context.Context, kbIDs []string, query string, limit int) ([]*types.WikiPage, error)
 
 	// ListRevisions returns the stored historical snapshots for a page
 	// (newest first, content omitted) plus the total snapshot count and the
@@ -444,6 +450,10 @@ type WikiPageRepository interface {
 
 	// Search performs full-text search on wiki pages within a knowledge base.
 	Search(ctx context.Context, kbID string, query string, limit int) ([]*types.WikiPage, error)
+
+	// SearchAcross performs the same full-text search across multiple
+	// knowledge bases, then returns a global top-N by match_rank.
+	SearchAcross(ctx context.Context, kbIDs []string, query string, limit int) ([]*types.WikiPage, error)
 
 	// CountByType returns page counts grouped by type for a knowledge base.
 	CountByType(ctx context.Context, kbID string) (map[string]int64, error)

@@ -3,8 +3,11 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"runtime/debug"
 	"sort"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/Tencent/WeKnora/internal/common"
@@ -14,6 +17,10 @@ import (
 
 // ToolRegistry manages the registration and retrieval of tools
 type ToolRegistry struct {
+	executionGuard    func(context.Context, types.Tool) error
+	mcpCallGuard      MCPCallGuard
+	mcpSourceCatalog  *MCPCatalog // Source checks survive removal of the discovery tool.
+	restrictedTools   map[string]bool
 	tools             map[string]types.Tool
 	deferred          map[string]bool
 	mcpDirect         bool // Full exposure is an explicit compatibility path.
@@ -65,16 +72,41 @@ func (r *ToolRegistry) RegisterDeferredTool(tool types.Tool) {
 
 func (r *ToolRegistry) registerTool(tool types.Tool, deferred bool) {
 	name := tool.Name()
+	if r.restrictedTools != nil && !r.restrictedTools[name] {
+		return
+	}
 	if _, exists := r.tools[name]; exists {
 		logger.Warnf(context.Background(),
 			"[ToolRegistry] Duplicate tool registration rejected: %s (first-wins policy)", name)
 		return
 	}
 	r.tools[name] = tool
+	if discovery, ok := tool.(*MCPDiscoverTool); ok {
+		r.mcpSourceCatalog = discovery.catalog
+	}
 	if r.deferred == nil {
 		r.deferred = make(map[string]bool)
 	}
 	r.deferred[name] = deferred
+}
+
+// RestrictTools intersects an already constructed registry with an authorized
+// snapshot. Used by inherited children so newly available integrations cannot
+// silently expand their parent's effective native tool set.
+func (r *ToolRegistry) RestrictTools(names []string) {
+	allowed := make(map[string]bool, len(names))
+	for _, name := range names {
+		if r.restrictedTools == nil || r.restrictedTools[name] {
+			allowed[name] = true
+		}
+	}
+	r.restrictedTools = allowed
+	for name := range r.tools {
+		if !allowed[name] {
+			delete(r.tools, name)
+			delete(r.deferred, name)
+		}
+	}
 }
 
 // GetTool retrieves a tool by name
@@ -84,6 +116,24 @@ func (r *ToolRegistry) GetTool(name string) (types.Tool, error) {
 		return nil, fmt.Errorf("tool not found: %s", name)
 	}
 	return tool, nil
+}
+
+type sessionBinder interface {
+	BindSession(id string)
+}
+
+// BindSession tells sandbox tools which session's layout to advertise in
+// Description() and Parameters(). Host adapters refuse an empty session ID.
+func (r *ToolRegistry) BindSession(id string) {
+	if r == nil {
+		return
+	}
+	id = strings.TrimSpace(id)
+	for _, tool := range r.tools {
+		if binder, ok := tool.(sessionBinder); ok {
+			binder.BindSession(id)
+		}
+	}
 }
 
 // ListTools returns all registered tool names sorted alphabetically.
@@ -187,6 +237,11 @@ func (r *ToolRegistry) execute(ctx context.Context, tool types.Tool, args json.R
 	if err := ctx.Err(); err != nil {
 		return &types.ToolResult{Success: false, Error: err.Error()}, err
 	}
+	if r.executionGuard != nil {
+		if err := r.executionGuard(ctx, tool); err != nil {
+			return &types.ToolResult{Success: false, Error: err.Error()}, err
+		}
+	}
 	name := tool.Name()
 	// Cast parameters to match expected schema types before execution.
 	// This handles common LLM quirks like returning "true" instead of true.
@@ -240,7 +295,8 @@ func (r *ToolRegistry) execute(ctx context.Context, tool types.Tool, args json.R
 			maxOutput = toolLimit
 		}
 	}
-	result, execErr := tool.Execute(WithOutputBudget(ctx, maxOutput), args)
+	ctx = withMCPCallGuard(ctx, r.mcpCallGuard)
+	result, execErr := executeRecovered(WithOutputBudget(ctx, maxOutput), tool, name, args)
 	if result == nil {
 		result = &types.ToolResult{Success: false, Error: "tool returned no result"}
 	}
@@ -283,13 +339,62 @@ func (r *ToolRegistry) execute(ctx context.Context, tool types.Tool, args json.R
 	return result, execErr
 }
 
-// Cleanup cleans up all registered tools that implement the types.Cleanable interface.
-// This is called at the end of agent sessions to release tool-specific resources.
+// executeRecovered runs one tool and turns a panic into a failed result. Tools
+// run on errgroup goroutines when a round executes in parallel, and errgroup
+// does not carry a panic back to Wait: an unrecovered one from any tool (MCP
+// clients, sandboxes, third-party SDKs) would take down the whole server.
+//
+// recover only covers the goroutine that calls it, so this guards the
+// tool.Execute call alone: a goroutine a tool starts for itself must install
+// its own barrier (GoRecovered / RecoverGoroutine in goroutine.go).
+func executeRecovered(
+	ctx context.Context, tool types.Tool, name string, args json.RawMessage,
+) (result *types.ToolResult, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Errorf(ctx, "[ToolRegistry] Tool %s panicked: %v\n%s", name, r, debug.Stack())
+			// The panic value can carry internals (paths, addresses); the
+			// model and the user only need to know the call did not complete.
+			if types.RAGSourceLineageFromContext(ctx) != nil {
+				// A failed producer supplied no receipt. Only this fixed diagnostic
+				// can enter the turn, which retains its prior evidence and ACL checks.
+				err = errors.New("tool failed with an internal error")
+				result = &types.ToolResult{Error: err.Error(), SourceLineage: independentToolInput()}
+				return
+			}
+			err = fmt.Errorf("tool %s failed with an internal error", name)
+			result = &types.ToolResult{Error: err.Error()}
+		}
+	}()
+	return tool.Execute(ctx, args)
+}
+
+// errorCleanable is Cleanup that reports a failure. types.Cleanable takes no
+// error, and one method cannot satisfy both signatures. shell_exec_async uses
+// the error form so a failed cursor update is visible.
+type errorCleanable interface {
+	Cleanup(ctx context.Context) error
+}
+
+// Cleanup cleans up all registered tools that implement types.Cleanable or
+// errorCleanable. This is called at the end of agent sessions to release
+// tool-specific resources, including shell-job output cursors.
 func (r *ToolRegistry) Cleanup(ctx context.Context) {
 	for name, tool := range r.tools {
-		if cleanable, ok := tool.(types.Cleanable); ok {
+		switch cleanable := tool.(type) {
+		case types.Cleanable:
 			logger.Infof(ctx, "[ToolRegistry] Cleaning up tool: %s", name)
 			cleanable.Cleanup(ctx)
+		case errorCleanable:
+			logger.Infof(ctx, "[ToolRegistry] Cleaning up tool: %s", name)
+			if err := cleanable.Cleanup(ctx); err != nil {
+				logger.Warnf(ctx, "[ToolRegistry] cleanup %s: %v", name, err)
+			}
 		}
 	}
+}
+
+// SetExecutionGuard installs a runtime authority fence before any direct or deferred tool.
+func (r *ToolRegistry) SetExecutionGuard(guard func(context.Context, types.Tool) error) {
+	r.executionGuard = guard
 }

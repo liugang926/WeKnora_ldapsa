@@ -205,11 +205,11 @@ watch([visible, () => props.dataSourceId], ([isVisible]) => {
 .failed-candidates__toolbar { display: flex; justify-content: flex-end; }
 .failed-candidates__error { color: var(--td-error-color); }
 .failed-candidates__list { display: grid; gap: 8px; }
-.failed-candidates__item { display: grid; gap: 4px; width: 100%; padding: 10px; border: 1px solid var(--td-component-stroke); border-radius: 6px; background: var(--td-bg-color-container); text-align: left; color: var(--td-text-color-secondary); cursor: pointer; }
+.failed-candidates__item { display: grid; gap: 4px; width: 100%; padding: 10px; border: 1px solid var(--td-component-stroke); border-radius: var(--app-radius-sm); background: var(--td-bg-color-container); text-align: left; color: var(--td-text-color-secondary); cursor: pointer; }
 .failed-candidates__item--selected { border-color: var(--td-brand-color); }
 .failed-candidates__item:focus-visible { outline: 2px solid var(--td-brand-color); outline-offset: 2px; }
 .failed-candidates__file { color: var(--td-text-color-primary); font-weight: 600; }
-.failed-candidates__detail { padding: 12px; border: 1px solid var(--td-component-stroke); border-radius: 6px; }
+.failed-candidates__detail { padding: 12px; border: 1px solid var(--td-component-stroke); border-radius: var(--app-radius-sm); }
 .failed-candidates__detail h3 { margin: 0 0 8px; }
 .failed-candidates__detail p { margin: 0 0 8px; }
 </style>

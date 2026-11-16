@@ -3,6 +3,8 @@ package chatpipeline
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -70,9 +72,17 @@ func (e *Extractor) ExtractSourceLineage(
 	if err := check(ctx, detached); err != nil {
 		return nil, err
 	}
-	graph, err := e.formater.ParseGraph(ctx, response.Content)
-	if err != nil {
-		return nil, err
+	graph, parseErr := e.formater.ParseGraph(ctx, response.Content)
+	if parseErr != nil {
+		if !errors.Is(parseErr, ErrModelDeclined) {
+			return nil, parseErr
+		}
+		if !modelStoppedOnItsOwn(response.FinishReason) {
+			// Do not wrap a refusal: unfinished output must be retried.
+			return nil, fmt.Errorf("graph extraction stopped before JSON (finish_reason=%q)", response.FinishReason)
+		}
+		graph = &types.GraphData{}
+		parseErr = ErrModelDeclined // no source prose in diagnostics or logs
 	}
 	graph.SourceLineage, err = types.UnionSourceLineage(lineage)
 	if err != nil {
@@ -87,5 +97,5 @@ func (e *Extractor) ExtractSourceLineage(
 	if err := check(ctx, detached); err != nil {
 		return nil, err
 	}
-	return graph, nil
+	return graph, parseErr
 }
