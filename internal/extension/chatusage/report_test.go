@@ -19,7 +19,7 @@ import (
 
 func reportDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	var driver gorm.Dialector = sqlite.Open(":memory:")
+	driver := sqlite.Open(":memory:")
 	if dsn := os.Getenv("WEKNORA_CHAT_USAGE_TEST_POSTGRES_DSN"); dsn != "" {
 		driver = postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
 	}
@@ -125,10 +125,14 @@ func TestOnlySystemAdminWebLogin(t *testing.T) {
 		path string
 		want int
 	}{
-		{web, "/usage/users", 403}, {delegated, "/usage/users", 403}, {platform, "/usage/users/u1/sessions", 403},
+		{web, "/usage/users", 403},
+		{delegated, "/usage/users", 403},
+		{platform, "/usage/users/u1/sessions", 403},
 		{scoped, "/usage/users/u1/sessions", 403},
-		{admin, "/usage/users?page_size=101", 400}, {admin, "/usage/users/u1/sessions?page=0", 400},
-		{admin, "/usage/users/u1/sessions", 200}, {admin, "/usage/users", 200},
+		{admin, "/usage/users?page_size=101", 400},
+		{admin, "/usage/users/u1/sessions?page=0", 400},
+		{admin, "/usage/users/u1/sessions", 200},
+		{admin, "/usage/users", 200},
 	} {
 		w := httptest.NewRecorder()
 		engine.ServeHTTP(w, httptest.NewRequest(http.MethodGet, tt.path, nil).WithContext(tt.ctx))

@@ -23,11 +23,15 @@ func TestFinalAnswerUsageAfterProtocolFinish(t *testing.T) {
 		trailer string
 		want    *types.TokenUsage
 	}{
-		{"counted", `{"prompt_tokens":8,"completion_tokens":3,"total_tokens":11,` +
-			`"prompt_tokens_details":{"cached_tokens":4}}`,
-			&types.TokenUsage{PromptTokens: 8, CompletionTokens: 3, TotalTokens: 11}},
-		{"reported zero", `{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}`,
-			&types.TokenUsage{ProviderReported: true}},
+		{
+			"counted", `{"prompt_tokens":8,"completion_tokens":3,"total_tokens":11,` +
+				`"prompt_tokens_details":{"cached_tokens":4}}`,
+			&types.TokenUsage{PromptTokens: 8, CompletionTokens: 3, TotalTokens: 11},
+		},
+		{
+			"reported zero", `{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}`,
+			&types.TokenUsage{ProviderReported: true},
+		},
 		{"missing counters", `{}`, &types.TokenUsage{}},
 		{"unreported", "", nil},
 	} {

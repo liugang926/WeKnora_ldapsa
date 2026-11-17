@@ -31,7 +31,9 @@ func TestFinalAnswerMissingUsageTrailer(t *testing.T) {
 
 func TestFinalAnswerForwardsErrorAfterFinishReason(t *testing.T) {
 	source := make(chan types.StreamResponse, 3)
-	source <- types.StreamResponse{ResponseType: types.ResponseTypeAnswer, Done: true, UsagePending: true, FinishReason: "stop"}
+	source <- types.StreamResponse{
+		ResponseType: types.ResponseTypeAnswer, Done: true, UsagePending: true, FinishReason: "stop",
+	}
 	source <- types.StreamResponse{ResponseType: types.ResponseTypeThinking, Done: true}
 	source <- types.StreamResponse{ResponseType: types.ResponseTypeError, Done: true, Content: "bad trailer"}
 	close(source)

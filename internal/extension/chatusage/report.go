@@ -165,7 +165,7 @@ func listPeople(ctx context.Context, db *gorm.DB, p page, query string) (peopleR
 		args = append(args, term, term)
 	}
 	args = append(args, p.PageSize, int64(p.Page-1)*int64(p.PageSize))
-	sql := sessionUsage(db.Dialector.Name(), false) + people + filter + report
+	sql := sessionUsage(db.Name(), false) + people + filter + report
 	if err := db.WithContext(ctx).Raw(sql, args...).Scan(&rows).Error; err != nil {
 		return result, err
 	}
@@ -199,7 +199,7 @@ func listSessions(ctx context.Context, db *gorm.DB, p page, userID string) (sess
 	LEFT JOIN messages m ON m.id = (SELECT MIN(id) FROM messages
 		WHERE session_id = p.session_id AND role = 'user' AND created_at = p.first_question)
 	ORDER BY p.first_question DESC, p.session_id`
-	sql := sessionUsage(db.Dialector.Name(), true) + report
+	sql := sessionUsage(db.Name(), true) + report
 	offset := int64(p.Page-1) * int64(p.PageSize)
 	if err := db.WithContext(ctx).Raw(sql, userID, p.PageSize, offset).Scan(&rows).Error; err != nil {
 		return result, err
