@@ -62,7 +62,7 @@ func (r ConnectorScheduleLogs) ConsecutiveFailures(ctx context.Context, source s
 	if err != nil || failures < 2 || r.ScheduleAuthority == nil {
 		return failures, last, err
 	}
-	log, err := r.SyncLogRepository.FindLatest(ctx, source)
+	log, err := r.FindLatest(ctx, source)
 	if err != nil || log == nil || log.Status != types.SyncLogStatusFailed ||
 		log.RecoveryTrigger != "schedule" || log.QueueTaskID != log.ScheduledMinuteTaskID() ||
 		!isDingTalkScheduleMessage(log.ErrorMessage) {

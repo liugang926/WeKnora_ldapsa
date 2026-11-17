@@ -86,7 +86,7 @@ data_source_id TEXT PRIMARY KEY, tenant_id INTEGER,
 		concurrent = nil
 		require.NoError(t, db.Model(h.source).UpdateColumn("config", next).Error)
 	}))
-	t.Cleanup(func() { db.Callback().Query().Remove("swap_schedule_scope") })
+	t.Cleanup(func() { require.NoError(t, db.Callback().Query().Remove("swap_schedule_scope")) })
 	request := &types.DataSource{
 		ID: updated.ID, Type: types.ConnectorTypeDingTalk, SyncSchedule: updated.SyncSchedule,
 		Config: types.JSON(`{"resource_ids":["a","b"],"settings":{}}`),

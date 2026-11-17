@@ -128,9 +128,11 @@ func TestDingTalkScheduleStatusReadsCurrentDelegation(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(&types.SyncLog{}))
 	logs := ConnectorScheduleLogs{SyncLogRepository: NewSyncLogRepository(db), DB: db, ScheduleAuthority: store}
 	for i := 0; i < 2; i++ {
-		run := &types.SyncLog{TenantID: ds.TenantID, DataSourceID: ds.ID, Status: types.SyncLogStatusFailed,
+		run := &types.SyncLog{
+			TenantID: ds.TenantID, DataSourceID: ds.ID, Status: types.SyncLogStatusFailed,
 			StartedAt: time.Now().Add(time.Duration(i) * time.Minute), RecoveryTrigger: "schedule",
-			ErrorMessage: ErrDingTalkScheduleAuthorizationRequired.Error()}
+			ErrorMessage: ErrDingTalkScheduleAuthorizationRequired.Error(),
+		}
 		run.QueueTaskID = run.ScheduledMinuteTaskID()
 		require.NoError(t, db.Create(run).Error)
 	}
