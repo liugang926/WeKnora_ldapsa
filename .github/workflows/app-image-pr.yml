@@ -40,6 +40,15 @@ jobs:
     name: Full AnyDoc app image (amd64)
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    services:
+      postgres:
+        image: paradedb/paradedb:v0.25.11-pg17@sha256:78d65750f0f88a56548526201bcab9910f83b90fe929cdbf979890f3f80b0f95
+        env:
+          POSTGRES_USER: weknora
+          POSTGRES_PASSWORD: fixture-only
+          POSTGRES_DB: bootstrap
+      redis:
+        image: redis:7.4.10-alpine
     steps:
       - uses: actions/checkout@v6
         with:
@@ -77,3 +86,41 @@ jobs:
             | grep -Fx "WEKNORA_BUILD_COMMIT=$EXPECTED_COMMIT"
           docker run --rm --entrypoint /bin/sh weknora-app:pr-check \
             -c 'test -x /app/WeKnora && test -x /usr/local/bin/migrate && test -d /app/migrations'
+
+      - name: Start the production application and verify readiness
+        timeout-minutes: 5
+        env:
+          SERVICES_NETWORK: ${{ job.services.postgres.network }}
+        run: |
+          set -euo pipefail
+          trap 'docker rm -f weknora-bootstrap >/dev/null 2>&1 || true' EXIT
+          docker run -d --name weknora-bootstrap --network "$SERVICES_NETWORK" \
+            -e DB_DRIVER=postgres -e DB_HOST=postgres -e DB_PORT=5432 -e DB_USER=weknora \
+            -e DB_PASSWORD=fixture-only -e DB_NAME=bootstrap -e AUTO_MIGRATE=false \
+            -e REDIS_ADDR=redis:6379 -e STREAM_MANAGER_TYPE=redis -e RETRIEVE_DRIVER=postgres \
+            -e STORAGE_TYPE=local -e LOCAL_STORAGE_BASE_DIR=/data/files -e GIN_MODE=release \
+            -e WEKNORA_REQUIRE_ANYDOC_SELFTEST=1 -e WEKNORA_SANDBOX_MODE=disabled \
+            -e WEKNORA_ORIGINAL_BODY_JOURNAL_DIRECTORY=/tmp/bootstrap-journal \
+            -e WEKNORA_ORIGINAL_BODY_JOURNAL_KEY=/tmp/bootstrap-journal/key \
+            -e WEKNORA_ORIGINAL_BODY_JOURNAL_PIN=/tmp/bootstrap-journal/pin \
+            -e 'WEKNORA_ORIGINAL_BODY_MAINTENANCE_DSN=postgres://weknora:fixture-only@postgres:5432/bootstrap?sslmode=disable' \
+            weknora-app:pr-check sh -ec '
+              umask 077
+              mkdir "$WEKNORA_ORIGINAL_BODY_JOURNAL_DIRECTORY"
+              head -c 32 /dev/urandom > "$WEKNORA_ORIGINAL_BODY_JOURNAL_KEY"
+              export JWT_SECRET=$(od -An -N32 -tx1 /dev/urandom | tr -d " \n")
+              export SYSTEM_AES_KEY=$(od -An -N16 -tx1 /dev/urandom | tr -d " \n")
+              export SYSTEM_SIGNING_KEY=$(od -An -N32 -tx1 /dev/urandom | tr -d " \n")
+              original-body-retention -mode migrate
+              original-body-retention -mode init
+              exec ./WeKnora
+            '
+          for attempt in {1..90}; do
+            if docker exec weknora-bootstrap curl -fsS http://localhost:8080/health/readiness 2>/dev/null; then
+              exit 0
+            fi
+            [[ $(docker inspect -f '{{.State.Running}}' weknora-bootstrap) == true ]] || break
+            sleep 2
+          done
+          docker logs --tail 100 weknora-bootstrap
+          exit 1
