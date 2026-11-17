@@ -104,6 +104,31 @@ func (s *connectorScheduleService) ProcessSync(ctx context.Context, task *asynq.
 	if admitted == nil {
 		return s.DataSourceService.ProcessSync(ctx, task)
 	}
+	return s.processConnectorSchedule(ctx, task.Type(), payload, admitted, attempt, maxRetry)
+}
+
+func (s *connectorScheduleService) processConnectorSchedule(ctx context.Context, taskType string,
+	payload types.DataSourceSyncPayload, admitted *repository.ConnectorScheduleExecution, attempt, maxRetry int,
+) (err error) {
+	runCtx, cancelRun := admitted.Context(ctx)
+	defer cancelRun()
+	defer func() {
+		crash := recover()
+		if crash == nil && err == nil {
+			return
+		}
+		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		retryable := attempt < maxRetry && !errors.Is(err, asynq.SkipRetry) && !errors.Is(err, asynq.RevokeTask)
+		finishErr := s.sourceInputs.FinishConnectorScheduleError(finishCtx, admitted, attempt, retryable)
+		if crash != nil {
+			// Preserve the queue's panic handling after recording the failed attempt.
+			panic(crash)
+		}
+		if finishErr != nil {
+			err = errors.Join(err, finishErr)
+		}
+	}()
 	// Only this in-memory invocation receives the actor. Keep persisted queue
 	// bytes actor-free and resolve the current grant again on every delivery.
 	payload.Initiator = admitted.Initiator
@@ -113,16 +138,5 @@ func (s *connectorScheduleService) ProcessSync(ctx context.Context, task *asynq.
 	}
 	run := *s.DataSourceService
 	run.dsRepo = &connectorScheduleRead{run.dsRepo, admitted.Source}
-	err = run.ProcessSync(admitted.Context(ctx), asynq.NewTask(task.Type(), body))
-	if err == nil {
-		return nil
-	}
-	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-	defer cancel()
-	retryable := attempt < maxRetry && !errors.Is(err, asynq.SkipRetry) && !errors.Is(err, asynq.RevokeTask)
-	finishErr := s.sourceInputs.FinishConnectorScheduleError(finishCtx, admitted, attempt, retryable)
-	if finishErr != nil {
-		return errors.Join(err, finishErr)
-	}
-	return err
+	return run.ProcessSync(runCtx, asynq.NewTask(taskType, body))
 }

@@ -38,7 +38,7 @@ func InstallConnectorScheduleSchema(db *gorm.DB) error {
 		}
 		return tx.Exec(`CREATE TABLE IF NOT EXISTS ext_connector_schedule_attempts (
             log_id VARCHAR(36) PRIMARY KEY REFERENCES ext_connector_schedule_runs(log_id) ON DELETE CASCADE,
-            attempt INTEGER NOT NULL, retryable BOOLEAN NOT NULL DEFAULT FALSE)`).Error
+            attempt INTEGER NOT NULL, retryable BOOLEAN NOT NULL DEFAULT FALSE, deadline_ms BIGINT NOT NULL)`).Error
 	})
 }
 
@@ -174,6 +174,41 @@ type ConnectorScheduleLogs struct {
 	DB *gorm.DB
 }
 
+// HasRunningSync releases a claimed run whose worker disappeared before cleanup.
+// Check only ordinary cron receipts. Delayed, unclaimed jobs keep their queue position.
+func (r ConnectorScheduleLogs) HasRunningSync(ctx context.Context, sourceID string) (bool, error) {
+	running, err := r.SyncLogRepository.HasRunningSync(ctx, sourceID)
+	if err != nil || !running {
+		return running, err
+	}
+	now := time.Now().UTC()
+	expired := func(tx *gorm.DB) *gorm.DB {
+		return tx.Model(&types.SyncLog{}).
+			Where("data_source_id = ? AND recovery_trigger = 'schedule'", sourceID).
+			Where("status = ?", types.SyncLogStatusRunning).
+			Where(`EXISTS (SELECT 1 FROM ext_connector_schedule_attempts a
+				WHERE a.log_id = sync_logs.id AND a.deadline_ms < ?)`, now.UnixMilli())
+	}
+	err = r.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Take the same source lock as admission only when there is a candidate.
+		// Recheck the deadline under the lock in case a retry has since renewed it.
+		var source string
+		err := tx.Model(&types.DataSource{}).Select("id").Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND EXISTS (?)", sourceID, expired(tx).Select("1")).Find(&source).Error
+		if err != nil || source == "" {
+			return err
+		}
+		return expired(tx).Updates(map[string]any{
+			"status": types.SyncLogStatusCanceled, "finished_at": now,
+			"error_message": "scheduled connector worker exceeded its execution deadline",
+		}).Error
+	})
+	if err != nil {
+		return true, err
+	}
+	return r.SyncLogRepository.HasRunningSync(ctx, sourceID)
+}
+
 // Create snapshots the current delegated grant before enqueue, in the log transaction.
 func (r ConnectorScheduleLogs) Create(ctx context.Context, log *types.SyncLog) error {
 	// Protected connector schedules supply their own durable admission.
@@ -215,13 +250,14 @@ type ConnectorScheduleExecution struct {
 	Source         *types.DataSource
 	Initiator      types.TaskInitiator
 	logID, binding string
+	deadline       time.Time
 }
 
 type connectorScheduleExecutionKey struct{}
 
 // Context carries the private run receipt through the existing write path.
-func (e *ConnectorScheduleExecution) Context(ctx context.Context) context.Context {
-	return context.WithValue(ctx, connectorScheduleExecutionKey{}, e)
+func (e *ConnectorScheduleExecution) Context(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithDeadline(context.WithValue(ctx, connectorScheduleExecutionKey{}, e), e.deadline)
 }
 
 func checkConnectorScheduleWrite(ctx context.Context, db *gorm.DB, kb *types.KnowledgeBase) error {
@@ -307,11 +343,19 @@ func (s *KnowledgeInputProvenanceStore) RestoreConnectorSchedule(ctx context.Con
 		fresh, check := s.AuthorizeCurrentKnowledgeInputWrite(actor,
 			&types.KnowledgeBase{ID: ds.KnowledgeBaseID, TenantID: ds.TenantID})
 		if check == nil {
-			if err := claimConnectorScheduleAttempt(db, &run, &ds, binding, attempt); err != nil {
+			// Match the scheduler's per-delivery timeout, measured from this claim rather
+			// than enqueue time. All writes by this worker use the same hard deadline.
+			deadline := time.Now().Add(2 * time.Hour)
+			if parent, ok := ctx.Deadline(); ok && parent.Before(deadline) {
+				deadline = parent
+			}
+			if err := claimConnectorScheduleAttempt(db, &run, &ds, binding, attempt, deadline); err != nil {
 				return nil, err
 			}
 			initiator.Role = types.CallerFromContext(fresh).Role
-			return &ConnectorScheduleExecution{Source: &ds, Initiator: initiator, logID: run.ID, binding: binding}, nil
+			return &ConnectorScheduleExecution{
+				Source: &ds, Initiator: initiator, logID: run.ID, binding: binding, deadline: deadline,
+			}, nil
 		}
 		if !errors.Is(check, gorm.ErrRecordNotFound) && !errors.Is(check, access.ErrForbidden) &&
 			!errors.Is(check, access.ErrNotFound) && !errors.Is(check, ErrKnowledgeInputChanged) {
@@ -335,7 +379,7 @@ func (s *KnowledgeInputProvenanceStore) RestoreConnectorSchedule(ctx context.Con
 // A retry needs its predecessor's returned-error receipt. A successful, active,
 // or superseded execution cannot be taken over by replaying a queue message.
 func claimConnectorScheduleAttempt(db *gorm.DB, run *types.SyncLog, ds *types.DataSource,
-	binding string, attempt int,
+	binding string, attempt int, deadline time.Time,
 ) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		var current types.DataSource
@@ -356,8 +400,8 @@ func claimConnectorScheduleAttempt(db *gorm.DB, run *types.SyncLog, ds *types.Da
 			return err
 		}
 		if status == types.SyncLogStatusRunning {
-			first := tx.Exec(`INSERT INTO ext_connector_schedule_attempts (log_id, attempt)
-				VALUES (?, ?) ON CONFLICT (log_id) DO NOTHING`, run.ID, attempt)
+			first := tx.Exec(`INSERT INTO ext_connector_schedule_attempts (log_id, attempt, deadline_ms)
+				VALUES (?, ?, ?) ON CONFLICT (log_id) DO NOTHING`, run.ID, attempt, deadline.UnixMilli())
 			if first.Error != nil || first.RowsAffected == 1 {
 				return first.Error
 			}
@@ -374,8 +418,8 @@ func claimConnectorScheduleAttempt(db *gorm.DB, run *types.SyncLog, ds *types.Da
 		if newer != 0 {
 			return ErrConnectorScheduleRunBinding
 		}
-		claim := tx.Exec(`UPDATE ext_connector_schedule_attempts SET attempt = ?, retryable = FALSE
-			WHERE log_id = ? AND attempt < ? AND retryable = TRUE`, attempt, run.ID, attempt)
+		claim := tx.Exec(`UPDATE ext_connector_schedule_attempts SET attempt = ?, retryable = FALSE, deadline_ms = ?
+			WHERE log_id = ? AND attempt < ? AND retryable = TRUE`, attempt, deadline.UnixMilli(), run.ID, attempt)
 		if claim.Error != nil {
 			return claim.Error
 		}

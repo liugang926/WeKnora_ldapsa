@@ -116,10 +116,13 @@ func TestOrdinaryConnectorScheduleIngestsWithLiveWorkspaceEditor(t *testing.T) {
 	require.ErrorIs(t, process(first, payload), asynq.SkipRetry)
 	require.Equal(t, 1, connector.calls)
 	require.Zero(t, queue.queued)
+	// The queue catches handler panics. A panic must release this attempt too.
+	connector.duringFetch = func() { panic("connector panic") }
+	require.PanicsWithValue(t, "connector panic", func() { _ = process(retry, payload) })
 	connector.duringFetch = nil
 	connector.fail = nil
-	require.NoError(t, process(retry, payload))
-	require.Equal(t, 2, connector.calls)
+	require.NoError(t, process(types.WithTaskRetryMetadata(worker, 2, 5), payload))
+	require.Equal(t, 3, connector.calls)
 	stored, err := logs.FindByID(h.ctx, log.ID)
 	require.NoError(t, err)
 	require.Equal(t, types.SyncLogStatusSuccess, stored.Status, stored.ErrorMessage)
@@ -134,10 +137,28 @@ func TestOrdinaryConnectorScheduleIngestsWithLiveWorkspaceEditor(t *testing.T) {
 	require.ErrorIs(t, process(types.WithTaskRetryMetadata(oldWorker, 0, 5), superseded), transient)
 	_, stale, worker := cron()
 	require.ErrorIs(t, process(types.WithTaskRetryMetadata(oldWorker, 1, 5), superseded), asynq.SkipRetry)
-	require.Equal(t, 3, connector.calls)
+	require.Equal(t, 4, connector.calls)
 	connector.fail = nil
 	save()
 	require.ErrorIs(t, process(worker, stale), repository.ErrConnectorScheduleGrantRequired)
+	// A killed worker cannot run a defer. Leave its real claim unfinished,
+	// then advance its persisted deadline after checking the active run guard.
+	orphan, lost, orphanWorker := cron()
+	claim, err := queue.inputs.RestoreConnectorSchedule(orphanWorker, lost, orphan.ScheduledMinuteTaskID(), 0)
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	blocked, err := schedulerLogs.HasRunningSync(h.ctx, h.source.ID)
+	require.NoError(t, err)
+	require.True(t, blocked)
+	require.NoError(t, db.Exec("UPDATE ext_connector_schedule_attempts SET deadline_ms = ? WHERE log_id = ?",
+		time.Now().Add(-time.Minute).UnixMilli(), orphan.ID).Error)
+	blocked, err = schedulerLogs.HasRunningSync(h.ctx, h.source.ID)
+	require.NoError(t, err)
+	require.False(t, blocked)
+	stored, err = logs.FindByID(h.ctx, orphan.ID)
+	require.NoError(t, err)
+	require.Equal(t, types.SyncLogStatusCanceled, stored.Status)
+	require.ErrorIs(t, process(types.WithTaskRetryMetadata(orphanWorker, 1, 5), lost), asynq.SkipRetry)
 	_, revoked, worker := cron()
 	require.NoError(t, db.Model(&types.User{}).Where("id = ?", types.CallerFromContext(h.ctx).UserID).
 		UpdateColumn("is_active", false).Error)
