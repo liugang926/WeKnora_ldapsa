@@ -18,7 +18,7 @@ import (
 func InstallConnectorScheduleSchema(db *gorm.DB) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		// PostgreSQL's IF NOT EXISTS does not serialize simultaneous catalog inserts on first boot.
-		if tx.Dialector.Name() == "postgres" {
+		if tx.Name() == "postgres" {
 			const lock = "SELECT pg_advisory_xact_lock(hashtext('ext_connector_schedule_schema'))"
 			if err := tx.Exec(lock).Error; err != nil {
 				return err
