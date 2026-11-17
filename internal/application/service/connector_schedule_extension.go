@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -80,7 +81,11 @@ func (s *connectorScheduleService) ProcessSync(ctx context.Context, task *asynq.
 	if s.sourceInputs == nil {
 		return types.ErrSourceLineageUnknown
 	}
-	admitted, err := s.sourceInputs.RestoreConnectorSchedule(ctx, payload, taskID)
+	attempt, maxRetry := nextcloudSyncRetryMetadata(ctx)
+	if attempt < 0 || attempt > maxRetry {
+		return fmt.Errorf("%w: %w", asynq.SkipRetry, repository.ErrConnectorScheduleRunBinding)
+	}
+	admitted, err := s.sourceInputs.RestoreConnectorSchedule(ctx, payload, taskID, attempt)
 	if errors.Is(err, gorm.ErrRecordNotFound) && payload.Initiator == (types.TaskInitiator{}) {
 		// The ordinary service closes a deleted source's log after verifying its binding.
 		// A mismatched source tenant must never receive a saved identity here.
@@ -108,5 +113,16 @@ func (s *connectorScheduleService) ProcessSync(ctx context.Context, task *asynq.
 	}
 	run := *s.DataSourceService
 	run.dsRepo = &connectorScheduleRead{run.dsRepo, admitted.Source}
-	return run.ProcessSync(admitted.Context(ctx), asynq.NewTask(task.Type(), body))
+	err = run.ProcessSync(admitted.Context(ctx), asynq.NewTask(task.Type(), body))
+	if err == nil {
+		return nil
+	}
+	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	retryable := attempt < maxRetry && !errors.Is(err, asynq.SkipRetry) && !errors.Is(err, asynq.RevokeTask)
+	finishErr := s.sourceInputs.FinishConnectorScheduleError(finishCtx, admitted, attempt, retryable)
+	if finishErr != nil {
+		return errors.Join(err, finishErr)
+	}
+	return err
 }
