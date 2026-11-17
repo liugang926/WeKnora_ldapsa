@@ -446,7 +446,9 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 			queued, _, err := redis.GetEvents(f.Ctx, f.Session.ID, saved.ID, 0)
 			require.NoError(t, err)
 			for _, frame := range queued {
-				require.Contains(t, []types.ResponseType{types.ResponseTypeAgentQuery, types.ResponseTypeError}, frame.Type)
+				require.Contains(
+					t, []types.ResponseType{types.ResponseTypeAgentQuery, types.ResponseTypeError}, frame.Type,
+				)
 			}
 		}
 		require.NotContains(
