@@ -8415,6 +8415,10 @@ export default {
     guideStep3_seafile: 'ここに戻って新しいトークンを入力し、「再試行」をクリックします',
     permissionDocLink: 'FeishuのWiki権限ドキュメントを見る',
     authorizeDingTalkSchedule: 'このスケジュールを承認',
+    dingTalkGrantActive: 'このスケジュールは現在承認されています',
+    dingTalkGrantOnSave: '保存すると変更後のスケジュールが承認されます',
+    dingTalkGrantUnavailable: '現在のスケジュールの承認状態を取得できませんでした。',
+    dingTalkGrantRevoked: '以前のスケジュール承認は無効になっています。',
     syncScheduleLabel: '同期スケジュール',
     conflictLabel: '競合時の処理',
     conflict: {
@@ -8629,8 +8633,8 @@ export default {
     hoursAgo: '{n}時間前',
     daysAgo: '{n}日前',
     syncError: {
-      dingtalk_schedule_authorization_required: 'DingTalk の定期同期には承認が必要です。このデータソースを編集できるユーザーに同期スケジュールで「このスケジュールを承認」を選んで保存してもらってください。',
-      dingtalk_schedule_authorization_revoked: 'DingTalk の定期同期の承認が無効になりました。このデータソースを編集できるユーザーに同期スケジュールで「このスケジュールを承認」を選んで保存してもらってください。',
+      dingtalk_schedule_authorization_required: 'この定期同期の実行時には承認がありませんでした。現在の承認状態はデータソースの同期スケジュール設定で確認できます。',
+      dingtalk_schedule_authorization_revoked: 'この定期同期の実行時には承認が失効していました。現在の承認状態はデータソースの同期スケジュール設定で確認できます。',
       dingtalk_document_failed: 'DingTalkドキュメントを読み取れません。アクセス権限を確認して同期を再試行してください。',
       dingtalk_document_too_large: 'DingTalkファイルが64 MiBのダウンロード上限を超えたため、今回の同期ではスキップしました。圧縮または分割してください。',
       dingtalk_resource_failed: 'DingTalkリソースを利用できません。アクセス権限と選択したリソースを確認して再試行してください。',

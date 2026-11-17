@@ -274,7 +274,7 @@ func (h *DataSourceHandler) UpdateDataSource(c *gin.Context) {
 	if req.SyncSchedule != nil {
 		req.DataSource.SyncSchedule = *req.SyncSchedule
 		if existing.Type == types.ConnectorTypeDingTalk && req.SaveSchedule {
-			ctx = repository.WithDingTalkScheduleEdit(ctx)
+			ctx = repository.WithDingTalkEditorPredecessor(repository.WithDingTalkScheduleEdit(ctx), existing)
 		}
 	}
 	req.ID = id

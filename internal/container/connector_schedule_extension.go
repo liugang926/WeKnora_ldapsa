@@ -13,13 +13,16 @@ import (
 // Register decorators before BuildContainer starts the cron or resolves workers.
 func init() {
 	c := runtime.GetContainer()
-	must(c.Decorate(func(s *datasource.Scheduler, logs interfaces.SyncLogRepository, db *gorm.DB) (
-		*datasource.Scheduler, error,
-	) {
+	must(c.Decorate(func(
+		s *datasource.Scheduler, logs interfaces.SyncLogRepository, db *gorm.DB,
+		inputs *repository.KnowledgeInputProvenanceStore,
+	) (*datasource.Scheduler, error) {
 		if err := repository.InstallConnectorScheduleSchema(db); err != nil {
 			return nil, err
 		}
-		return s.WithCronLogRepository(repository.ConnectorScheduleLogs{SyncLogRepository: logs, DB: db}), nil
+		return s.WithCronLogRepository(repository.ConnectorScheduleLogs{
+			SyncLogRepository: logs, DB: db, ScheduleAuthority: inputs,
+		}), nil
 	}))
 	must(c.Decorate(service.WithConnectorScheduleIdentity))
 }

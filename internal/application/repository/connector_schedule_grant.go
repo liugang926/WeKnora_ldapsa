@@ -97,6 +97,9 @@ func WithConnectorScheduleGrants(repo interfaces.DataSourceRepository) interface
 func (r *connectorScheduleSourceRepository) write(ctx context.Context, ds *types.DataSource, save bool,
 	write func(*DataSourceRepository) error,
 ) error {
+	if before, ok := ctx.Value(dingTalkEditorPredecessorKey{}).(dingTalkEditorPredecessor); ok && ds != nil {
+		return r.writeDingTalkEditorChange(ctx, ds, before, write)
+	}
 	if ds == nil || ds.Type == types.ConnectorTypeNextcloud || ds.Type == types.ConnectorTypeDingTalk {
 		return write(r.DataSourceRepository)
 	}
@@ -171,7 +174,8 @@ func (r *DataSourceRepository) saveConnectorSchedule(ctx context.Context, ds *ty
 // The manual sync service continues to write ordinary logs without a schedule receipt.
 type ConnectorScheduleLogs struct {
 	interfaces.SyncLogRepository
-	DB *gorm.DB
+	DB                *gorm.DB
+	ScheduleAuthority *KnowledgeInputProvenanceStore
 }
 
 // HasRunningSync releases a claimed run whose worker disappeared before cleanup.
