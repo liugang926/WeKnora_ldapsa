@@ -97,6 +97,9 @@ func WithConnectorScheduleGrants(repo interfaces.DataSourceRepository) interface
 func (r *connectorScheduleSourceRepository) write(ctx context.Context, ds *types.DataSource, save bool,
 	write func(*DataSourceRepository) error,
 ) error {
+	if before, ok := ctx.Value(dingTalkEditorPredecessorKey{}).(dingTalkEditorPredecessor); ok && ds != nil {
+		return r.writeDingTalkEditorChange(ctx, ds, before, write)
+	}
 	if ds == nil || ds.Type == types.ConnectorTypeNextcloud || ds.Type == types.ConnectorTypeDingTalk {
 		return write(r.DataSourceRepository)
 	}

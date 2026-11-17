@@ -21,8 +21,10 @@ func TestDingTalkEditorSavePreservesAuthorizedConfiguration(t *testing.T) {
 		return store
 	}
 	repository.ConfigureDataSourceNameInputWriters(sources, nil, factory)
-	original := &types.DataSourceConfig{Type: types.ConnectorTypeDingTalk,
-		Credentials: map[string]any{"app_secret": "test-only"}, ResourceIDs: []string{"a", "b"}}
+	original := &types.DataSourceConfig{
+		Type:        types.ConnectorTypeDingTalk,
+		Credentials: map[string]any{"app_secret": "test-only"}, ResourceIDs: []string{"a", "b"},
+	}
 	encrypted, err := original.ToJSON()
 	require.NoError(t, err)
 	second, err := original.ToJSON()
@@ -30,7 +32,8 @@ func TestDingTalkEditorSavePreservesAuthorizedConfiguration(t *testing.T) {
 	require.NotEqual(t, encrypted, second)
 	require.NoError(t, db.Model(h.source).Updates(map[string]any{
 		"config": encrypted, "type": types.ConnectorTypeDingTalk,
-		"sync_schedule": "0 15 3 * * *"}).Error)
+		"sync_schedule": "0 15 3 * * *",
+	}).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE dingtalk_source_input_revisions (
 		datasource_id TEXT PRIMARY KEY, revision INTEGER NOT NULL)`).Error)
 	require.NoError(t, db.Exec("INSERT INTO dingtalk_source_input_revisions VALUES (?, 1)", h.source.ID).Error)
@@ -43,9 +46,11 @@ data_source_id TEXT PRIMARY KEY, tenant_id INTEGER,
 
 	scheduler := datasource.NewScheduler(sources, nil, nil)
 	svc := WithConnectorScheduleIdentity(&DataSourceService{dsRepo: sources, scheduler: scheduler})
-	update := &types.DataSource{ID: h.source.ID, TenantID: h.source.TenantID, KnowledgeBaseID: h.source.KnowledgeBaseID,
+	update := &types.DataSource{
+		ID: h.source.ID, TenantID: h.source.TenantID, KnowledgeBaseID: h.source.KnowledgeBaseID,
 		Type: types.ConnectorTypeDingTalk, SyncSchedule: "0 15 3 * * *",
-		Config: types.JSON(`{"credentials":{},"resource_ids":["a","b"],"settings":{}}`)}
+		Config: types.JSON(`{"credentials":{},"resource_ids":["a","b"],"settings":{}}`),
+	}
 	_, err = svc.UpdateDataSource(repository.WithDingTalkScheduleEdit(h.ctx), update)
 	require.NoError(t, err)
 	const lookupGrant = "SELECT grant_id FROM dingtalk_schedule_authorizations WHERE data_source_id = ?"
@@ -53,8 +58,10 @@ data_source_id TEXT PRIMARY KEY, tenant_id INTEGER,
 	require.NoError(t, db.Raw(lookupGrant, update.ID).Scan(&grantID).Error)
 	require.NotEmpty(t, grantID)
 	// Reopen from the server and submit the old editor's complete public config.
-	update = &types.DataSource{ID: update.ID, Type: types.ConnectorTypeDingTalk,
-		Config: types.JSON(`{"resource_ids":["b","a"],"credentials":{},"settings":{}}`)}
+	update = &types.DataSource{
+		ID: update.ID, Type: types.ConnectorTypeDingTalk,
+		Config: types.JSON(`{"resource_ids":["b","a"],"credentials":{},"settings":{}}`),
+	}
 	updated, err := svc.UpdateDataSource(h.ctx, update)
 	require.NoError(t, err)
 	require.JSONEq(t, string(encrypted), string(updated.Config))
@@ -67,4 +74,28 @@ data_source_id TEXT PRIMARY KEY, tenant_id INTEGER,
 	changed := *updated
 	changed.Config = types.JSON(`{"resource_ids":["a"],"settings":{"include_uploaded_files":false}}`)
 	require.False(t, unchangedDingTalkEditorConfig(updated, &changed))
+
+	// Another editor commits a new resource selection immediately after the
+	// request reads its predecessor, before our write acquires the KB lock.
+	concurrent := types.JSON(`{"resource_ids":["other"],"settings":{}}`)
+	require.NoError(t, db.Callback().Query().After("gorm:query").Register("swap_schedule_scope", func(tx *gorm.DB) {
+		if tx.Statement.Table != "data_sources" || concurrent == nil {
+			return
+		}
+		next := concurrent
+		concurrent = nil
+		require.NoError(t, db.Model(h.source).UpdateColumn("config", next).Error)
+	}))
+	t.Cleanup(func() { db.Callback().Query().Remove("swap_schedule_scope") })
+	request := &types.DataSource{
+		ID: updated.ID, Type: types.ConnectorTypeDingTalk, SyncSchedule: updated.SyncSchedule,
+		Config: types.JSON(`{"resource_ids":["a","b"],"settings":{}}`),
+	}
+	_, err = svc.UpdateDataSource(repository.WithDingTalkScheduleEdit(h.ctx), request)
+	require.ErrorIs(t, err, types.ErrDataSourceSettingsConflict)
+	require.NoError(t, db.Raw(lookupGrant, updated.ID).Scan(&sameGrant).Error)
+	require.Equal(t, grantID, sameGrant)
+	state, err = q.inputs.DingTalkScheduleAuthorizationStatus(h.ctx, updated.TenantID, updated.ID)
+	require.NoError(t, err)
+	require.Equal(t, "required", state)
 }
