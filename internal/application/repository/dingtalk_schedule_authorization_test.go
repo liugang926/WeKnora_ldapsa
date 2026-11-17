@@ -102,3 +102,61 @@ func TestDingTalkScheduledActorGrantLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, grant.GrantID)
 }
+
+func TestDingTalkScheduleStatusReadsCurrentDelegation(t *testing.T) {
+	store, db, editor, _, _, _ := displayTestFixture(t, false)
+	require.NoError(t, db.AutoMigrate(&types.DataSource{}, &dingTalkScheduleAuthorization{}))
+	require.NoError(t, db.Exec(`CREATE TABLE dingtalk_source_input_revisions (
+		datasource_id TEXT PRIMARY KEY, revision INTEGER NOT NULL)`).Error)
+	ds := &types.DataSource{
+		ID: "schedule-status", TenantID: 7, KnowledgeBaseID: "kb", Type: types.ConnectorTypeDingTalk,
+		SyncSchedule: "0 30 4 * * *", Status: types.DataSourceStatusError,
+		ErrorMessage: ErrDingTalkScheduleAuthorizationRequired.Error(),
+	}
+	require.NoError(t, db.Create(ds).Error)
+	require.NoError(t, db.Exec("INSERT INTO dingtalk_source_input_revisions VALUES (?, 1)", ds.ID).Error)
+	check := func(want string) {
+		t.Helper()
+		status, err := store.DingTalkScheduleAuthorizationStatus(editor, 7, ds.ID)
+		require.NoError(t, err)
+		require.Equal(t, want, status)
+	}
+	check("required")
+	require.NoError(t, saveDingTalkScheduleAuthorization(
+		WithDingTalkScheduleEdit(editor), db, ds, store.displayAuthorityFactory))
+	check("authorized")
+	require.NoError(t, db.AutoMigrate(&types.SyncLog{}))
+	logs := ConnectorScheduleLogs{SyncLogRepository: NewSyncLogRepository(db), DB: db, ScheduleAuthority: store}
+	for i := 0; i < 2; i++ {
+		run := &types.SyncLog{TenantID: ds.TenantID, DataSourceID: ds.ID, Status: types.SyncLogStatusFailed,
+			StartedAt: time.Now().Add(time.Duration(i) * time.Minute), RecoveryTrigger: "schedule",
+			ErrorMessage: ErrDingTalkScheduleAuthorizationRequired.Error()}
+		run.QueueTaskID = run.ScheduledMinuteTaskID()
+		require.NoError(t, db.Create(run).Error)
+	}
+	failures, _, err := logs.ConsecutiveFailures(editor, ds.ID)
+	require.NoError(t, err)
+	require.Zero(t, failures)
+	latest, err := logs.FindLatest(editor, ds.ID)
+	require.NoError(t, err)
+	grant, err := findDingTalkScheduleAuthorization(db, ds.ID, ds.TenantID)
+	require.NoError(t, err)
+	require.NoError(t, db.Table("sync_logs").Where("id = ?", latest.ID).
+		UpdateColumn("dingtalk_schedule_grant", grant.GrantID).Error)
+	failures, _, err = logs.ConsecutiveFailures(editor, ds.ID)
+	require.NoError(t, err)
+	require.Equal(t, 2, failures)
+	var restored types.DataSource
+	require.NoError(t, db.First(&restored, "id = ?", ds.ID).Error)
+	require.Equal(t, types.DataSourceStatusActive, restored.Status)
+	require.Empty(t, restored.ErrorMessage)
+	_, err = store.DingTalkScheduleAuthorizationStatus(editor, 8, ds.ID)
+	require.Error(t, err)
+	// The viewer remains active; only the saved editor changes.
+	require.NoError(t, db.Model(&dingTalkScheduleAuthorization{}).Where("data_source_id = ?", ds.ID).
+		Update("user_id", "removed-editor").Error)
+	check("revoked")
+	require.NoError(t, db.Exec(
+		"UPDATE dingtalk_source_input_revisions SET revision = 2 WHERE datasource_id = ?", ds.ID).Error)
+	check("required")
+}

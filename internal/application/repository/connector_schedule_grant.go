@@ -171,7 +171,8 @@ func (r *DataSourceRepository) saveConnectorSchedule(ctx context.Context, ds *ty
 // The manual sync service continues to write ordinary logs without a schedule receipt.
 type ConnectorScheduleLogs struct {
 	interfaces.SyncLogRepository
-	DB *gorm.DB
+	DB                *gorm.DB
+	ScheduleAuthority *KnowledgeInputProvenanceStore
 }
 
 // HasRunningSync releases a claimed run whose worker disappeared before cleanup.

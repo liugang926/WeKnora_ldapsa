@@ -94,10 +94,23 @@ func saveDingTalkScheduleAuthorization(ctx context.Context, tx *gorm.DB, ds *typ
 	if err := q.Take(&source).Error; err != nil {
 		return err
 	}
-	return tx.Create(&dingTalkScheduleAuthorization{
+	if err := tx.Create(&dingTalkScheduleAuthorization{
 		DataSourceID: ds.ID, TenantID: ds.TenantID, KnowledgeBaseID: ds.KnowledgeBaseID,
 		SourceRevision: source.Revision, Schedule: ds.SyncSchedule, GrantID: uuid.NewString(), UserID: actor.UserID,
-	}).Error
+	}).Error; err != nil {
+		return err
+	}
+	// Keep failed runs in history. A newly authorized source may run at its
+	// next cron tick without the old authorization error's retry backoff.
+	if isDingTalkScheduleMessage(ds.ErrorMessage) && ds.Status == types.DataSourceStatusError {
+		if err := tx.Model(ds).Where("status = ? AND error_message = ?", ds.Status, ds.ErrorMessage).
+			Updates(map[string]any{"status": types.DataSourceStatusActive, "error_message": ""}).Error; err != nil {
+			return err
+		}
+		ds.Status = types.DataSourceStatusActive
+		ds.ErrorMessage = ""
+	}
+	return nil
 }
 
 // Only an explicit schedule edit records a selector. Old audits, manual runs and source creator IDs are not grants.

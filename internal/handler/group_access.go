@@ -36,6 +36,8 @@ type GroupAccessHandler struct {
 	agents      interfaces.CustomAgentRepository
 	audit       interfaces.AuditLogService
 	resources   interfaces.ResourceCatalog
+
+	scheduleAuthorization dingTalkScheduleStatusReader
 }
 
 // ConfigureGroupAccessResourceCatalog enables revocation of outstanding file
@@ -83,6 +85,7 @@ func (h *GroupAccessHandler) RegisterTenantGroupRoutes(group *gin.RouterGroup) {
 // /group-access. The caller must attach the existing authenticated Admin
 // middleware before calling this method.
 func (h *GroupAccessHandler) RegisterResourceGroupRoutes(group *gin.RouterGroup) {
+	group.GET("/data-sources/:id/schedule-authorization", h.dingTalkScheduleAuthorizationStatus)
 	group.GET("/:resource_type/:resource_id", h.GetResourceGroupAccess)
 	group.PUT("/:resource_type/:resource_id", h.UpdateResourceGroupAccess)
 	group.POST("/:resource_type/:resource_id/preview", h.PreviewResourceGroupAccess)

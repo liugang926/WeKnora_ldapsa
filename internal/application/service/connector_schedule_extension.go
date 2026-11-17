@@ -33,6 +33,18 @@ func WithConnectorScheduleIdentity(base interfaces.DataSourceService) interfaces
 func (s *connectorScheduleService) UpdateDataSource(ctx context.Context,
 	ds *types.DataSource,
 ) (*types.DataSource, error) {
+	if ds != nil && ds.Type == types.ConnectorTypeDingTalk && len(ds.Config) != 0 {
+		existing, err := s.GetDataSource(ctx, ds.ID)
+		if err != nil {
+			return nil, err
+		}
+		if existing.Type == types.ConnectorTypeDingTalk && unchangedDingTalkEditorConfig(existing, ds) {
+			// The core keeps the stored config when it is omitted from a PUT.
+			// Re-encrypting the same credentials would advance the DB revision
+			// and invalidate both the saved grant and admitted work.
+			ds.Config = nil
+		}
+	}
 	return s.DataSourceService.UpdateDataSource(repository.WithConnectorScheduleSave(ctx), ds)
 }
 
