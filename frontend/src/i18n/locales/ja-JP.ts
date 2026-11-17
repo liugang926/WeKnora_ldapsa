@@ -1,6 +1,25 @@
 import { directoryAccessLocale } from './directoryAccessLocale'
 
 export default {
+  chatUsage: {
+    title: 'チャット使用量',
+    scope: 'すべてのワークスペースでユーザーが開始したチャットを集計します。ユーザーを選択すると開始日時とワークスペースを確認できます。',
+    people: '利用人数',
+    sessions: 'チャット数',
+    tokens: '報告済みトークン',
+    missing: '使用量未報告の応答',
+    search: 'ユーザー名または ID で検索',
+    find: '検索',
+    peopleList: 'ユーザー一覧',
+    coverage: 'モデルが報告したトークンのみを集計します。ダッシュは使用量または内訳が不明であることを示します。',
+    failed: '使用量を読み込めませんでした。再試行してください。',
+    sessionDetails: 'チャットの詳細',
+    started: '開始日時',
+    person: 'ユーザー',
+    workspace: 'ワークスペース',
+    input: '入力トークン',
+    output: '出力トークン',
+  },
   ...directoryAccessLocale,
   dingtalkAdmin: {
     title: 'DingTalk ログイン',

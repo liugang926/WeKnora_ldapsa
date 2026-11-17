@@ -1,6 +1,25 @@
 import { directoryAccessLocale } from './directoryAccessLocale'
 
 export default {
+  chatUsage: {
+    title: 'Chat usage',
+    scope: 'Chats started by people across all workspaces. Select a person to see when and where each chat started.',
+    people: 'People',
+    sessions: 'Chats',
+    tokens: 'Reported tokens',
+    missing: 'Replies without usage',
+    search: 'Search by username or user ID',
+    find: 'Search',
+    peopleList: 'People list',
+    coverage: 'Token counts include only usage reported by models. A dash means usage or its breakdown is unavailable.',
+    failed: 'Could not load chat usage. Try again.',
+    sessionDetails: 'Chat details',
+    started: 'Started at',
+    person: 'Person',
+    workspace: 'Workspace',
+    input: 'Input tokens',
+    output: 'Output tokens',
+  },
   ...directoryAccessLocale,
   dingtalkAdmin: {
     title: 'DingTalk SSO',
