@@ -8415,6 +8415,10 @@ export default {
     guideStep3_seafile: 'Come back, enter the new token and click Retry',
     permissionDocLink: 'View Feishu wiki permission docs',
     authorizeDingTalkSchedule: 'Authorize this schedule',
+    dingTalkGrantActive: 'This schedule is currently authorized',
+    dingTalkGrantOnSave: 'Saving will authorize the updated schedule',
+    dingTalkGrantUnavailable: 'Could not load the current schedule authorization.',
+    dingTalkGrantRevoked: 'The previous schedule authorization is no longer valid.',
     syncScheduleLabel: 'Sync schedule',
     conflictLabel: 'Conflict strategy',
     conflict: {
@@ -8629,8 +8633,8 @@ export default {
     hoursAgo: '{n}h ago',
     daysAgo: '{n}d ago',
     syncError: {
-      dingtalk_schedule_authorization_required: 'Scheduled DingTalk sync requires authorization. Ask a user who can edit this data source to select “Authorize this schedule” under Sync schedule and save.',
-      dingtalk_schedule_authorization_revoked: 'Authorization for scheduled DingTalk sync is no longer valid. Ask a user who can edit this data source to select “Authorize this schedule” under Sync schedule and save.',
+      dingtalk_schedule_authorization_required: 'This scheduled run had no authorization. Check the current authorization in the data source’s sync schedule settings.',
+      dingtalk_schedule_authorization_revoked: 'Authorization was no longer valid when this scheduled sync ran. Check the current authorization in the data source’s sync schedule settings.',
       dingtalk_document_failed: 'DingTalk document could not be read; check access and retry the sync.',
       dingtalk_document_too_large: 'DingTalk file exceeds the 64 MiB download limit; skipped for this sync. Compress or split the file.',
       dingtalk_resource_failed: 'DingTalk resource is unavailable; check access and the saved selection, then retry.',

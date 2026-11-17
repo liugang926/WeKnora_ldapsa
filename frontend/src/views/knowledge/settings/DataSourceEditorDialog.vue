@@ -17,6 +17,7 @@ import {
   type Resource,
 } from '@/api/datasource'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
+import DingTalkScheduleAuthorization from './DingTalkScheduleAuthorization.vue'
 import DataSourceTypeIcon from './DataSourceTypeIcon.vue'
 import { getDatasourceIconUrl } from './datasourceIcons'
 
@@ -572,6 +573,13 @@ const dailyCustomTime = ref('01:00')
 // Keep the explicit choice: the 24-hour preset and custom 02:00 share a cron.
 const scheduleSelection = ref('0 0 */6 * * *')
 const authorizeSchedule = ref(false)
+watch(() => props.dataSource?.id, () => { authorizeSchedule.value = false })
+const dingTalkScopeChanged = computed(() => {
+  const saved = props.dataSource?.config
+  return JSON.stringify(selectedResourceIds.value) !== JSON.stringify(saved?.resource_ids || []) ||
+    JSON.stringify(form.value.config.settings) !== JSON.stringify(saved?.settings || {}) ||
+    (replaceCredentialsMode.value && Object.values(form.value.config.credentials).some(Boolean))
+})
 
 function dailyCustomCron(time: string): string {
   const [h, m] = (time || '01:00').split(':').map((x) => parseInt(x, 10) || 0)
@@ -2141,10 +2149,13 @@ const drawerConfirmText = computed(() => {
           style="margin-left: 8px; width: 130px"
           @change="onDailyTimeChange"
         />
-        <t-checkbox
-          v-if="isEdit && form.type === 'dingtalk' && dataSource?.status !== 'paused' && form.sync_schedule"
+        <DingTalkScheduleAuthorization
+          v-if="visible && dataSource && dataSource.id === tempDsId && form.type === 'dingtalk' && dataSource.status !== 'paused' && form.sync_schedule"
           v-model="authorizeSchedule"
-        >{{ t('datasource.authorizeDingTalkSchedule') }}</t-checkbox>
+          :source-id="dataSource.id"
+          :schedule-changed="form.sync_schedule !== dataSource.sync_schedule"
+          :scope-changed="dingTalkScopeChanged"
+        />
       </section>
 
       <section class="setting-drawer__section">

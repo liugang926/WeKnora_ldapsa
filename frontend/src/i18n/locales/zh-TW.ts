@@ -1477,8 +1477,8 @@ export default {
       seafile_invalid_response: 'Seafile 回傳了無法解析的回應，請檢查伺服器版本與反向代理設定。',
       seafile_ssrf_blocked: 'Seafile 檔案下載地址被 SSRF 策略攔截，請將 fileserver 網域加入 SSRF_WHITELIST。',
       seafile_fetch_failed: '從 Seafile 獲取檔案失敗，下次同步將重試。',
-      "dingtalk_schedule_authorization_required": "釘釘定時同步尚未授權。請讓有權編輯此數據源的用戶在「同步頻率」下勾選「授權此定時同步」並保存。",
-      "dingtalk_schedule_authorization_revoked": "釘釘定時同步授權已失效。請讓有權編輯此數據源的用戶在「同步頻率」下勾選「授權此定時同步」並保存。",
+      "dingtalk_schedule_authorization_required": "此次排程同步執行時尚未授權。請在資料來源的同步頻率設定中查看目前的授權。",
+      "dingtalk_schedule_authorization_revoked": "此次排程同步執行時授權已失效。請在資料來源的同步頻率設定中查看目前的授權。",
     },
     "actions": "更多操作",
     "gc": {
@@ -1583,6 +1583,10 @@ export default {
       }
     },
     "authorizeDingTalkSchedule": "授權此定時同步",
+    "dingTalkGrantActive": "此排程同步目前已授權",
+    "dingTalkGrantOnSave": "儲存時將授權修改後的排程",
+    "dingTalkGrantUnavailable": "無法讀取目前的排程同步授權。",
+    "dingTalkGrantRevoked": "先前的排程同步授權已失效。",
     "scheduleDailyCustom": "每天固定時間（自選時刻）",
     "scheduleDailyTime": "同步時刻",
   },

@@ -16,10 +16,10 @@ function source(error: string, latestError: string, status: SyncLog['status'] = 
   } as DataSource
 }
 
-test('schedule authorization errors explain how to restore scheduling on cards and in history', () => {
+test('schedule authorization errors identify the failed run and where to check the current grant', () => {
   for (const code of [required, revoked]) {
     const explanation = syncRunError(code, t)
-    assert.match(explanation, /勾选「授权此定时同步」并保存/)
+    assert.match(explanation, /这次定时同步运行时.*查看当前授权/)
     assert.equal(dataSourceError(source('', code), t), explanation)
     assert.equal(dataSourceError(source(code, code), t), explanation)
   }
