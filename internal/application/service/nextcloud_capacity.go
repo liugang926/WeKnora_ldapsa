@@ -210,8 +210,8 @@ func (a *NextcloudCapacityAdmission) Reconcile(
 
 // ConfigureDataSourceCapacityAdmission configures the data source capacity admission boundary.
 func ConfigureDataSourceCapacityAdmission(source interfaces.DataSourceService, admission *NextcloudCapacityAdmission) {
-	if service, ok := source.(*DataSourceService); ok {
-		service.capacityAdmission = admission
+	if service, ok := source.(configuredDataSourceService); ok {
+		service.baseDataSourceService().capacityAdmission = admission
 	}
 }
 

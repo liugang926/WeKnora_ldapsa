@@ -353,6 +353,9 @@ func (s *KnowledgeInputProvenanceStore) authorizeKnowledgeActorWrite(
 	ctx context.Context,
 	kb *types.KnowledgeBase,
 ) (context.Context, error) {
+	if err := checkConnectorScheduleWrite(ctx, s.db, kb); err != nil {
+		return ctx, err
+	}
 	caller := types.CallerFromContext(ctx)
 	if scope, ok := types.TenantAPIKeyScopeFromContext(ctx); ok {
 		if requirement, bound := types.APIKeyOperationRequirementFromContext(ctx); bound && !requirement.Allows(scope) {

@@ -24,8 +24,8 @@ func ConfigureDataSourceOriginalInputSources(
 	source interfaces.DataSourceService,
 	store *repository.KnowledgeInputProvenanceStore,
 ) {
-	if s, ok := source.(*DataSourceService); ok {
-		s.sourceInputs = store
+	if s, ok := source.(configuredDataSourceService); ok {
+		s.baseDataSourceService().sourceInputs = store
 	}
 }
 
