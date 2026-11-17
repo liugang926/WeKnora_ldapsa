@@ -155,26 +155,19 @@ type rawOutputItem struct {
 }
 
 type rawUsage struct {
-	InputTokens        int `json:"input_tokens"`
-	OutputTokens       int `json:"output_tokens"`
-	TotalTokens        int `json:"total_tokens"`
+	InputTokens        *int `json:"input_tokens"`
+	OutputTokens       *int `json:"output_tokens"`
+	TotalTokens        *int `json:"total_tokens"`
 	InputTokensDetails *struct {
 		CachedTokens int `json:"cached_tokens"`
 	} `json:"input_tokens_details,omitempty"`
 }
 
 func (u rawUsage) toTokenUsage() types.TokenUsage {
-	out := types.TokenUsage{
-		PromptTokens:     u.InputTokens,
-		CompletionTokens: u.OutputTokens,
-		TotalTokens:      u.TotalTokens,
-	}
-	if out.TotalTokens == 0 {
-		out.TotalTokens = out.PromptTokens + out.CompletionTokens
-	}
+	out := api.ReportedTokenUsage(u.InputTokens, u.OutputTokens, u.TotalTokens)
 	if u.InputTokensDetails != nil {
 		cached := u.InputTokensDetails.CachedTokens
-		out.SetPromptCacheUsage(cached, 0, max(0, u.InputTokens-cached), true)
+		out.SetPromptCacheUsage(cached, 0, max(0, out.PromptTokens-cached), true)
 	} else {
 		out.SetPromptCacheUsage(0, 0, 0, false)
 	}

@@ -170,8 +170,8 @@ func (c *Client) ChatStream(
 // --- decoding ---
 
 type usageBlock struct {
-	InputTokens              int  `json:"input_tokens"`
-	OutputTokens             int  `json:"output_tokens"`
+	InputTokens              *int `json:"input_tokens"`
+	OutputTokens             *int `json:"output_tokens"`
 	CacheCreationInputTokens *int `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     *int `json:"cache_read_input_tokens"`
 }
@@ -223,16 +223,15 @@ type streamEvent struct {
 func (c *Client) usageFrom(u usageBlock) types.TokenUsage {
 	read := valueOrZero(u.CacheReadInputTokens)
 	write := valueOrZero(u.CacheCreationInputTokens)
-	prompt := u.InputTokens + read + write
-	out := types.TokenUsage{
-		PromptTokens: prompt, CompletionTokens: u.OutputTokens, TotalTokens: prompt + u.OutputTokens,
-	}
+	out := api.ReportedTokenUsage(u.InputTokens, u.OutputTokens, nil)
+	out.PromptTokens += read + write
+	out.TotalTokens += read + write
 	reported := u.CacheReadInputTokens != nil || u.CacheCreationInputTokens != nil
 	if !reported && !c.cfg.Settings.PromptCacheAccounting {
 		out.MarkPromptCacheUnsupported()
 		return out
 	}
-	out.SetPromptCacheUsage(read, write, max(0, prompt-read), reported)
+	out.SetPromptCacheUsage(read, write, max(0, out.PromptTokens-read), reported)
 	return out
 }
 
@@ -474,6 +473,7 @@ func (c *Client) consume(s *streamState, ev streamEvent) api.Delta {
 			if s.usage != nil {
 				// message_delta carries cumulative output tokens; input
 				// counters arrived on message_start.
+				u.ProviderReported = u.ProviderReported || s.usage.ProviderReported
 				u.PromptTokens = max(u.PromptTokens, s.usage.PromptTokens)
 				u.SetPromptCacheUsage(
 					max(u.CacheReadTokens, s.usage.CacheReadTokens),

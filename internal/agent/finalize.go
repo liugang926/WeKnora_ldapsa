@@ -341,7 +341,8 @@ func (e *AgentEngine) emitCompletionEvent(
 func turnUsage(state *types.AgentState) *types.TokenUsage {
 	// A token scale is worth persisting on its own: the next turn's history
 	// loading is calibrated by it even when this provider reported no total.
-	if state == nil || (state.TurnUsage.TotalTokens == 0 && state.TurnUsage.ContextTokenScale <= 0) {
+	if state == nil || (!state.TurnUsage.ProviderReported &&
+		state.TurnUsage.TotalTokens == 0 && state.TurnUsage.ContextTokenScale <= 0) {
 		return nil
 	}
 	usage := state.TurnUsage

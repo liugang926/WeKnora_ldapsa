@@ -19,9 +19,11 @@ const (
 
 // TokenUsage holds token consumption statistics returned by the model API.
 type TokenUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	// ProviderReported distinguishes explicitly reported zero usage from metadata-only records.
+	ProviderReported bool `json:"provider_reported,omitempty"`
+	PromptTokens     int  `json:"prompt_tokens"`
+	CompletionTokens int  `json:"completion_tokens"`
+	TotalTokens      int  `json:"total_tokens"`
 	// CachedTokens is the legacy alias for CacheReadTokens. It remains on the
 	// wire for compatibility with existing API consumers.
 	CachedTokens     int               `json:"cached_tokens,omitempty"`
@@ -88,6 +90,7 @@ func (u *TokenUsage) Accumulate(other TokenUsage) {
 	if u == nil {
 		return
 	}
+	u.ProviderReported = u.ProviderReported || other.ProviderReported
 	u.PromptTokens += other.PromptTokens
 	u.CompletionTokens += other.CompletionTokens
 	u.TotalTokens += other.TotalTokens
@@ -340,6 +343,8 @@ const FinishReasonIncomplete = "incomplete"
 const StreamEndedEarlyError = "the model's response ended before it finished (connection interrupted)"
 
 type StreamResponse struct {
+	// UsagePending marks a protocol finish_reason that precedes the usage trailer.
+	UsagePending        bool                   `json:"-"`
 	ID                  string                 `json:"id"`
 	ResponseType        ResponseType           `json:"response_type"`
 	Content             string                 `json:"content"`

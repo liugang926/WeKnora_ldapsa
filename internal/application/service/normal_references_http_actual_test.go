@@ -219,6 +219,7 @@ func (m *normalReferencesActualModel) ChatStream(
 		case out <- types.StreamResponse{
 			ResponseType: types.ResponseTypeAnswer,
 			Content:      "CURRENT ADMITTED NORMAL ANSWER",
+			Usage:        &types.TokenUsage{PromptTokens: 8, CompletionTokens: 3, TotalTokens: 11},
 			Done:         true,
 		}:
 		case <-ctx.Done():
@@ -464,6 +465,7 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 		var assistant types.Message
 		require.NoError(t, f.DB.Where("session_id=? AND role='assistant'", f.Session.ID).Take(&assistant).Error)
 		require.Equal(t, f.Lineage, assistant.SourceLineage)
+		require.Equal(t, &types.TokenUsage{PromptTokens: 8, CompletionTokens: 3, TotalTokens: 11}, assistant.Usage)
 		require.Len(t, assistant.KnowledgeReferences, 2)
 	}
 	var completed int64

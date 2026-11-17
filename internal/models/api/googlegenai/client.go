@@ -193,7 +193,7 @@ type rawUsage struct {
 	CandidatesTokenCount    int  `json:"candidatesTokenCount"`
 	ThoughtsTokenCount      int  `json:"thoughtsTokenCount"`
 	ToolUsePromptTokenCount int  `json:"toolUsePromptTokenCount"`
-	TotalTokenCount         int  `json:"totalTokenCount"`
+	TotalTokenCount         *int `json:"totalTokenCount"`
 	CachedContentTokenCount *int `json:"cachedContentTokenCount"`
 }
 
@@ -215,11 +215,9 @@ func (c *Client) usage(u rawUsage) types.TokenUsage {
 	// execution) are billed as input but reported apart from promptTokenCount;
 	// totalTokenCount counts them as "tool-use prompt".
 	promptTokens := u.PromptTokenCount + u.ToolUsePromptTokenCount
-	out := types.TokenUsage{
-		PromptTokens:     promptTokens,
-		CompletionTokens: u.CandidatesTokenCount + u.ThoughtsTokenCount,
-		TotalTokens:      u.TotalTokenCount,
-	}
+	out := api.ReportedTokenUsage(nil, nil, u.TotalTokenCount)
+	out.PromptTokens = promptTokens
+	out.CompletionTokens = u.CandidatesTokenCount + u.ThoughtsTokenCount
 	if out.TotalTokens == 0 {
 		out.TotalTokens = out.PromptTokens + out.CompletionTokens
 	}

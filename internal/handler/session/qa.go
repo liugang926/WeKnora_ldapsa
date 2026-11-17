@@ -1686,6 +1686,9 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 			if data.Truncated {
 				markQuickAnswerTruncated(streamCtx.assistantMessage)
 			}
+			if !completionHandled && data.Usage != nil {
+				streamCtx.assistantMessage.Usage = data.Usage
+			}
 			if data.Done {
 				if completionHandled {
 					return nil

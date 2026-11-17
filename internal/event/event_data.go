@@ -3,6 +3,8 @@ package event
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/Tencent/WeKnora/internal/types"
 )
 
 // EventData contains common event data structures for different stages
@@ -211,6 +213,8 @@ type MemoryRecalledData struct {
 
 // AgentFinalAnswerData represents final answer streaming data
 type AgentFinalAnswerData struct {
+	// Usage is the provider's cumulative count for a knowledge-QA answer.
+	Usage *types.TokenUsage `json:"usage,omitempty"`
 	// Replace retracts only this event ID after explicit provider protocol evidence.
 	Replace    bool   `json:"replace,omitempty"`
 	Content    string `json:"content"`

@@ -229,6 +229,7 @@ func (a *StreamAssembler) Process(ch chan<- types.StreamResponse, d Delta) {
 			ResponseType: types.ResponseTypeAnswer,
 			Content:      d.Content,
 			Done:         isDone,
+			UsagePending: isDone,
 			ToolCalls:    a.OrderedToolCalls(),
 			FinishReason: d.FinishReason,
 		})
@@ -238,6 +239,7 @@ func (a *StreamAssembler) Process(ch chan<- types.StreamResponse, d Delta) {
 		a.emit(ch, types.StreamResponse{
 			ResponseType: types.ResponseTypeAnswer,
 			Done:         true,
+			UsagePending: true,
 			ToolCalls:    a.OrderedToolCalls(),
 			FinishReason: d.FinishReason,
 		})
@@ -251,6 +253,7 @@ func (a *StreamAssembler) Process(ch chan<- types.StreamResponse, d Delta) {
 		a.emit(ch, types.StreamResponse{
 			ResponseType: types.ResponseTypeAnswer,
 			Done:         true,
+			UsagePending: true,
 			FinishReason: d.FinishReason,
 		})
 	}

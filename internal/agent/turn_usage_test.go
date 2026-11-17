@@ -40,3 +40,11 @@ func TestTurnUsageKeepsAScaleWithoutTokenCounts(t *testing.T) {
 		t.Fatalf("scale-only usage must be kept: %+v", usage)
 	}
 }
+
+func TestTurnUsageKeepsProviderReportedZero(t *testing.T) {
+	state := &types.AgentState{}
+	state.TurnUsage.Accumulate(types.TokenUsage{ProviderReported: true})
+	if usage := turnUsage(state); usage == nil || !usage.ProviderReported || usage.TotalTokens != 0 {
+		t.Fatalf("explicit zero usage lost: %+v", usage)
+	}
+}
