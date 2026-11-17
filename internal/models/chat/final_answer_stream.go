@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/models/api"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -15,7 +16,7 @@ func StreamFinalAnswer(
 	ctx context.Context, model Chat, messages []Message, opts *ChatOptions,
 ) (<-chan types.StreamResponse, error) {
 	callCtx, cancel := context.WithCancel(ctx)
-	source, err := model.ChatStream(callCtx, messages, opts)
+	source, err := model.ChatStream(api.WithFinalAnswerUsage(callCtx), messages, opts)
 	if err != nil || source == nil {
 		cancel()
 		return nil, err
@@ -65,8 +66,17 @@ func forwardFinalAnswer(
 				usage = chunk.Usage // provider chunks are cumulative snapshots
 			}
 			if pending != nil {
-				if !chunk.UsagePending && chunk.Done {
-					finish()
+				if chunk.ResponseType == types.ResponseTypeError {
+					send(chunk)
+					return
+				}
+				if chunk.ResponseType == types.ResponseTypeAnswer && !chunk.UsagePending && chunk.Done {
+					if chunk.FinishReason == "" {
+						chunk.FinishReason = pending.FinishReason
+					}
+					chunk.Content = ""
+					chunk.Usage = usage
+					send(chunk)
 					return
 				}
 				continue

@@ -163,6 +163,21 @@ func (a *StreamAssembler) SetToolCallMetadata(index int, metadata types.ToolCall
 // SetUsage records usage from the vendor's final chunk.
 func (a *StreamAssembler) SetUsage(u types.TokenUsage) { a.Usage = &u }
 
+type finalAnswerUsageKey struct{}
+
+// WithFinalAnswerUsage lets a final-answer consumer close the provider stream
+// when a finished answer has its final usage, even if the sentinel is delayed.
+func WithFinalAnswerUsage(ctx context.Context) context.Context {
+	return context.WithValue(ctx, finalAnswerUsageKey{}, true)
+}
+
+// CanFinishOnUsage is checked after processing a frame carrying usage. Counts
+// on an earlier frame may be intermediate snapshots and must not end the stream.
+func (a *StreamAssembler) CanFinishOnUsage() bool {
+	return a.LastFinishReason != "" && a.Usage != nil &&
+		(a.Usage.TotalTokens > 0 || a.Usage.ProviderReported) && a.ctx.Value(finalAnswerUsageKey{}) == true
+}
+
 // doneData renders the reasoning artifacts for the closing chunk.
 func (a *StreamAssembler) doneData() map[string]interface{} {
 	if a.ReasoningSignature == "" && len(a.ReasoningMetadata) == 0 {

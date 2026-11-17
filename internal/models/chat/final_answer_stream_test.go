@@ -28,3 +28,20 @@ func TestFinalAnswerMissingUsageTrailer(t *testing.T) {
 	_, more := <-out
 	require.False(t, more)
 }
+
+func TestFinalAnswerForwardsErrorAfterFinishReason(t *testing.T) {
+	source := make(chan types.StreamResponse, 3)
+	source <- types.StreamResponse{ResponseType: types.ResponseTypeAnswer, Done: true, UsagePending: true, FinishReason: "stop"}
+	source <- types.StreamResponse{ResponseType: types.ResponseTypeThinking, Done: true}
+	source <- types.StreamResponse{ResponseType: types.ResponseTypeError, Done: true, Content: "bad trailer"}
+	close(source)
+
+	out := make(chan types.StreamResponse, 3)
+	forwardFinalAnswer(context.Background(), source, out, time.Second)
+	close(out)
+	result := <-out
+	require.Equal(t, types.ResponseTypeError, result.ResponseType)
+	require.Equal(t, "bad trailer", result.Content)
+	_, more := <-out
+	require.False(t, more)
+}

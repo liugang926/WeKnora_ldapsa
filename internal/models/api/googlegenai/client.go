@@ -342,7 +342,12 @@ func (c *Client) processStream(
 	reader := api.NewSSEReader(body)
 	toolIndex := 0
 
+	var frameHadUsage bool
 	for {
+		if frameHadUsage && assembler.CanFinishOnUsage() {
+			assembler.End(ch)
+			return
+		}
 		// The consumer went away (client disconnect, aborted agent turn): stop
 		// decoding a stream nobody will read instead of spinning to EOF.
 		if assembler.Aborted() {
@@ -382,7 +387,8 @@ func (c *Client) processStream(
 			assembler.Fail(ch, fmt.Errorf("API stream error: %s", env.Error.Message))
 			return
 		}
-		if env.UsageMetadata != nil {
+		frameHadUsage = env.UsageMetadata != nil
+		if frameHadUsage {
 			assembler.SetUsage(c.usage(*env.UsageMetadata))
 		}
 		if len(env.Candidates) == 0 {

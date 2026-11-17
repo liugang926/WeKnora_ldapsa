@@ -32,16 +32,28 @@ func TestFinalAnswerUsageAfterProtocolFinish(t *testing.T) {
 		{"unreported", "", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			releaseSentinel := make(chan struct{})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/event-stream")
 				const finish = `{"choices":[{"delta":{"content":"answer"},"finish_reason":"stop"}]}`
 				_, _ = io.WriteString(w, "data: "+finish+"\n\n")
 				if tc.trailer != "" {
 					_, _ = io.WriteString(w, "data: "+`{"choices":[],"usage":`+tc.trailer+"}\n\n")
 				}
+				if tc.want != nil && (tc.want.TotalTokens > 0 || tc.want.ProviderReported) {
+					// The usage arrived, but the proxy holds the sentinel until
+					// the client has finished. Do not rely on a wall-clock race.
+					w.(http.Flusher).Flush()
+					select {
+					case <-r.Context().Done():
+						return
+					case <-releaseSentinel:
+					}
+				}
 				_, _ = io.WriteString(w, "data: [DONE]\n\n")
 			}))
 			defer server.Close()
+			defer close(releaseSentinel)
 			model := openaicompletions.New(openaicompletions.Config{
 				Endpoint: api.Endpoint{BaseURL: server.URL + "/v1", Model: "test"},
 				Settings: api.DefaultOpenAICompletions(),

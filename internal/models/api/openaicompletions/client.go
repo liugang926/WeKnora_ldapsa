@@ -396,7 +396,12 @@ func (c *Client) processStream(
 		end(ch)
 	}
 
+	var frameHadUsage bool
 	for {
+		if frameHadUsage && assembler.CanFinishOnUsage() {
+			finish(assembler.End)
+			return
+		}
 		// The consumer went away (client disconnect, aborted agent turn): stop
 		// decoding a stream nobody will read instead of spinning to EOF.
 		if assembler.Aborted() {
@@ -441,7 +446,8 @@ func (c *Client) processStream(
 			assembler.Fail(ch, fmt.Errorf("API stream error: %s", env.Error.Message))
 			return
 		}
-		if env.Usage != nil {
+		frameHadUsage = env.Usage != nil
+		if frameHadUsage {
 			assembler.SetUsage(env.Usage.ToTokenUsage(c.cfg.Settings.PromptCacheAccounting))
 		}
 		if len(env.Choices) == 0 {
