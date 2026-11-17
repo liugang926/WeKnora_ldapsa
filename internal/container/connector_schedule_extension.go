@@ -15,11 +15,16 @@ func init() {
 	c := runtime.GetContainer()
 	must(c.Decorate(func(
 		s *datasource.Scheduler, logs interfaces.SyncLogRepository, db *gorm.DB,
-		inputs *repository.KnowledgeInputProvenanceStore,
+		groups interfaces.GroupAccessService, shares interfaces.KBShareService,
 	) (*datasource.Scheduler, error) {
 		if err := repository.InstallConnectorScheduleSchema(db); err != nil {
 			return nil, err
 		}
+		// Cron starts before the ingestion store is registered. Its backoff check
+		// only needs the database and the existing live group and sharing ACLs.
+		inputs := repository.NewKnowledgeInputProvenanceStore(db)
+		repository.ConfigureKnowledgeInputActorGroupAccess(inputs, groups)
+		repository.ConfigureKnowledgeInputActorShares(inputs, shares)
 		return s.WithCronLogRepository(repository.ConnectorScheduleLogs{
 			SyncLogRepository: logs, DB: db, ScheduleAuthority: inputs,
 		}), nil
