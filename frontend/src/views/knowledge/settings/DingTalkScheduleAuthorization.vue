@@ -40,15 +40,15 @@ watch([() => props.sourceId, reload], async ([id], _, onCleanup) => {
     <t-checkbox v-if="scheduleChanged" :checked="true" disabled>
       {{ t('datasource.dingTalkGrantOnSave') }}
     </t-checkbox>
-    <span v-else-if="status === 'loading'">{{ t('common.loading') }}</span>
+    <span v-if="status === 'loading'">{{ t('common.loading') }}</span>
     <template v-else-if="status === 'unavailable'">
       {{ t('datasource.dingTalkGrantUnavailable') }}
       <t-button variant="text" size="small" @click="reload++">{{ t('common.retry') }}</t-button>
     </template>
-    <t-checkbox v-else-if="status === 'authorized' && !scopeChanged" :checked="true" disabled>
+    <t-checkbox v-else-if="!scheduleChanged && status === 'authorized' && !scopeChanged" :checked="true" disabled>
       {{ t('datasource.dingTalkGrantActive') }}
     </t-checkbox>
-    <template v-else>
+    <template v-else-if="!scheduleChanged">
       <span v-if="status === 'revoked'">{{ t('datasource.dingTalkGrantRevoked') }}</span>
       <t-checkbox v-model="requested">{{ t('datasource.authorizeDingTalkSchedule') }}</t-checkbox>
     </template>

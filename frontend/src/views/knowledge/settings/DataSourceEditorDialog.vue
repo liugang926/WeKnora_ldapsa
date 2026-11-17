@@ -573,11 +573,23 @@ const dailyCustomTime = ref('01:00')
 // Keep the explicit choice: the 24-hour preset and custom 02:00 share a cron.
 const scheduleSelection = ref('0 0 */6 * * *')
 const authorizeSchedule = ref(false)
-watch(() => props.dataSource?.id, () => { authorizeSchedule.value = false })
+function dingTalkScope(resourceIds: string[], settings: Record<string, unknown>) {
+  // Match the backend's unordered resource IDs and JSON object keys.
+  return JSON.stringify([[...resourceIds].sort(), settings], (_, value) =>
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? Object.fromEntries(Object.keys(value).sort().map(key => [key, value[key]]))
+      : value)
+}
+const draftDingTalkScope = computed(() => form.value.type === 'dingtalk'
+  ? dingTalkScope(selectedResourceIds.value, form.value.config.settings)
+  : '')
+const dingTalkAuthorizationTarget = computed(() =>
+  JSON.stringify([props.dataSource?.id, form.value.sync_schedule, draftDingTalkScope.value]))
+watch([dingTalkAuthorizationTarget, () => form.value.type === 'dingtalk' && replaceCredentialsMode.value
+  ? form.value.config.credentials : null], () => { authorizeSchedule.value = false }, { deep: true, flush: 'sync' })
 const dingTalkScopeChanged = computed(() => {
   const saved = props.dataSource?.config
-  return JSON.stringify(selectedResourceIds.value) !== JSON.stringify(saved?.resource_ids || []) ||
-    JSON.stringify(form.value.config.settings) !== JSON.stringify(saved?.settings || {}) ||
+  return draftDingTalkScope.value !== dingTalkScope(saved?.resource_ids || [], saved?.settings || {}) ||
     (replaceCredentialsMode.value && Object.values(form.value.config.credentials).some(Boolean))
 })
 
@@ -1436,6 +1448,8 @@ async function handleSubmit() {
     let dataSourceId = tempDsId.value
 
     if (tempDsId.value) {
+      // A successful credential PUT clears the draft before the settings PUT.
+      const requestedTarget = authorizeSchedule.value ? dingTalkAuthorizationTarget.value : null
       // Commit credential replacement BEFORE the main PUT so a validation
       // failure on credentials doesn't leave us with an updated row that
       // still points at the old broken token.
@@ -1446,7 +1460,8 @@ async function handleSubmit() {
       }
       const dingTalkEdit = isEdit.value && form.value.type === 'dingtalk'
       const saveSchedule = form.value.type === 'dingtalk' && (
-        !isEdit.value || authorizeSchedule.value || form.value.sync_schedule !== props.dataSource?.sync_schedule
+        !isEdit.value || requestedTarget === dingTalkAuthorizationTarget.value ||
+        form.value.sync_schedule !== props.dataSource?.sync_schedule
       )
       await updateDataSource(tempDsId.value, {
         ...form.value,

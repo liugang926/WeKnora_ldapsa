@@ -21,7 +21,7 @@ function load(name: string, imports: Record<string, any>) {
     const control = find(parseTemplate(template!.content))
     assert.ok(control)
     source = source.replace(template!.content, control)
-      .replace('</script>', 'defineExpose({ handleSubmit, form })\n</script>')
+      .replace('</script>', 'defineExpose({ handleSubmit, form, selectedResourceIds, replaceCredentialsMode })\n</script>')
   }
   const { descriptor } = parse(source, { filename: name })
   const script = compileScript(descriptor, { id: name, inlineTemplate: true })
@@ -35,12 +35,15 @@ function load(name: string, imports: Record<string, any>) {
   return exports.default
 }
 
-async function editor(read: (path: string) => Promise<{ status: string }>, save: (body: any) => void) {
+async function editor(read: (path: string) => Promise<{ status: string }>, save: (body: any) => void, resourceIds: string[] = []) {
   const imports = {
     'vue-i18n': { useI18n: () => ({ t: (key: string) => key }) },
     'tdesign-vue-next': { MessagePlugin: { warning() {}, success() {} } },
     '@/utils/request': { get: read },
-    '@/api/datasource': { async updateDataSource(_id: string, body: any) { save(body) } },
+    '@/api/datasource': {
+      async updateDataSource(_id: string, body: any) { save(body) },
+      async putDataSourceCredentials() {},
+    },
   }
   const control = load('./DingTalkScheduleAuthorization.vue', imports)
   const dialog = load('./DataSourceEditorDialog.vue', {
@@ -48,7 +51,7 @@ async function editor(read: (path: string) => Promise<{ status: string }>, save:
   })
   const source = Vue.reactive({
     id: 'id-a', name: 'DingTalk', type: 'dingtalk', status: 'active',
-    config: { resource_ids: [], settings: {} }, sync_schedule: '0 0 8 * * *',
+    config: { resource_ids: resourceIds, settings: {} }, sync_schedule: '0 0 8 * * *',
   })
   const visible = Vue.ref(false)
   const instance = Vue.ref<any>()
@@ -146,4 +149,42 @@ test('a stale grant read cannot replace a new source’s failure or retry result
   await flush()
   assert.equal(f.box()?.checked, false)
   assert.equal(f.box()?.disabled, false)
+})
+
+test('changing then restoring a scope preserves its existing grant, regardless of selection order', async t => {
+  const writes: any[] = []
+  const f = await editor(async () => ({ status: 'authorized' }), body => writes.push(body), ['a', 'b'])
+  t.after(f.close)
+  f.vm.selectedResourceIds = ['c', 'b']
+  await flush()
+  f.box()!.select()
+  f.vm.selectedResourceIds = ['b', 'c']
+  await flush()
+  assert.equal(f.box()?.checked, true)
+  assert.equal(f.box()?.disabled, false)
+  f.vm.selectedResourceIds = ['c']
+  await flush()
+  assert.equal(f.box()?.checked, false)
+  f.box()!.select()
+  f.vm.selectedResourceIds = ['b', 'a']
+  await flush()
+  assert.equal(f.box()?.checked, true)
+  assert.equal(f.box()?.disabled, true)
+  f.vm.form.name = 'Renamed'
+  await f.submit()
+  assert.equal(writes[0].save_schedule, undefined)
+  assert.equal(writes[0].sync_schedule, undefined)
+})
+
+test('explicit consent for replacement credentials survives the successful credential PUT', async t => {
+  const writes: any[] = []
+  const f = await editor(async () => ({ status: 'authorized' }), body => writes.push(body))
+  t.after(f.close)
+  f.vm.replaceCredentialsMode = true
+  f.vm.form.config.credentials = { app_secret: 'new secret' }
+  await flush()
+  f.box()!.select()
+  await f.submit()
+  assert.equal(f.vm.replaceCredentialsMode, false)
+  assert.equal(writes[0].save_schedule, true)
 })
