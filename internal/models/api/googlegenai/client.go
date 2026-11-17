@@ -193,7 +193,7 @@ type rawUsage struct {
 	CandidatesTokenCount    int  `json:"candidatesTokenCount"`
 	ThoughtsTokenCount      int  `json:"thoughtsTokenCount"`
 	ToolUsePromptTokenCount int  `json:"toolUsePromptTokenCount"`
-	TotalTokenCount         int  `json:"totalTokenCount"`
+	TotalTokenCount         *int `json:"totalTokenCount"`
 	CachedContentTokenCount *int `json:"cachedContentTokenCount"`
 }
 
@@ -215,11 +215,9 @@ func (c *Client) usage(u rawUsage) types.TokenUsage {
 	// execution) are billed as input but reported apart from promptTokenCount;
 	// totalTokenCount counts them as "tool-use prompt".
 	promptTokens := u.PromptTokenCount + u.ToolUsePromptTokenCount
-	out := types.TokenUsage{
-		PromptTokens:     promptTokens,
-		CompletionTokens: u.CandidatesTokenCount + u.ThoughtsTokenCount,
-		TotalTokens:      u.TotalTokenCount,
-	}
+	out := api.ReportedTokenUsage(nil, nil, u.TotalTokenCount)
+	out.PromptTokens = promptTokens
+	out.CompletionTokens = u.CandidatesTokenCount + u.ThoughtsTokenCount
 	if out.TotalTokens == 0 {
 		out.TotalTokens = out.PromptTokens + out.CompletionTokens
 	}
@@ -344,7 +342,12 @@ func (c *Client) processStream(
 	reader := api.NewSSEReader(body)
 	toolIndex := 0
 
+	var frameHadUsage bool
 	for {
+		if frameHadUsage && assembler.CanFinishOnUsage() {
+			assembler.End(ch)
+			return
+		}
 		// The consumer went away (client disconnect, aborted agent turn): stop
 		// decoding a stream nobody will read instead of spinning to EOF.
 		if assembler.Aborted() {
@@ -384,7 +387,8 @@ func (c *Client) processStream(
 			assembler.Fail(ch, fmt.Errorf("API stream error: %s", env.Error.Message))
 			return
 		}
-		if env.UsageMetadata != nil {
+		frameHadUsage = env.UsageMetadata != nil
+		if frameHadUsage {
 			assembler.SetUsage(c.usage(*env.UsageMetadata))
 		}
 		if len(env.Candidates) == 0 {

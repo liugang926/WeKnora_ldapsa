@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/models/api"
+	"github.com/Tencent/WeKnora/internal/models/chat"
 
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logprivacy"
@@ -125,7 +126,7 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 	if err := stampModelInputLineage(ctx, chatMessages); err != nil {
 		return sourceLineagePluginError(err)
 	}
-	responseChan, err := chatModel.ChatStream(ctx, chatMessages, opt)
+	responseChan, err := chat.StreamFinalAnswer(ctx, chatModel, chatMessages, opt)
 	if err != nil {
 		pipelineError(ctx, "Stream", "model_call", map[string]interface{}{
 			"chat_model": chatManage.ChatModelID,
@@ -369,6 +370,7 @@ func (p *PluginChatCompletionStream) OnEvent(ctx context.Context,
 							Content:   response.Content,
 							Done:      response.Done,
 							Truncated: truncated,
+							Usage:     response.Usage,
 						},
 					}); err != nil {
 						failStream(err)

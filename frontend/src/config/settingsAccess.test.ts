@@ -34,6 +34,6 @@ test('personal skill environment variables are visible to every member', () => {
 test('system administration settings stay explicitly system-admin-only', () => {
   assert.deepEqual(
     [...SYSTEM_ADMIN_SETTINGS_SECTIONS],
-    ['system-global', 'directory', 'dingtalk-auth', 'model-catalog', 'runtime-queues', 'platform-api-keys', 'system-audit-log'],
+    ['system-global', 'directory', 'dingtalk-auth', 'model-catalog', 'runtime-queues', 'platform-api-keys', 'chat-usage', 'system-audit-log'],
   )
 })

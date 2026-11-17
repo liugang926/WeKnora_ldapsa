@@ -1,6 +1,25 @@
 import { directoryAccessLocale } from './directoryAccessLocale'
 
 export default {
+  chatUsage: {
+    title: '대화 사용량',
+    scope: '모든 워크스페이스에서 사용자가 시작한 대화를 집계합니다. 사용자를 선택하면 각 대화의 시작 시간과 워크스페이스를 확인할 수 있습니다.',
+    people: '사용자 수',
+    sessions: '대화 수',
+    tokens: '보고된 토큰',
+    missing: '사용량이 없는 응답 수',
+    search: '사용자 이름 또는 ID 검색',
+    find: '검색',
+    peopleList: '사용자 목록',
+    coverage: '모델이 보고한 토큰만 집계합니다. 대시는 사용량이나 세부 내역이 없다는 뜻입니다.',
+    failed: '대화 사용량을 불러올 수 없습니다. 다시 시도하세요.',
+    sessionDetails: '대화 상세',
+    started: '시작 시간',
+    person: '사용자',
+    workspace: '워크스페이스',
+    input: '입력 토큰',
+    output: '출력 토큰',
+  },
   ...directoryAccessLocale,
   dingtalkAdmin: {
     title: 'DingTalk 로그인',

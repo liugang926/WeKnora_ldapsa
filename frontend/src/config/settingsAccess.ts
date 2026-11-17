@@ -57,5 +57,6 @@ export const SYSTEM_ADMIN_SETTINGS_SECTIONS = new Set([
   'model-catalog',
   'runtime-queues',
   'platform-api-keys',
+  'chat-usage',
   'system-audit-log',
 ])

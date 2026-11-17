@@ -1412,7 +1412,7 @@ func (s *sessionService) handleModelFallback(ctx context.Context, chatManage *ty
 		logger.Warnf(ctx, "[Fallback][ModelContext] %d message field(s) carry raw identifiers after encoding: %s",
 			len(leaks), modelcontext.SummarizeLeaks(leaks))
 	}
-	responseChan, err := chatModel.ChatStream(ctx, fallbackMessages, opt)
+	responseChan, err := chat.StreamFinalAnswer(ctx, chatModel, fallbackMessages, opt)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to start streaming fallback response: %v, falling back to fixed response", err)
 		s.handleFixedFallback(ctx, chatManage)
@@ -1643,6 +1643,7 @@ func (s *sessionService) consumeFallbackStream(
 					Done:       response.Done,
 					IsFallback: true,
 					Truncated:  truncated,
+					Usage:      response.Usage,
 				},
 			}); err != nil {
 				logger.Errorf(ctx, "Failed to emit fallback answer chunk event: %v", err)

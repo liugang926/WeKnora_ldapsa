@@ -219,6 +219,7 @@ func (m *normalReferencesActualModel) ChatStream(
 		case out <- types.StreamResponse{
 			ResponseType: types.ResponseTypeAnswer,
 			Content:      "CURRENT ADMITTED NORMAL ANSWER",
+			Usage:        &types.TokenUsage{PromptTokens: 8, CompletionTokens: 3, TotalTokens: 11},
 			Done:         true,
 		}:
 		case <-ctx.Done():
@@ -283,6 +284,9 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 	observedStream := &normalReferencesObservedStreamForTest{
 		RedisStreamManager: redis,
 		watcher:            make(chan context.Context, 1),
+	}
+	if mode == "unknown-prefix" {
+		observedStream.terminalWritten = make(chan struct{})
 	}
 	model.emptyPolls = &observedStream.emptyPolls
 	model.consecutiveEmptyPolls = &observedStream.consecutiveEmptyPolls
@@ -438,6 +442,15 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 		require.NotContains(t, content, "untrusted controlled provider diagnostic")
 		var saved types.Message
 		require.NoError(t, f.DB.Where("session_id=? AND role='assistant'", f.Session.ID).Take(&saved).Error)
+		if mode == "unknown-prefix" {
+			queued, _, err := redis.GetEvents(f.Ctx, f.Session.ID, saved.ID, 0)
+			require.NoError(t, err)
+			for _, frame := range queued {
+				require.Contains(
+					t, []types.ResponseType{types.ResponseTypeAgentQuery, types.ResponseTypeError}, frame.Type,
+				)
+			}
+		}
 		require.NotContains(
 			t, saved.Content, "CURRENT ADMITTED NORMAL ANSWER",
 			"refused output is not persisted as an answer",
@@ -464,6 +477,7 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 		var assistant types.Message
 		require.NoError(t, f.DB.Where("session_id=? AND role='assistant'", f.Session.ID).Take(&assistant).Error)
 		require.Equal(t, f.Lineage, assistant.SourceLineage)
+		require.Equal(t, &types.TokenUsage{PromptTokens: 8, CompletionTokens: 3, TotalTokens: 11}, assistant.Usage)
 		require.Len(t, assistant.KnowledgeReferences, 2)
 	}
 	var completed int64
@@ -620,10 +634,25 @@ func TestPostgresNormalReferencesActualHTTPRemainingAsync(t *testing.T) {
 // watcher defer only after its synchronous stop callback returns.
 type normalReferencesObservedStreamForTest struct {
 	*stream.RedisStreamManager
+	terminalWritten       chan struct{}
+	terminalOnce          sync.Once
 	watcher               chan context.Context
 	once                  sync.Once
 	emptyPolls            atomic.Int64
 	consecutiveEmptyPolls atomic.Int64
+}
+
+// For the unknown-prefix case, let the real producer finish reporting the refusal
+// before the HTTP reader examines the first batch. Otherwise the material guard
+// can reject the first physical write before the queued error is available.
+func (s *normalReferencesObservedStreamForTest) AppendEvent(
+	ctx context.Context, session, message string, frame interfaces.StreamEvent,
+) error {
+	err := s.RedisStreamManager.AppendEvent(ctx, session, message, frame)
+	if err == nil && s.terminalWritten != nil && frame.Done && frame.Type == types.ResponseTypeError {
+		s.terminalOnce.Do(func() { close(s.terminalWritten) })
+	}
+	return err
 }
 
 func (s *normalReferencesObservedStreamForTest) GetEvents(
@@ -633,6 +662,12 @@ func (s *normalReferencesObservedStreamForTest) GetEvents(
 ) ([]interfaces.StreamEvent, int, error) {
 	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) > time.Hour {
 		s.once.Do(func() { s.watcher <- ctx })
+	} else if s.terminalWritten != nil {
+		select {
+		case <-s.terminalWritten:
+		case <-ctx.Done():
+			return nil, offset, ctx.Err()
+		}
 	}
 	events, next, err := s.RedisStreamManager.GetEvents(ctx, session, message, offset)
 	// The ordinary SSE context is logger.CloneContext of the request: it

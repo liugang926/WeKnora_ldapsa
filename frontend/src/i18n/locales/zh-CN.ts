@@ -1,6 +1,25 @@
 import { directoryAccessLocale } from './directoryAccessLocale'
 
 export default {
+  chatUsage: {
+    title: '会话用量',
+    scope: '汇总所有空间中由人员发起的会话。选择人员可查看每次会话的时间和所在空间。',
+    people: '发起人数',
+    sessions: '会话数',
+    tokens: '已上报 Token',
+    missing: '未上报回复数',
+    search: '搜索用户名或用户 ID',
+    find: '搜索',
+    peopleList: '人员列表',
+    coverage: '输入、输出和总量只累计模型已上报的 Token。破折号表示没有用量数据或缺少明细。',
+    failed: '无法加载会话用量，请重试。',
+    sessionDetails: '会话明细',
+    started: '发起时间',
+    person: '人员',
+    workspace: '会话所在空间',
+    input: '输入 Token',
+    output: '输出 Token',
+  },
   ...directoryAccessLocale,
   dingtalkAdmin: {
     title: '钉钉登录',

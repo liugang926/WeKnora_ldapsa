@@ -187,6 +187,10 @@
           <PlatformAPIKeys />
         </div>
 
+        <div v-if="currentSection === 'chat-usage'" class="section">
+          <ChatUsage />
+        </div>
+
         <div v-if="currentSection === 'system-audit-log'" class="section">
           <SystemAuditLog />
         </div>
@@ -255,6 +259,7 @@ import DirectorySettings from '@/views/system/DirectorySettings.vue'
 import DingTalkAuthSettings from './DingTalkAuthSettings.vue'
 import RuntimeQueues from '@/views/system/RuntimeQueues.vue'
 import PlatformAPIKeys from '@/views/system/PlatformAPIKeys.vue'
+import ChatUsage from '@/views/system/ChatUsage.vue'
 import SystemAuditLog from '@/views/system/SystemAuditLog.vue'
 import IntegrationSettingsSection from '@/views/integrations/IntegrationSettingsSection.vue'
 import {
@@ -403,6 +408,7 @@ const navItems = computed(() => {
     { key: 'model-catalog', icon: 'control-platform', label: t('modelCatalog.title') },
     { key: 'runtime-queues', icon: 'queue', label: t('settings.taskQueue') },
     { key: 'platform-api-keys', icon: 'secured', label: t('platformApiKeys.title') },
+    { key: 'chat-usage', icon: 'chart-bar', label: t('chatUsage.title') },
     { key: 'system-audit-log', icon: 'history', label: t('system.globalSettings.audit.tabLabel') },
     { key: 'userprofile', icon: 'user', label: t('userProfile.title') },
     { key: 'mymemory', icon: 'bookmark', label: t('memorySettings.title') },
@@ -463,7 +469,7 @@ const navGroups = computed<NavGroup[]>(() => {
     {
       key: 'system_administration',
       label: t('settings.navGroups.systemAdministration'),
-      items: pickItems(['system-global', 'directory', 'dingtalk-auth', 'model-catalog', 'runtime-queues', 'platform-api-keys', 'system-audit-log']),
+      items: pickItems(['system-global', 'directory', 'dingtalk-auth', 'model-catalog', 'runtime-queues', 'platform-api-keys', 'chat-usage', 'system-audit-log']),
     },
     {
       key: 'platform',
@@ -532,7 +538,7 @@ const handleClose = () => {
   // Only go back when Vue Router knows the previous route is inside the app.
   if (route.path === '/platform/settings') {
     const sec = route.query.section
-    if (sec === 'system-global' || sec === 'directory' || sec === 'dingtalk-auth' || sec === 'model-catalog' || sec === 'runtime-queues' || sec === 'platform-api-keys' || sec === 'system-audit-log') {
+    if (sec === 'system-global' || sec === 'directory' || sec === 'dingtalk-auth' || sec === 'model-catalog' || sec === 'runtime-queues' || sec === 'platform-api-keys' || sec === 'chat-usage' || sec === 'system-audit-log') {
       router.push('/platform/knowledge-bases')
     } else {
       const back = router.options.history.state.back

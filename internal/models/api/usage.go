@@ -11,9 +11,9 @@ import "github.com/Tencent/WeKnora/internal/types"
 //
 // All of them are decoded here so protocol code never guesses per vendor.
 type OpenAIUsage struct {
-	PromptTokens             int  `json:"prompt_tokens"`
-	CompletionTokens         int  `json:"completion_tokens"`
-	TotalTokens              int  `json:"total_tokens"`
+	PromptTokens             *int `json:"prompt_tokens"`
+	CompletionTokens         *int `json:"completion_tokens"`
+	TotalTokens              *int `json:"total_tokens"`
 	PromptCacheHitTokens     *int `json:"prompt_cache_hit_tokens"`
 	PromptCacheMissTokens    *int `json:"prompt_cache_miss_tokens"`
 	CachedTokens             *int `json:"cached_tokens"`
@@ -32,14 +32,7 @@ type OpenAIUsage struct {
 // vendor documents prompt-cache accounting at all: when it does not, a
 // missing counter means "unsupported" rather than "unreported".
 func (u OpenAIUsage) ToTokenUsage(cacheAccounting bool) types.TokenUsage {
-	out := types.TokenUsage{
-		PromptTokens:     u.PromptTokens,
-		CompletionTokens: u.CompletionTokens,
-		TotalTokens:      u.TotalTokens,
-	}
-	if out.TotalTokens == 0 {
-		out.TotalTokens = out.PromptTokens + out.CompletionTokens
-	}
+	out := ReportedTokenUsage(u.PromptTokens, u.CompletionTokens, u.TotalTokens)
 	switch {
 	case u.PromptCacheHitTokens != nil || u.PromptCacheMissTokens != nil:
 		read := valueOrZero(u.PromptCacheHitTokens)
@@ -48,15 +41,15 @@ func (u OpenAIUsage) ToTokenUsage(cacheAccounting bool) types.TokenUsage {
 	case u.CacheReadInputTokens != nil || u.CacheCreationInputTokens != nil:
 		read := valueOrZero(u.CacheReadInputTokens)
 		write := valueOrZero(u.CacheCreationInputTokens)
-		out.SetPromptCacheUsage(read, write, max(0, u.PromptTokens-read), true)
+		out.SetPromptCacheUsage(read, write, max(0, out.PromptTokens-read), true)
 	case u.PromptTokensDetails != nil &&
 		(u.PromptTokensDetails.CachedTokens != nil || u.PromptTokensDetails.CacheWriteTokens != nil):
 		read := valueOrZero(u.PromptTokensDetails.CachedTokens)
 		write := valueOrZero(u.PromptTokensDetails.CacheWriteTokens)
-		out.SetPromptCacheUsage(read, write, max(0, u.PromptTokens-read), true)
+		out.SetPromptCacheUsage(read, write, max(0, out.PromptTokens-read), true)
 	case u.CachedTokens != nil:
 		read := valueOrZero(u.CachedTokens)
-		out.SetPromptCacheUsage(read, 0, max(0, u.PromptTokens-read), true)
+		out.SetPromptCacheUsage(read, 0, max(0, out.PromptTokens-read), true)
 	case cacheAccounting:
 		out.SetPromptCacheUsage(0, 0, 0, false)
 	default:

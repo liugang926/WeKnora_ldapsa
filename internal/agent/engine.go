@@ -1068,6 +1068,8 @@ func (e *AgentEngine) runReActIteration(
 	e.calibrateEstimator(ctx, round, *messagesPtr, tools, response.Usage, state)
 	if response.Usage.TotalTokens > 0 {
 		e.lastUsage = response.Usage
+	}
+	if response.Usage.ProviderReported || response.Usage.TotalTokens > 0 {
 		state.TurnUsage.Accumulate(response.Usage)
 		logger.Infof(ctx, "[Agent][Round-%d] Usage: prompt=%d, completion=%d, total=%d, "+
 			"cache_read=%d, cache_write=%d, cache_hit_rate=%.1f%%, cache_status=%s",

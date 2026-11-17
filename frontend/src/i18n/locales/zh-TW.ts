@@ -1,4 +1,23 @@
 export default {
+  chatUsage: {
+    title: '對話用量',
+    scope: '彙總所有空間中由人員發起的對話。選取人員可查看每次對話的時間及所在空間。',
+    people: '發起人數',
+    sessions: '對話數',
+    tokens: '已回報 Token',
+    missing: '未回報回覆數',
+    search: '搜尋使用者名稱或 ID',
+    find: '搜尋',
+    peopleList: '人員清單',
+    coverage: '輸入、輸出和總量只累計模型已回報的 Token。破折號表示沒有用量資料或缺少明細。',
+    failed: '無法載入對話用量，請重試。',
+    sessionDetails: '對話明細',
+    started: '發起時間',
+    person: '人員',
+    workspace: '對話所在空間',
+    input: '輸入 Token',
+    output: '輸出 Token',
+  },
   modelCatalog: {
     "title": "模型目錄",
     "description": "模型目錄決定新增模型時可選的模型清單，以及脈絡視窗、是否支持思考等預設參數。在這裡修改後，所有空間立即生效。",

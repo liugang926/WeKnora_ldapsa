@@ -741,7 +741,7 @@ func TestUsageCountsToolUsePromptTokens(t *testing.T) {
 		ToolUsePromptTokenCount: 6,
 		CandidatesTokenCount:    5,
 		ThoughtsTokenCount:      3,
-		TotalTokenCount:         24,
+		TotalTokenCount:         new(24),
 		CachedContentTokenCount: &cached,
 	})
 	if got.PromptTokens != 16 {
