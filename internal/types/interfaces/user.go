@@ -133,9 +133,9 @@ type UserService interface {
 	RefreshToken(ctx context.Context, refreshToken string) (accessToken, newRefreshToken string, err error)
 	// RevokeToken revokes a token
 	RevokeToken(ctx context.Context, token string) error
-	// Logout revokes every outstanding access/refresh token for the user
-	// identified by the presented JWT.
-	Logout(ctx context.Context, token string) error
+	// Logout revokes the presented login, including rotations.
+	LogoutAll(ctx context.Context, accessToken string) error
+	Logout(ctx context.Context, token string, companionRefresh ...string) error
 	// GetCurrentUser gets current user from context
 	GetCurrentUser(ctx context.Context) (*types.User, error)
 	// SearchUsers searches users by username or email
@@ -233,6 +233,7 @@ type AuthTokenRepository interface {
 	DeleteToken(ctx context.Context, id string) error
 	// DeleteExpiredTokens deletes all expired tokens
 	DeleteExpiredTokens(ctx context.Context) error
+	RevokeLogin(ctx context.Context, userID, token, companionRefresh string) error
 	// RevokeTokensByUserID revokes all tokens for a user
 	RevokeTokensByUserID(ctx context.Context, userID string) error
 }

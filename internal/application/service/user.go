@@ -1470,18 +1470,9 @@ func (s *userService) SwitchTenant(
 		return nil, fmt.Errorf("record last-active-tenant preference: %w", err)
 	}
 
-	accessToken, refreshToken, err := s.generateTokensForTenant(ctx, user, targetTenantID, "")
+	accessToken, refreshToken, err := s.generateTokensForTenant(ctx, user, targetTenantID, currentRefreshToken)
 	if err != nil {
 		return nil, fmt.Errorf("generate tokens: %w", err)
-	}
-
-	// Best-effort revoke of the previous refresh token. Failure is
-	// logged but not fatal — the new tokens are already issued and the
-	// old refresh token will expire naturally.
-	if strings.TrimSpace(currentRefreshToken) != "" {
-		if err := s.RevokeToken(ctx, currentRefreshToken); err != nil {
-			logger.Warnf(ctx, "Failed to revoke previous refresh token during tenant switch: %v", err)
-		}
 	}
 
 	memberships := s.buildMembershipsForUser(ctx, user, tenant)
@@ -1738,16 +1729,29 @@ func (s *userService) RefreshToken(
 	return s.generateTokensForTenant(ctx, user, s.resolveLoginTenantID(ctx, user), refreshTokenString)
 }
 
-// Logout invalidates every outstanding session for the user identified by
+// Logout invalidates the login identified by
 // the presented JWT. Access and refresh tokens are both accepted so clients
 // can end the session without refreshing first; expired tokens are allowed
 // so logout still works after the access token TTL.
-func (s *userService) Logout(ctx context.Context, tokenString string) error {
+func (s *userService) Logout(ctx context.Context, tokenString string, companionRefresh ...string) error {
 	userID, err := userIDFromSignedToken(tokenString)
 	if err != nil {
 		return err
 	}
-	return s.tokenRepo.RevokeTokensByUserID(ctx, userID)
+	refresh := ""
+	if len(companionRefresh) > 0 {
+		refresh = companionRefresh[0]
+	}
+	return s.tokenRepo.RevokeLogin(ctx, userID, tokenString, refresh)
+}
+
+// LogoutAll requires a currently valid access token.
+func (s *userService) LogoutAll(ctx context.Context, tokenString string) error {
+	user, _, err := s.ValidateToken(ctx, tokenString)
+	if err != nil {
+		return err
+	}
+	return s.tokenRepo.RevokeTokensByUserID(ctx, user.ID)
 }
 
 // RevokeToken revokes a token
