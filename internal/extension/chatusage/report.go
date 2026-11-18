@@ -34,8 +34,9 @@ type Summary struct {
 
 // Person is an internal account with at least one qualifying conversation.
 type Person struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
+	UserID      string `json:"user_id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
 	Counts
 }
 
@@ -138,31 +139,42 @@ func listPeople(ctx context.Context, db *gorm.DB, p page, query string) (peopleR
 	}
 	// The summary row also carries the matching count, even for an empty page.
 	// Reading summary and page in the same statement gives a consistent snapshot.
-	const people = `, people AS (
+	const people = `, person_usage AS (
 		SELECT user_id, username, COUNT(*) AS session_count,
 		       SUM(prompt_tokens) AS prompt_tokens, SUM(completion_tokens) AS completion_tokens,
 		       SUM(total_tokens) AS total_tokens, SUM(reported_turns) AS reported_turns,
 		       SUM(unreported_turns) AS unreported_turns
 		FROM session_usage GROUP BY user_id, username
+	), people AS (
+		SELECT p.*, COALESCE(
+			(SELECT TRIM(i.display_name) FROM directory_identities i
+			 WHERE i.user_id = p.user_id AND i.status = 'active' AND TRIM(i.display_name) <> ''
+			 ORDER BY i.last_seen_at DESC NULLS LAST, i.id LIMIT 1),
+			(SELECT TRIM(d.display_name) FROM dingtalk_identities d
+			 WHERE d.user_id = p.user_id AND d.status = 'active' AND TRIM(d.display_name) <> ''
+			 ORDER BY d.id LIMIT 1), '') AS display_name
+		FROM person_usage p
 	), matching AS (SELECT * FROM people `
 	const report = `), page_users AS (
 		SELECT * FROM matching ORDER BY session_count DESC, user_id LIMIT ? OFFSET ?
 	)
-	SELECT '' AS user_id, '' AS username, COUNT(*) AS user_count, (SELECT COUNT(*) FROM matching) AS matched,
+	SELECT '' AS user_id, '' AS username, '' AS display_name, COUNT(*) AS user_count,
+	       (SELECT COUNT(*) FROM matching) AS matched,
 	       COALESCE(SUM(session_count),0) AS session_count, COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
 	       COALESCE(SUM(completion_tokens),0) AS completion_tokens, COALESCE(SUM(total_tokens),0) AS total_tokens,
 	       COALESCE(SUM(reported_turns),0) AS reported_turns, COALESCE(SUM(unreported_turns),0) AS unreported_turns
 	FROM people
 	UNION ALL
-	SELECT user_id, username, 0, 0, session_count, prompt_tokens, completion_tokens,
+	SELECT user_id, username, display_name, 0, 0, session_count, prompt_tokens, completion_tokens,
 	       total_tokens, reported_turns, unreported_turns
 	FROM page_users ORDER BY user_count DESC, session_count DESC, user_id`
 	var args []any
 	filter := ""
 	if query != "" {
-		filter = `WHERE LOWER(username) LIKE LOWER(?) ESCAPE '!' OR LOWER(user_id) LIKE LOWER(?) ESCAPE '!'`
+		filter = `WHERE LOWER(username) LIKE LOWER(?) ESCAPE '!' OR LOWER(user_id) LIKE LOWER(?) ESCAPE '!'
+			OR LOWER(display_name) LIKE LOWER(?) ESCAPE '!'`
 		term := "%" + strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(query) + "%"
-		args = append(args, term, term)
+		args = append(args, term, term, term)
 	}
 	args = append(args, p.PageSize, int64(p.Page-1)*int64(p.PageSize))
 	sql := sessionUsage(db.Name(), false) + people + filter + report

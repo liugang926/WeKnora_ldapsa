@@ -31,6 +31,9 @@ func reportDB(t *testing.T) *gorm.DB {
 	sqlDB.SetMaxOpenConns(1)
 	fixture := `
 	CREATE TEMP TABLE users(id TEXT PRIMARY KEY, username TEXT);
+	CREATE TEMP TABLE directory_identities(id TEXT PRIMARY KEY, user_id TEXT, status TEXT,
+		display_name TEXT, last_seen_at DATETIME);
+	CREATE TEMP TABLE dingtalk_identities(id INTEGER PRIMARY KEY, user_id TEXT, status TEXT, display_name TEXT);
 	CREATE TEMP TABLE tenants(id INTEGER PRIMARY KEY, name TEXT);
 	CREATE TEMP TABLE sessions(id TEXT PRIMARY KEY,user_id TEXT,tenant_id INTEGER,owner_auth_source TEXT,
 		kind TEXT,parent_session_id TEXT,created_at DATETIME,deleted_at DATETIME);
@@ -106,6 +109,35 @@ func TestGlobalHistory(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, users.Items)
 	require.EqualValues(t, 2, users.Total)
+}
+
+func TestPeopleWithLinkedNames(t *testing.T) {
+	db := reportDB(t)
+	ctx := context.Background()
+	p := page{Page: 1, PageSize: 20}
+	require.NoError(t, db.Exec(`
+		INSERT INTO directory_identities VALUES
+			('1','u1','active','旧名','2026-01-01'),
+			('2','u1','active',' 王明 ','2026-02-01'),
+			('3','u1','disabled','停用','2026-03-01');
+		INSERT INTO dingtalk_identities VALUES (1,'u1','active','钉钉旧名'),(2,'u2','active','王明');
+	`).Error)
+	report, err := listPeople(ctx, db, p, "王明")
+	require.NoError(t, err)
+	require.EqualValues(t, 2, report.Total)
+	require.Len(t, report.Items, 2)
+	require.Equal(t, "A_test", report.Items[0].Username)
+	require.Equal(t, "王明", report.Items[0].DisplayName)
+	require.EqualValues(t, 3, report.Items[0].SessionCount)
+	require.Equal(t, "Another", report.Items[1].Username)
+	require.Equal(t, "王明", report.Items[1].DisplayName)
+	require.Equal(t, Tokens{12, 7, 28, 4, 5}, report.Summary.Tokens)
+
+	require.NoError(t, db.Exec("UPDATE dingtalk_identities SET status='unlinked' WHERE user_id='u2'").Error)
+	report, err = listPeople(ctx, db, p, "another")
+	require.NoError(t, err)
+	require.Len(t, report.Items, 1)
+	require.Empty(t, report.Items[0].DisplayName)
 }
 
 func TestOnlySystemAdminWebLogin(t *testing.T) {
