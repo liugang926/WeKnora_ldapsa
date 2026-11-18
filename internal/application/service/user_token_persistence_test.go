@@ -214,6 +214,13 @@ func TestLogoutRevokesOneLoginIncludingRotation(t *testing.T) {
 	legacyAccess, legacyRefresh, err := svc.GenerateTokens(ctx, user)
 	require.NoError(t, err)
 	require.NoError(t, db.Model(&types.AuthToken{}).Where("token IN ?", []string{legacyAccess, legacyRefresh}).Update("session_id", nil).Error)
+	// Neither switch-by-access nor refresh-by-refresh may detach a legacy pair.
+	for _, source := range []string{legacyAccess, legacyRefresh} {
+		_, _, err = svc.generateTokensForTenant(ctx, user, 1, source)
+		require.ErrorContains(t, err, "sign in again")
+	}
+	require.Error(t, svc.Logout(ctx, legacyAccess, otherRefresh))
+	require.Error(t, svc.Logout(ctx, other, legacyRefresh))
 	require.Error(t, svc.Logout(ctx, legacyAccess))
 	require.NoError(t, svc.Logout(ctx, legacyAccess, legacyRefresh))
 	_, _, err = svc.RefreshToken(ctx, legacyRefresh)

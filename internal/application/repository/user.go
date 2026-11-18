@@ -464,14 +464,13 @@ func (r *authTokenRepository) CreateTokenPair(
 			}
 			family = source.SessionID
 			if family == "" {
-				family = source.ID
+				// Without a known pair, rotation would strand the other old token.
+				return errors.New("legacy login cannot be rotated; sign in again")
 			}
-			updates := map[string]any{"session_id": family}
 			if source.TokenType == "refresh_token" {
-				updates["is_revoked"] = true
-			}
-			if err := tx.Model(&source).Updates(updates).Error; err != nil {
-				return err
+				if err := tx.Model(&source).Update("is_revoked", true).Error; err != nil {
+					return err
+				}
 			}
 		}
 		access.SessionID, refresh.SessionID = family, family
@@ -525,11 +524,8 @@ func (r *authTokenRepository) RevokeLogin(ctx context.Context, userID, token, co
 			if err != nil {
 				return err
 			}
-			if family != "" && refresh.SessionID != "" && family != refresh.SessionID {
+			if family != refresh.SessionID {
 				return errors.New("logout credentials belong to different sessions")
-			}
-			if family == "" {
-				family = refresh.SessionID
 			}
 			ids = append(ids, refresh.ID)
 		} else if family == "" {
