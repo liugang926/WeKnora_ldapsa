@@ -213,7 +213,9 @@ func TestLogoutRevokesOneLoginIncludingRotation(t *testing.T) {
 	// Old unpaired logins must not accidentally match every empty session_id.
 	legacyAccess, legacyRefresh, err := svc.GenerateTokens(ctx, user)
 	require.NoError(t, err)
-	require.NoError(t, db.Model(&types.AuthToken{}).Where("token IN ?", []string{legacyAccess, legacyRefresh}).Update("session_id", nil).Error)
+	require.NoError(t, db.Model(&types.AuthToken{}).
+		Where("token IN ?", []string{legacyAccess, legacyRefresh}).
+		Update("session_id", nil).Error)
 	// Neither switch-by-access nor refresh-by-refresh may detach a legacy pair.
 	for _, source := range []string{legacyAccess, legacyRefresh} {
 		_, _, err = svc.generateTokensForTenant(ctx, user, 1, source)

@@ -82,12 +82,14 @@ func (s *stubAuthTokenRepo) GetTokensByUserID(context.Context, string) ([]*types
 func (s *stubAuthTokenRepo) UpdateToken(context.Context, *types.AuthToken) error { return nil }
 func (s *stubAuthTokenRepo) DeleteToken(context.Context, string) error           { return nil }
 func (s *stubAuthTokenRepo) DeleteExpiredTokens(context.Context) error           { return nil }
+
 func (s *stubAuthTokenRepo) RevokeLogin(_ context.Context, userID, token, _ string) error {
 	if t := s.tokens[token]; t != nil && t.UserID == userID {
 		t.IsRevoked = true
 	}
 	return nil
 }
+
 func (s *stubAuthTokenRepo) RevokeTokensByUserID(_ context.Context, userID string) error {
 	s.revokedUserIDs = append(s.revokedUserIDs, userID)
 	return nil

@@ -58,7 +58,8 @@ func Register(group *gin.RouterGroup, db *gorm.DB) {
 		principal, present := types.PrincipalFromContext(ctx)
 		_, apiKey := types.TenantAPIKeyScopeFromContext(ctx)
 		if !present || !types.IsSystemAdminFromContext(ctx) || apiKey || principal.ActingVia != "" ||
-			principal.Type != types.PrincipalWebUser || types.PrincipalAuthSourceFromContext(ctx) != types.AuthSourceWeb {
+			principal.Type != types.PrincipalWebUser ||
+			types.PrincipalAuthSourceFromContext(ctx) != types.AuthSourceWeb {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "System administrator login required"})
 			return
 		}
