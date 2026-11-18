@@ -310,6 +310,7 @@ func (r *cleanupUserRepo) FindUserByEmailOrUsernameFold(context.Context, string,
 }
 
 type cleanupTokenRepo struct {
+	interfaces.AuthTokenRepository
 	revoked []string
 }
 

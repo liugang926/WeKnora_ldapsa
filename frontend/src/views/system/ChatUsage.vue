@@ -21,14 +21,18 @@
         <t-input v-model="draft" clearable :aria-label="t('chatUsage.search')" :placeholder="t('chatUsage.search')"
           @clear="clearSearch" />
         <t-button type="submit" variant="outline">{{ t('chatUsage.find') }}</t-button>
+        <t-button type="button" variant="outline" :loading="exporting" :disabled="loading || failed || !total" @click="exportPeople">
+          {{ t('chatUsage.exportCsv') }}
+        </t-button>
       </form>
+      <t-alert v-if="exportFailed" theme="error" :message="t('chatUsage.exportFailed')" />
     </template>
     <div v-else class="detail-header">
       <t-button size="small" variant="text" @click="selected = null">
         <template #icon><t-icon name="chevron-left" /></template>{{ t('chatUsage.peopleList') }}
       </t-button>
-      <h3>{{ selected.username || selected.user_id }}</h3>
-      <small v-if="selected.username && selected.user_id !== selected.username">{{ selected.user_id }}</small>
+      <h3>{{ selected.display_name || selected.username || selected.user_id }}</h3>
+      <small v-if="selected.display_name && selected.username">{{ selected.username }}</small>
     </div>
 
     <p class="usage-note">{{ t('chatUsage.coverage') }}</p>
@@ -60,8 +64,8 @@
               </template>
               <template v-else>
                 <th scope="row">
-                  <button class="person" type="button" @click="openUser(row)">{{ row.username || row.user_id }}</button>
-                  <small v-if="row.username && row.user_id !== row.username">{{ row.user_id }}</small>
+                  <button class="person" type="button" @click="openUser(row)">{{ row.display_name || row.username || row.user_id }}</button>
+                  <small v-if="row.display_name && row.username">{{ row.username }}</small>
                 </th>
                 <td class="numeric">{{ number(row.session_count) }}</td>
               </template>
@@ -80,9 +84,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { CHAT_USAGE_PAGE_SIZE, getChatSessions, getChatUsers, type ChatUsage, type ChatUserUsage } from '@/api/system/chatUsage'
+import { peopleCsv, reportedTokens } from './chatUsageCsv'
 import { useChatUsagePage } from './useChatUsagePage'
 
 const { t, locale } = useI18n()
@@ -118,9 +123,48 @@ const date = (s: string) => {
   return Number.isNaN(d.getTime()) ? '—' : dateFormatter.value.format(d)
 }
 function token(row: ChatUsage, key: 'prompt_tokens' | 'completion_tokens' | 'total_tokens') {
-  if (!row.reported_turns) return '—'
-  if (key !== 'total_tokens' && !row.prompt_tokens && !row.completion_tokens && row.total_tokens > 0) return '—'
-  return number(row[key])
+  const value = reportedTokens(row, key)
+  return value === null ? '—' : number(value)
+}
+
+const exporting = ref(false)
+const exportFailed = ref(false)
+let controller: AbortController | undefined
+function cancelExport() {
+  controller?.abort()
+  controller = undefined
+  exporting.value = false
+  exportFailed.value = false
+}
+watch([query, selected], cancelExport)
+onBeforeUnmount(cancelExport)
+
+async function exportPeople() {
+  if (exporting.value) return
+  const request = new AbortController()
+  controller = request
+  const filter = query.value
+  exporting.value = true
+  exportFailed.value = false
+  try {
+    const headers = ['displayName', 'account', 'userId', 'sessions', 'input', 'output', 'tokens', 'missing']
+      .map(key => t('chatUsage.' + key))
+    const csv = await peopleCsv(headers, page => getChatUsers(page, filter, request.signal, 100))
+    if (request.signal.aborted) return
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'chat-usage-' + new Date().toISOString().slice(0, 10) + '.csv'
+    link.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch {
+    if (!request.signal.aborted) exportFailed.value = true
+  } finally {
+    if (controller === request) {
+      exporting.value = false
+      controller = undefined
+    }
+  }
 }
 </script>
 
@@ -135,7 +179,8 @@ h2 { font-size: var(--app-text-3xl); margin: 0; }
 .summary div { padding: 12px; border: 1px solid var(--td-component-border); border-radius: var(--app-radius-md); }
 dt, small { font-size: var(--app-text-sm); }
 dd { margin: 4px 0 0; font-size: var(--app-text-2xl); font-weight: 600; overflow-wrap: anywhere; }
-.toolbar { max-width: 440px; }
+.toolbar { max-width: 620px; flex-wrap: wrap; }
+.toolbar :deep(.t-input__wrap) { flex: 1 1 180px; }
 .detail-header h3 { margin: 12px 0 0; font-size: var(--app-text-xl); }
 .table-scroll { overflow-x: auto; border: 1px solid var(--td-component-border); border-radius: var(--app-radius-md); }
 table { border-collapse: collapse; width: 100%; font-size: var(--app-text-md); }

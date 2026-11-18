@@ -28,13 +28,13 @@
     <t-alert v-if="loadError" theme="error" :message="loadError" />
     <div class="user-management__table">
       <div class="user-management__scroll">
-        <t-table :aria-label="t('system.globalSettings.userList.title')" row-key="id" :data="filteredUsers" :columns="columns" :loading="loading" size="medium" hover>
+        <t-table :aria-label="t('system.globalSettings.userList.title')" row-key="id" :data="users" :columns="columns" :loading="loading" size="medium" hover>
           <template #user="{ row }">
             <div class="user-management__identity">
-              <span class="user-management__name">{{ row.username }}
+              <span class="user-management__name">{{ row.display_name || row.username }}
                 <span v-if="row.id === authStore.currentUserId" class="user-management__self">{{ t('common.me') }}</span>
               </span>
-              <span class="user-management__email">{{ row.email }}</span>
+              <span class="user-management__email">{{ row.display_name ? row.username + ' · ' : '' }}{{ row.email }}</span>
             </div>
           </template>
           <template #status="{ row }">
@@ -92,7 +92,7 @@
         </t-table>
       </div>
       <div class="user-management__pager">
-        <span class="user-management__count">{{ t('system.globalSettings.userList.pageCount', { shown: filteredUsers.length, total: users.length }) }}</span>
+        <span class="user-management__count">{{ t('system.globalSettings.userList.pageCount', { shown: users.length }) }}</span>
         <t-button variant="text" shape="square" size="small" :disabled="offset === 0 || loading || locked"
           :aria-label="t('system.globalSettings.userList.prev')" :title="t('system.globalSettings.userList.prev')" @click="fetchPage(offset - limit)">
           <template #icon><t-icon name="chevron-left" /></template>
@@ -145,10 +145,6 @@ const columns = computed(() => [
   { colKey: 'created', title: t('system.globalSettings.userList.colCreated'), width: 130 },
   { colKey: 'actions', title: t('system.globalSettings.userList.colAction'), width: 170 },
 ])
-const filteredUsers = computed(() => {
-  const query = search.value.trim().toLowerCase()
-  return users.value.filter(user => !query || `${user.username} ${user.email}`.toLowerCase().includes(query))
-})
 function formatDate(value: string) {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(locale.value)
@@ -157,20 +153,26 @@ function errorMessage(error: any, key: string): string {
   return error?.response?.data?.error || error?.message || t(key)
 }
 function announce(message: string) { emit('announced', message) }
+let request = 0
 async function fetchPage(nextOffset: number) {
-  if (loading.value || resetBusy.value) return
+  if (!props.active || resetBusy.value) return
+  const id = ++request
   loading.value = true
   loadError.value = ''
   pendingRole.value = null
   statusVisibleId.value = null
   try {
-    const response = await listAllUsers({ offset: nextOffset, limit })
+    const response = await listAllUsers({ offset: nextOffset, limit, q: search.value.trim() })
+    if (id !== request) return
     users.value = response.users
     hasMore.value = response.has_more
     offset.value = response.offset
   } catch (error) {
+    if (id !== request) return
+    users.value = []
+    hasMore.value = false
     loadError.value = errorMessage(error, 'system.globalSettings.userList.loadFailed')
-  } finally { loading.value = false }
+  } finally { if (id === request) loading.value = false }
 }
 async function changeStatus(row: SystemAdminUser) {
   if (busyId.value || row.id === authStore.currentUserId) return
@@ -196,6 +198,14 @@ async function changeRole(row: SystemAdminUser) {
   } catch (error) { MessagePlugin.error(errorMessage(error, 'system.globalSettings.userList.roleFailed')) }
   finally { busyId.value = null; pendingRole.value = null }
 }
+watch(search, (_, __, cleanup) => {
+  request++
+  offset.value = 0
+  users.value = []
+  hasMore.value = false
+  const timer = setTimeout(() => fetchPage(0), 200)
+  cleanup(() => clearTimeout(timer))
+})
 watch(() => props.active, active => {
   if (active && !locked.value) fetchPage(offset.value)
   if (!active) { pendingRole.value = null; statusVisibleId.value = null }

@@ -448,34 +448,32 @@ func (r *authTokenRepository) CreateTokenPair(
 		return errors.New("invalid token pair")
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		account := tx.Model(&types.User{}).Where("id = ? AND is_active = ?", access.UserID, true)
-		var locked *gorm.DB
-		if tx.Name() == "sqlite" {
-			// SQLite has no row locks. Take its writer lock before reading or
-			// rotating tokens without modifying the user's status or timestamps.
-			locked = account.UpdateColumn("is_active", true)
-		} else {
-			var user types.User
-			locked = lockUserRows(account).Select("id").Find(&user)
+		if err := lockLoginUser(tx, access.UserID); err != nil {
+			return err
 		}
-		if locked.Error != nil {
-			return locked.Error
-		}
-		if locked.RowsAffected == 0 {
-			return errors.New("account is disabled or missing")
-		}
+		family := refresh.ID
 		if previousRefresh != "" {
-			old := tx.Model(&types.AuthToken{}).
-				Where("user_id = ? AND token = ? AND token_type = ? AND is_revoked = ? AND expires_at > ?",
-					access.UserID, previousRefresh, "refresh_token", false, time.Now()).
-				Update("is_revoked", true)
-			if old.Error != nil {
-				return old.Error
+			var source types.AuthToken
+			err := tx.Where("user_id = ? AND token = ? AND is_revoked = ? AND expires_at > ?",
+				access.UserID, previousRefresh, false, time.Now()).First(&source).Error
+			if err != nil {
+				return fmt.Errorf("load live source token: %w", err)
 			}
-			if old.RowsAffected == 0 {
-				return errors.New("refresh token is revoked or expired")
+			if source.TokenType != "access_token" && source.TokenType != "refresh_token" {
+				return errors.New("invalid session source")
+			}
+			family = source.SessionID
+			if family == "" {
+				// Without a known pair, rotation would strand the other old token.
+				return errors.New("legacy login cannot be rotated; sign in again")
+			}
+			if source.TokenType == "refresh_token" {
+				if err := tx.Model(&source).Update("is_revoked", true).Error; err != nil {
+					return err
+				}
 			}
 		}
+		access.SessionID, refresh.SessionID = family, family
 		if err := tx.Create(access).Error; err != nil {
 			return fmt.Errorf("persist access token: %w", err)
 		}
@@ -483,6 +481,63 @@ func (r *authTokenRepository) CreateTokenPair(
 			return fmt.Errorf("persist refresh token: %w", err)
 		}
 		return nil
+	})
+}
+
+func lockLoginUser(tx *gorm.DB, userID string) error {
+	account := tx.Model(&types.User{}).Where("id = ? AND is_active = ?", userID, true)
+	var locked *gorm.DB
+	if tx.Name() == "sqlite" {
+		// SQLite has no row locks. Take its writer lock before reading or
+		// rotating tokens without modifying the user's status or timestamps.
+		locked = account.UpdateColumn("is_active", true)
+	} else {
+		var user types.User
+		locked = lockUserRows(account).Select("id").Find(&user)
+	}
+	if locked.Error != nil {
+		return locked.Error
+	}
+	if locked.RowsAffected == 0 {
+		return errors.New("account is disabled or missing")
+	}
+	return nil
+}
+
+// RevokeLogin serializes with rotation: either the successor is revoked here
+// or its issuer observes an already revoked source.
+func (r *authTokenRepository) RevokeLogin(ctx context.Context, userID, token, companionRefresh string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockLoginUser(tx, userID); err != nil {
+			return err
+		}
+		var source types.AuthToken
+		if err := tx.Where("user_id = ? AND token = ?", userID, token).First(&source).Error; err != nil {
+			return err
+		}
+		family := source.SessionID
+		ids := []string{source.ID}
+		if companionRefresh != "" && source.TokenType == "access_token" {
+			var refresh types.AuthToken
+			err := tx.Where("user_id = ? AND token_type = ? AND token = ?",
+				userID, "refresh_token", companionRefresh).First(&refresh).Error
+			if err != nil {
+				return err
+			}
+			if family != refresh.SessionID {
+				return errors.New("logout credentials belong to different sessions")
+			}
+			ids = append(ids, refresh.ID)
+		} else if family == "" {
+			return errors.New("legacy login requires both access and refresh credentials")
+		}
+		revoke := tx.Model(&types.AuthToken{}).Where("user_id = ? AND is_revoked = ?", userID, false)
+		if family != "" {
+			revoke = revoke.Where("(session_id = ? OR id IN ?)", family, ids)
+		} else {
+			revoke = revoke.Where("id IN ?", ids)
+		}
+		return revoke.Update("is_revoked", true).Error
 	})
 }
 

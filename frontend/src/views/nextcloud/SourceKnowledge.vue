@@ -171,7 +171,13 @@ onChunk((chunk) => {
 })
 watch(error, value => { if (value) unavailable() })
 watch(() => route.query.ask, () => { void load() })
-async function leave() { clearConversation(); try { await logoutApi() } finally { auth.logout(); await router.replace('/login') } }
+async function leave() {
+  clearConversation()
+  const result = await logoutApi()
+  if (!result.success) { notice.value = result.message || '退出失败，请重试'; return }
+  auth.logout()
+  await router.replace('/login')
+}
 onMounted(async () => { await load(); poll = setInterval(history, 5000) })
 onUnmounted(() => { if (poll) clearInterval(poll); clearConversation() })
 </script>

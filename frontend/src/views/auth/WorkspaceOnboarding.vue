@@ -69,6 +69,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
+import { MessagePlugin } from 'tdesign-vue-next'
 import { useRouter } from 'vue-router'
 import CreateTenantDialog from '@/components/CreateTenantDialog.vue'
 import MyInvitationsDialog from '@/components/MyInvitationsDialog.vue'
@@ -116,7 +117,8 @@ async function onTenantCreated(tenant: TenantInfo) {
 }
 
 async function handleLogout() {
-  await logoutApi()
+  const result = await logoutApi()
+  if (!result.success) { MessagePlugin.error(result.message || 'Logout failed'); return }
   authStore.logout()
   await router.replace('/login')
 }

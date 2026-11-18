@@ -20,6 +20,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/config"
+	"github.com/Tencent/WeKnora/internal/extension/adminusers"
 	"github.com/Tencent/WeKnora/internal/extension/chatusage"
 	"github.com/Tencent/WeKnora/internal/handler"
 	"github.com/Tencent/WeKnora/internal/handler/session"
@@ -499,6 +500,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		params.SystemHandler.BindDeploymentCapabilities(deploymentCapabilitiesFromRouter(params))
 		RegisterSystemRoutes(v1, params.SystemHandler, rbacGuards)
 		RegisterSystemAdminRoutes(v1, params.SystemHandler, params.AuditLogHandler, rbacGuards)
+		adminusers.Register(v1.Group("/system/admin", rbacGuards.SystemAdmin()), params.DB)
 		chatusage.Register(v1.Group("/system/admin/chat-usage", rbacGuards.SystemAdmin()), params.DB)
 		if params.DirectoryHandler != nil {
 			directoryAdmin := v1.Group("/system/admin", rbacGuards.SystemAdmin())

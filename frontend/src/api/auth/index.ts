@@ -519,7 +519,7 @@ export async function refreshToken(refreshToken: string): Promise<{ success: boo
  */
 export async function logout(): Promise<{ success: boolean; message?: string }> {
   try {
-    await post('/api/v1/auth/logout', {})
+    await post('/api/v1/auth/logout', { refresh_token: localStorage.getItem('weknora_refresh_token') || undefined })
     return {
       success: true
     }

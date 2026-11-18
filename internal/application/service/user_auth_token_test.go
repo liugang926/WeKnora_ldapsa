@@ -82,6 +82,14 @@ func (s *stubAuthTokenRepo) GetTokensByUserID(context.Context, string) ([]*types
 func (s *stubAuthTokenRepo) UpdateToken(context.Context, *types.AuthToken) error { return nil }
 func (s *stubAuthTokenRepo) DeleteToken(context.Context, string) error           { return nil }
 func (s *stubAuthTokenRepo) DeleteExpiredTokens(context.Context) error           { return nil }
+
+func (s *stubAuthTokenRepo) RevokeLogin(_ context.Context, userID, token, _ string) error {
+	if t := s.tokens[token]; t != nil && t.UserID == userID {
+		t.IsRevoked = true
+	}
+	return nil
+}
+
 func (s *stubAuthTokenRepo) RevokeTokensByUserID(_ context.Context, userID string) error {
 	s.revokedUserIDs = append(s.revokedUserIDs, userID)
 	return nil
@@ -259,7 +267,7 @@ func TestRefreshTokenRejectsAccessTokenRecord(t *testing.T) {
 	}
 }
 
-func TestLogoutRevokesAllUserTokens(t *testing.T) {
+func TestLogoutAcceptsExpiredAccessWithoutGlobalRevocation(t *testing.T) {
 	ctx := context.Background()
 	tokenRepo := &stubAuthTokenRepo{tokens: map[string]*types.AuthToken{}}
 	svc := newAuthTestUserService(tokenRepo)
@@ -273,8 +281,8 @@ func TestLogoutRevokesAllUserTokens(t *testing.T) {
 	if err := svc.Logout(ctx, expiredAccess); err != nil {
 		t.Fatalf("Logout(expired access token) err = %v", err)
 	}
-	if len(tokenRepo.revokedUserIDs) != 1 || tokenRepo.revokedUserIDs[0] != "user-1" {
-		t.Fatalf("RevokeTokensByUserID calls = %v, want [user-1]", tokenRepo.revokedUserIDs)
+	if len(tokenRepo.revokedUserIDs) != 0 {
+		t.Fatal("ordinary logout revoked every session")
 	}
 }
 

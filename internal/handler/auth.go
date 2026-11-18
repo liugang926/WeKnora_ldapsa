@@ -550,9 +550,21 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 
 	token := tokenParts[1]
 
-	// Revoke every outstanding session for this user so refresh tokens
-	// cannot keep working after logout.
-	err := h.userService.Logout(ctx, token)
+	var err error
+	if c.Query("scope") == "all" {
+		err = h.userService.LogoutAll(ctx, token)
+	} else {
+		var req struct {
+			RefreshToken string `json:"refresh_token"`
+		}
+		if c.Request.ContentLength != 0 {
+			if bindErr := c.ShouldBindJSON(&req); bindErr != nil {
+				_ = c.Error(errors.NewValidationError("Invalid logout request"))
+				return
+			}
+		}
+		err = h.userService.Logout(ctx, token, req.RefreshToken)
+	}
 	if err != nil {
 		logger.Errorf(ctx, "Failed to revoke token: %v", err)
 		appErr := errors.NewInternalServerError("Logout failed").WithDetails(err.Error())
@@ -898,7 +910,13 @@ func (h *AuthHandler) SwitchTenant(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.userService.SwitchTenant(ctx, user, req.TenantID, req.RefreshToken)
+	source := req.RefreshToken
+	if source == "" {
+		if bearer, ok := strings.CutPrefix(c.GetHeader("Authorization"), "Bearer "); ok {
+			source = bearer
+		}
+	}
+	resp, err := h.userService.SwitchTenant(ctx, user, req.TenantID, source)
 	if err != nil {
 		logger.Errorf(ctx, "SwitchTenant failed user=%s target=%d: %v", user.ID, req.TenantID, err)
 		appErr := errors.NewForbiddenError("workspace switch failed").WithDetails(err.Error())

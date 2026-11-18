@@ -1215,12 +1215,10 @@ const gotopage = async (path: string) => {
     pathPrefix.value = path;
     // 处理退出登录
     if (path === 'logout') {
-        try {
-            // 调用后端API注销
-            await logoutApi();
-        } catch (error) {
-            // 即使API调用失败，也继续执行本地清理
-            console.error('注销API调用失败:', error);
+        const result = await logoutApi();
+        if (!result.success) {
+          MessagePlugin.error(result.message || t('error.auth.logoutFailed'));
+          return;
         }
         // 清理所有状态和本地存储
         authStore.logout();

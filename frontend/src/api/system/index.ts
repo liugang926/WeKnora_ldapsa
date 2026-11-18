@@ -282,6 +282,7 @@ export function checkStorageEngine(req: StorageCheckRequest): Promise<{ data: St
 // ---- System Admin Management ----
 
 export interface SystemAdminUser {
+  display_name?: string
   id: string
   username: string
   email: string
@@ -361,13 +362,13 @@ export interface ListAllUsersResponse {
  * Returns {users, offset, limit, has_more} directly (no data wrapping).
  */
 export async function listAllUsers(
-  params?: { offset?: number; limit?: number },
+  params?: { offset?: number; limit?: number; q?: string },
 ): Promise<ListAllUsersResponse> {
   const qs = new URLSearchParams()
   if (params?.offset != null) qs.set('offset', String(params.offset))
   if (params?.limit != null) qs.set('limit', String(params.limit))
-  const suffix = qs.toString() ? `?${qs.toString()}` : ''
-  const response = await get(`/api/v1/system/admin/users${suffix}`)
+  if (params?.q) qs.set('q', params.q)
+  const response = await get(`/api/v1/system/admin/account-list?${qs.toString()}`)
   return response as unknown as ListAllUsersResponse
 }
 
