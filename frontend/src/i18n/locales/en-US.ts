@@ -3,7 +3,15 @@ import { directoryAccessLocale } from './directoryAccessLocale'
 export default {
   chatUsage: {
     title: 'Chat usage',
-    scope: 'Chats started by people across all workspaces. Select a person to see when and where each chat started.',
+    global: 'Global totals',
+    questions: 'Questions asked',
+    webQuestions: 'Web questions',
+    dingtalkQuestions: 'DingTalk questions',
+    source: 'Source',
+    web: 'Web',
+    dingtalk: 'DingTalk IM',
+    unattributed: 'DingTalk IM · Unattributed',
+    scope: 'Web and DingTalk usage across all spaces. Each question counts even if the answer is interrupted. Global totals include unattributed usage and count each shared conversation once.',
     people: 'People',
     sessions: 'Chats',
     tokens: 'Reported tokens',

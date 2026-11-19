@@ -38,7 +38,10 @@ func reportDB(t *testing.T) *gorm.DB {
 	CREATE TEMP TABLE sessions(id TEXT PRIMARY KEY,user_id TEXT,tenant_id INTEGER,owner_auth_source TEXT,
 		kind TEXT,parent_session_id TEXT,created_at DATETIME,deleted_at DATETIME);
 	CREATE TEMP TABLE messages(id TEXT PRIMARY KEY,session_id TEXT,role TEXT,created_at DATETIME,
-		usage TEXT,deleted_at DATETIME);
+		usage TEXT,deleted_at DATETIME,channel TEXT,usage_source TEXT,usage_actor_user_id TEXT,usage_event_key TEXT);
+	CREATE TEMP TABLE im_usage_submissions(source TEXT,session_id TEXT,event_key TEXT PRIMARY KEY,
+		actor_user_id TEXT,created_at DATETIME);
+	CREATE TEMP TABLE im_channel_sessions(tenant_id INTEGER, session_id TEXT, platform TEXT);
 	INSERT INTO users VALUES ('u1','A_test'),('u2','Another'),('unused','Unused');
 	INSERT INTO tenants VALUES (10,'First'),(20,'Second');
 	INSERT INTO sessions VALUES
@@ -89,7 +92,10 @@ func TestGlobalHistory(t *testing.T) {
 	require.Equal(t, Tokens{12, 7, 28, 4, 5}, users.Summary.Tokens)
 	require.EqualValues(t, 1, users.Total)
 	require.Len(t, users.Items, 1)
-	require.Equal(t, Counts{3, Tokens{12, 7, 28, 3, 1}}, users.Items[0].Counts)
+	require.Equal(t, Counts{
+		SessionCount: 3, Questions: Questions{4, 4, 0},
+		Tokens: Tokens{12, 7, 28, 3, 1},
+	}, users.Items[0].Counts)
 
 	detail, err := listSessions(ctx, db, p, "u1")
 	require.NoError(t, err)
@@ -174,5 +180,76 @@ func TestOnlySystemAdminWebLogin(t *testing.T) {
 			require.Contains(t, w.Body.String(), `"items":[`)
 			require.NotContains(t, w.Body.String(), "content")
 		}
+	}
+}
+
+func TestDingTalkQuestionsAndSharedThread(t *testing.T) {
+	db := reportDB(t)
+	ctx := context.Background()
+	p := page{Page: 1, PageSize: 20}
+	require.NoError(t, db.Exec(`
+		INSERT INTO sessions(id,tenant_id,owner_auth_source,kind) VALUES ('group',20,'im',''),('other',20,'im','');
+		INSERT INTO im_channel_sessions VALUES (20,'group','dingtalk'), (20,'other','slack'), (10,'other','dingtalk');
+		INSERT INTO messages(id,session_id,role,created_at,channel,usage_source,
+			usage_actor_user_id,usage_event_key,usage)
+		VALUES ('g1','group','user','2026-03-03','im','dingtalk','u1','event1',NULL),
+		('redelivery','group','user','2026-03-04','im','dingtalk','u1','event1',NULL),
+		('g2','group','assistant','2026-03-03','im','dingtalk','u1','event1','{"total_tokens":20}'),
+		('g3','group','user','2026-03-04','im','dingtalk','u2','event2',NULL),
+		('g4','group','assistant','2026-03-04','im','dingtalk','u2','event2',NULL),
+		('g5','group','user','2026-03-05','im','','','',NULL),
+		('g6','group','assistant','2026-03-05','im','','','','{"total_tokens":4}'),
+		('x1','other','user','2026-03-05','im','','','',NULL);
+	`).Error)
+	report, err := listPeople(ctx, db, p, "A_test")
+	require.NoError(t, err)
+	require.Equal(t, Questions{8, 5, 3}, report.Summary.Questions)
+	require.EqualValues(t, 5, report.Summary.SessionCount)
+	require.EqualValues(t, 52, report.Summary.TotalTokens)
+	require.EqualValues(t, 2, report.Summary.UserCount)
+	require.Len(t, report.Items, 1)
+	require.Equal(t, Questions{5, 4, 1}, report.Items[0].Questions)
+	require.EqualValues(t, 48, report.Items[0].TotalTokens)
+	require.Equal(t, Questions{1, 0, 1}, report.UnattributedDingTalk.Questions)
+	require.EqualValues(t, 4, report.UnattributedDingTalk.TotalTokens)
+	detail, err := listSessions(ctx, db, p, "u2")
+	require.NoError(t, err)
+	require.EqualValues(t, 2, detail.Total)
+	require.Equal(t, "dingtalk", detail.Items[0].Source)
+	require.Equal(t, Questions{1, 0, 1}, detail.Items[0].Questions)
+	require.EqualValues(t, 1, detail.Items[0].UnreportedTurns)
+	require.Equal(t, "Second", detail.Items[0].WorkspaceName)
+}
+
+func TestAcceptedDingTalkSubmissionIsCanonical(t *testing.T) {
+	db := reportDB(t)
+	ctx := context.Background()
+	p := page{Page: 1, PageSize: 20}
+	require.NoError(t, db.Exec(`
+		INSERT INTO sessions(id,tenant_id,owner_auth_source,kind) VALUES ('im',20,'im','');
+		INSERT INTO im_usage_submissions(source,session_id,event_key,actor_user_id,created_at)
+			VALUES ('dingtalk','im','queued','u1','2026-03-10'),('dingtalk','im','handled','u2','2026-03-11');
+		INSERT INTO messages(id,session_id,role,created_at,channel,usage_source,
+			usage_actor_user_id,usage_event_key,usage)
+			VALUES ('question','im','user','2026-03-12','im','dingtalk','u1','handled',NULL),
+			('answer','im','assistant','2026-03-12','im','dingtalk','u1','handled','{"total_tokens":10}');
+	`).Error)
+	users, err := listPeople(ctx, db, p, "")
+	require.NoError(t, err)
+	require.Equal(t, Questions{7, 5, 2}, users.Summary.Questions)
+	require.EqualValues(t, 5, users.Summary.SessionCount)
+	require.Equal(t, Tokens{12, 7, 38, 5, 5}, users.Summary.Tokens)
+	for _, tc := range []struct {
+		person, date string
+		tokens       int64
+	}{{"u1", "2026-03-10", 0}, {"u2", "2026-03-11", 10}} {
+		detail, err := listSessions(ctx, db, p, tc.person)
+		require.NoError(t, err)
+		require.NotEmpty(t, detail.Items)
+		first := detail.Items[0]
+		require.Equal(t, tc.date, first.StartedAt.Format("2006-01-02"))
+		require.Equal(t, Questions{1, 0, 1}, first.Questions)
+		require.EqualValues(t, tc.tokens, first.TotalTokens)
+		require.Zero(t, first.UnreportedTurns)
 	}
 }

@@ -11,17 +11,32 @@
     </header>
 
     <template v-if="!selected">
+      <h3>{{ t('chatUsage.global') }}</h3>
       <dl v-if="users?.summary" class="summary">
+        <div v-for="metric in questionMetrics" :key="metric.key">
+          <dt>{{ t(metric.label) }}</dt><dd>{{ number(users.summary[metric.key]) }}</dd>
+        </div>
         <div><dt>{{ t('chatUsage.people') }}</dt><dd>{{ number(users.summary.user_count) }}</dd></div>
         <div><dt>{{ t('chatUsage.sessions') }}</dt><dd>{{ number(users.summary.session_count) }}</dd></div>
         <div><dt>{{ t('chatUsage.tokens') }}</dt><dd>{{ token(users.summary, 'total_tokens') }}</dd></div>
         <div><dt>{{ t('chatUsage.missing') }}</dt><dd>{{ number(users.summary.unreported_turns) }}</dd></div>
       </dl>
+      <section v-if="unattributed && !query" class="unattributed">
+        <h3>{{ t('chatUsage.unattributed') }}</h3>
+        <dl class="summary">
+          <div><dt>{{ t('chatUsage.questions') }}</dt><dd>{{ number(unattributed.question_count) }}</dd></div>
+          <div><dt>{{ t('chatUsage.sessions') }}</dt><dd>{{ number(unattributed.session_count) }}</dd></div>
+          <div><dt>{{ t('chatUsage.input') }}</dt><dd>{{ token(unattributed, 'prompt_tokens') }}</dd></div>
+          <div><dt>{{ t('chatUsage.output') }}</dt><dd>{{ token(unattributed, 'completion_tokens') }}</dd></div>
+          <div><dt>{{ t('chatUsage.tokens') }}</dt><dd>{{ token(unattributed, 'total_tokens') }}</dd></div>
+          <div><dt>{{ t('chatUsage.missing') }}</dt><dd>{{ number(unattributed.unreported_turns) }}</dd></div>
+        </dl>
+      </section>
       <form class="toolbar" @submit.prevent="applySearch">
         <t-input v-model="draft" clearable :aria-label="t('chatUsage.search')" :placeholder="t('chatUsage.search')"
           @clear="clearSearch" />
         <t-button type="submit" variant="outline">{{ t('chatUsage.find') }}</t-button>
-        <t-button type="button" variant="outline" :loading="exporting" :disabled="loading || failed || !total" @click="exportPeople">
+        <t-button type="button" variant="outline" :loading="exporting" :disabled="loading || failed || (!total && (query !== '' || !unattributed))" @click="exportPeople">
           {{ t('chatUsage.exportCsv') }}
         </t-button>
       </form>
@@ -47,7 +62,10 @@
           <caption class="sr-only">{{ selected ? t('chatUsage.sessionDetails') : t('chatUsage.peopleList') }}</caption>
           <thead><tr>
             <th scope="col">{{ selected ? t('chatUsage.started') : t('chatUsage.person') }}</th>
-            <th scope="col" :class="{ numeric: !selected }">{{ selected ? t('chatUsage.workspace') : t('chatUsage.sessions') }}</th>
+            <th v-if="selected" scope="col">{{ t('chatUsage.workspace') }}</th>
+            <th v-if="selected" scope="col">{{ t('chatUsage.source') }}</th>
+            <th v-for="metric in visibleQuestionMetrics" :key="metric.key" scope="col" class="numeric">{{ t(metric.label) }}</th>
+            <th v-if="!selected" scope="col" class="numeric">{{ t('chatUsage.sessions') }}</th>
             <th scope="col" class="numeric">{{ t('chatUsage.input') }}</th>
             <th scope="col" class="numeric">{{ t('chatUsage.output') }}</th>
             <th scope="col" class="numeric">{{ t('chatUsage.tokens') }}</th>
@@ -61,14 +79,16 @@
                   <small>ID: {{ row.session_id }}</small>
                 </th>
                 <td>{{ row.workspace_name || '—' }}<small>ID: {{ row.workspace_id }}</small></td>
+                <td>{{ row.source === 'dingtalk' ? t('chatUsage.dingtalk') : row.source === 'web' ? t('chatUsage.web') : '—' }}</td>
               </template>
               <template v-else>
                 <th scope="row">
                   <button class="person" type="button" @click="openUser(row)">{{ row.display_name || row.username || row.user_id }}</button>
                   <small v-if="row.display_name && row.username">{{ row.username }}</small>
                 </th>
-                <td class="numeric">{{ number(row.session_count) }}</td>
               </template>
+              <td v-for="metric in visibleQuestionMetrics" :key="metric.key" class="numeric">{{ number(row[metric.key]) }}</td>
+              <td v-if="'user_id' in row" class="numeric">{{ number(row.session_count) }}</td>
               <td class="numeric">{{ token(row, 'prompt_tokens') }}</td>
               <td class="numeric">{{ token(row, 'completion_tokens') }}</td>
               <td class="numeric">{{ token(row, 'total_tokens') }}</td>
@@ -87,7 +107,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { CHAT_USAGE_PAGE_SIZE, getChatSessions, getChatUsers, type ChatUsage, type ChatUserUsage } from '@/api/system/chatUsage'
-import { peopleCsv, reportedTokens } from './chatUsageCsv'
+import { csvHeaderKeys, hasUsage, peopleCsv, reportedTokens } from './chatUsageCsv'
 import { useChatUsagePage } from './useChatUsagePage'
 
 const { t, locale } = useI18n()
@@ -101,6 +121,13 @@ const userResult = useChatUsagePage(signal => getChatUsers(userPage.value, query
 const detailResult = useChatUsagePage(signal => selected.value
   ? getChatSessions(selected.value.user_id, sessionPage.value, signal) : undefined)
 const users = userResult.data
+const unattributed = computed(() => hasUsage(users.value?.unattributed_dingtalk) ? users.value?.unattributed_dingtalk : undefined)
+const questionMetrics = [
+  { key: 'question_count', label: 'chatUsage.questions' },
+  { key: 'web_question_count', label: 'chatUsage.webQuestions' },
+  { key: 'dingtalk_question_count', label: 'chatUsage.dingtalkQuestions' },
+] as const
+const visibleQuestionMetrics = computed(() => selected.value ? questionMetrics.slice(0, 1) : questionMetrics)
 const current = computed(() => selected.value ? detailResult : userResult)
 const rows = computed(() => current.value.data.value?.items ?? [])
 const total = computed(() => current.value.data.value?.total ?? 0)
@@ -147,9 +174,9 @@ async function exportPeople() {
   exporting.value = true
   exportFailed.value = false
   try {
-    const headers = ['displayName', 'account', 'userId', 'sessions', 'input', 'output', 'tokens', 'missing']
-      .map(key => t('chatUsage.' + key))
-    const csv = await peopleCsv(headers, page => getChatUsers(page, filter, request.signal, 100))
+    const headers = csvHeaderKeys.map(key => t('chatUsage.' + key))
+    const csv = await peopleCsv(headers, page => getChatUsers(page, filter, request.signal, 100),
+      filter ? undefined : t('chatUsage.unattributed'))
     if (request.signal.aborted) return
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
     const link = document.createElement('a')

@@ -537,6 +537,10 @@ type Message struct {
 	// sent to the LLM. Used to preserve retrieval context across conversation turns.
 	// Empty for non-retrieval intents or assistant messages.
 	RenderedContent string `json:"-" gorm:"type:text;column:rendered_content;default:''"`
+	// Accounting-only snapshot of a verified IM turn. Never accept these fields from clients.
+	UsageSource      string `json:"-" gorm:"type:varchar(20)"`
+	UsageActorUserID string `json:"-" gorm:"type:varchar(36)"`
+	UsageEventKey    string `json:"-" gorm:"type:varchar(64)"`
 	// Channel indicates the source channel of this message (e.g., "web", "api", "im")
 	Channel string `json:"channel,omitempty" gorm:"type:varchar(50);default:''"`
 	// AgentID is the agent used for this individual assistant turn. Unlike the

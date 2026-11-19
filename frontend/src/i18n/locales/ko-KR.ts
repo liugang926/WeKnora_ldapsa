@@ -3,7 +3,15 @@ import { directoryAccessLocale } from './directoryAccessLocale'
 export default {
   chatUsage: {
     title: '대화 사용량',
-    scope: '모든 워크스페이스에서 사용자가 시작한 대화를 집계합니다. 사용자를 선택하면 각 대화의 시작 시간과 워크스페이스를 확인할 수 있습니다.',
+    global: '전체 합계',
+    questions: '질문 수',
+    webQuestions: '웹 질문',
+    dingtalkQuestions: 'DingTalk 질문',
+    source: '출처',
+    web: '웹',
+    dingtalk: 'DingTalk IM',
+    unattributed: 'DingTalk IM · 사용자 미확인',
+    scope: '모든 공간의 웹 및 DingTalk 사용량입니다. 답변이 중단되어도 질문은 한 번으로 집계합니다. 전체 합계에는 사용자 미확인 사용량이 포함되며, 공유 대화는 한 번만 계산합니다.',
     people: '사용자 수',
     sessions: '대화 수',
     tokens: '보고된 토큰',

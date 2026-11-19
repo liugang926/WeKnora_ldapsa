@@ -427,11 +427,16 @@ func TestStreamToIncoming_TextStillWorks(t *testing.T) {
 		MsgId:         "m4",
 		Msgtype:       "text",
 		SenderStaffId: "staff-2",
+		SenderCorpId:  "sender-corp",
+		ChatbotCorpId: "bot-corp",
 		Text:          chatbot.BotCallbackDataTextModel{Content: " hi "},
 	}
 	got := streamToIncoming(data, "client-app-key")
 	if got.MessageType != im.MessageTypeText {
 		t.Errorf("MessageType = %q, want %q", got.MessageType, im.MessageTypeText)
+	}
+	if got.SenderCorpID != "sender-corp" || got.SenderStaffID != "staff-2" {
+		t.Fatal("sender identity was not preserved")
 	}
 	if got.Content != "hi" {
 		t.Errorf("Content = %q, want %q", got.Content, "hi")
