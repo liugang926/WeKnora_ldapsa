@@ -52,6 +52,9 @@ type IncomingMessage struct {
 	MessageType MessageType
 	// UserID is the IM-platform user identifier.
 	UserID string
+	// Verified DingTalk callback identifiers; never inferred from nicknames or bot identity.
+	SenderCorpID  string
+	SenderStaffID string
 	// UserName is the display name of the user (optional).
 	UserName string
 	// ChatID is the group/channel ID (empty for direct messages).

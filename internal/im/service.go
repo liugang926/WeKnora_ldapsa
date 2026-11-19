@@ -1708,7 +1708,11 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 	}
 	// Dedup: skip if this message was already processed (IM platforms may retry)
 	if msg.MessageID != "" {
-		if s.isDuplicate(ctx, msg.MessageID) {
+		dedupKey := msg.MessageID
+		if msg.Platform == PlatformDingtalk && channelID != "" {
+			dedupKey = dingTalkEventKey(channelID, msg.MessageID)
+		}
+		if s.isDuplicate(ctx, dedupKey) {
 			logger.Infof(ctx, "[IM] Skipping duplicate message: %s", msg.MessageID)
 			return nil
 		}
@@ -1850,6 +1854,11 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 		} else {
 			return fmt.Errorf("get session: %w", err)
 		}
+	}
+
+	sessionCtx = s.withTurnUsage(sessionCtx, channel, msg)
+	if s.recordTurnSubmission(sessionCtx, session.ID) {
+		return nil
 	}
 
 	// Title an untitled IM session from its first text message, like web chats.
@@ -2658,6 +2667,10 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 		}
 
 		bufMu.Lock()
+		if !useAgent && data.Usage != nil && assistantMsg != nil {
+			usage := *data.Usage
+			assistantMsg.Usage = &usage
+		}
 		if useAgent && !agentDone {
 			if data.Content != "" {
 				agentLiveAnswer.WriteString(data.Content)
@@ -2838,7 +2851,8 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 	requestID := uuid.New().String()
 
 	// Create user message
-	userMsg, err := s.messageService.CreateMessage(qaCtx, createIMUserMessagePayload(session.ID, msg.Content, requestID, attachments))
+	userPayload := createIMUserMessagePayload(session.ID, msg.Content, requestID, attachments)
+	userMsg, err := s.messageService.CreateMessage(qaCtx, stampIMTurn(qaCtx, userPayload))
 	if err != nil {
 		return fmt.Errorf("create user message: %w", err)
 	}
@@ -3068,6 +3082,7 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	// Thread-safe answer collection
 	var answerMu sync.Mutex
 	var answerBuilder strings.Builder
+	var reportedUsage *types.TokenUsage
 	var qaErr error
 	var mcpAuthServices []imMCPAuthService
 	mcpAuthSeen := make(map[string]bool)
@@ -3084,6 +3099,10 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 			return nil
 		}
 		answerMu.Lock()
+		if data.Usage != nil {
+			usage := *data.Usage
+			reportedUsage = &usage
+		}
 		answerBuilder.WriteString(data.Content)
 		answerMu.Unlock()
 		if data.Done {
@@ -3129,7 +3148,8 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	requestID := uuid.New().String()
 
 	// Create user message so it appears in conversation history
-	userMsg, err := s.messageService.CreateMessage(ctx, createIMUserMessagePayload(session.ID, query, requestID, attachments))
+	userPayload := createIMUserMessagePayload(session.ID, query, requestID, attachments)
+	userMsg, err := s.messageService.CreateMessage(ctx, stampIMTurn(ctx, userPayload))
 	if err != nil {
 		return "", fmt.Errorf("create user message: %w", err)
 	}
@@ -3226,6 +3246,9 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	}
 
 	answerMu.Lock()
+	if !useAgent && reportedUsage != nil {
+		assistantMsg.Usage = reportedUsage
+	}
 	answer := answerBuilder.String()
 	qaError := qaErr
 	authServices := append([]imMCPAuthService(nil), mcpAuthServices...)

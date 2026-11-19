@@ -56,7 +56,7 @@ func (p *imMessageProvenance) apply(ctx context.Context, message *types.Message)
 }
 
 func imAssistantMessage(ctx context.Context, sessionID, requestID string, agent *types.CustomAgent) *types.Message {
-	message := createIMAssistantMessagePayload(sessionID, requestID)
+	message := stampIMTurn(ctx, createIMAssistantMessagePayload(sessionID, requestID))
 	if agent != nil {
 		message.AgentID = agent.ID
 		message.AgentTenantID = agent.TenantID

@@ -471,13 +471,15 @@ func streamToIncoming(data *chatbot.BotCallbackDataModel, fallbackRobotCode stri
 		"raw_msgtype":     data.Msgtype,
 	}
 	incoming := &im.IncomingMessage{
-		Platform:  im.PlatformDingtalk,
-		UserID:    userID,
-		UserName:  data.SenderNick,
-		ChatID:    chatID,
-		ChatType:  chatType,
-		MessageID: data.MsgId,
-		Extra:     extra,
+		Platform:      im.PlatformDingtalk,
+		SenderCorpID:  data.SenderCorpId,
+		SenderStaffID: data.SenderStaffId,
+		UserID:        userID,
+		UserName:      data.SenderNick,
+		ChatID:        chatID,
+		ChatType:      chatType,
+		MessageID:     data.MsgId,
+		Extra:         extra,
 	}
 
 	// data.Content is a decoded interface{}; re-marshal it to JSON so the same
