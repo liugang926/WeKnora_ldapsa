@@ -962,6 +962,7 @@ func (c *Connector) sync(
 		newRevisions := make(map[string]string, len(documents))
 		currentDocuments := make(map[string]struct{}, len(documents))
 		synced := 0
+		emptyUploads := 0
 		failed := 0
 
 		for _, scanned := range documents {
@@ -1008,10 +1009,18 @@ func (c *Connector) sync(
 				}
 				continue
 			}
-			sealFetchedArtifact(ctx, &item, scope, document, configDigest)
+			if IsEmptyUpload(&item) {
+				// Keep the visible node in the inventory without marking its
+				// revision ingested. Some stores populate bytes before their
+				// listing timestamp changes; retry that node on the next scan.
+				newRevisions[document.ID] = ""
+				emptyUploads++
+			} else {
+				sealFetchedArtifact(ctx, &item, scope, document, configDigest)
+				newRevisions[document.ID] = revision
+				synced++
+			}
 			items = append(items, item)
-			synced++
-			newRevisions[document.ID] = revision
 			fetchDone++
 			reportFetch()
 		}
@@ -1031,7 +1040,7 @@ func (c *Connector) sync(
 		// failed + skipped — so a scope that quietly loses two thirds of its
 		// nodes can no longer look like a clean run.
 		logger.Infof(ctx, "[DingTalk] scope %s: total=%d synced=%d skipped=%d failed=%d",
-			scopeLabel(scope), len(documents)+len(skipped), synced, len(skipped), failed)
+			scopeLabel(scope), len(documents)+len(skipped), synced, len(skipped)+emptyUploads, failed)
 		failedDocuments += failed
 	}
 
@@ -1437,8 +1446,25 @@ func readDocument(
 		if err != nil {
 			return types.FetchedItem{}, err
 		}
-		return fetchedBinaryDocument(sourceResourceID, workspaceID, document, data, folders), nil
+		item := fetchedBinaryDocument(sourceResourceID, workspaceID, document, data, folders)
+		if len(data) == 0 {
+			item.OriginalArtifact = emptyUpload{}
+		}
+		return item, nil
 	}
+}
+
+type emptyUpload struct{}
+
+// IsEmptyUpload distinguishes a successful zero-byte file download from an
+// empty rendered document, a tombstone or a missing/failed transfer. The
+// marker only exists in memory and cannot authorize publishing an artifact.
+func IsEmptyUpload(item *types.FetchedItem) bool {
+	if item == nil || item.IsDeleted || len(item.Content) != 0 {
+		return false
+	}
+	_, ok := item.OriginalArtifact.(emptyUpload)
+	return ok
 }
 
 // documentFolders assembles the folder segments a document's FileName encodes:
