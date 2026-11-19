@@ -92,8 +92,10 @@ func TestGlobalHistory(t *testing.T) {
 	require.Equal(t, Tokens{12, 7, 28, 4, 5}, users.Summary.Tokens)
 	require.EqualValues(t, 1, users.Total)
 	require.Len(t, users.Items, 1)
-	require.Equal(t, Counts{SessionCount: 3, Questions: Questions{4, 4, 0},
-		Tokens: Tokens{12, 7, 28, 3, 1}}, users.Items[0].Counts)
+	require.Equal(t, Counts{
+		SessionCount: 3, Questions: Questions{4, 4, 0},
+		Tokens: Tokens{12, 7, 28, 3, 1},
+	}, users.Items[0].Counts)
 
 	detail, err := listSessions(ctx, db, p, "u1")
 	require.NoError(t, err)
@@ -188,7 +190,8 @@ func TestDingTalkQuestionsAndSharedThread(t *testing.T) {
 	require.NoError(t, db.Exec(`
 		INSERT INTO sessions(id,tenant_id,owner_auth_source,kind) VALUES ('group',20,'im',''),('other',20,'im','');
 		INSERT INTO im_channel_sessions VALUES (20,'group','dingtalk'), (20,'other','slack'), (10,'other','dingtalk');
-		INSERT INTO messages(id,session_id,role,created_at,channel,usage_source,usage_actor_user_id,usage_event_key,usage)
+		INSERT INTO messages(id,session_id,role,created_at,channel,usage_source,
+			usage_actor_user_id,usage_event_key,usage)
 		VALUES ('g1','group','user','2026-03-03','im','dingtalk','u1','event1',NULL),
 		('redelivery','group','user','2026-03-04','im','dingtalk','u1','event1',NULL),
 		('g2','group','assistant','2026-03-03','im','dingtalk','u1','event1','{"total_tokens":20}'),
@@ -226,7 +229,8 @@ func TestAcceptedDingTalkSubmissionIsCanonical(t *testing.T) {
 		INSERT INTO sessions(id,tenant_id,owner_auth_source,kind) VALUES ('im',20,'im','');
 		INSERT INTO im_usage_submissions(source,session_id,event_key,actor_user_id,created_at)
 			VALUES ('dingtalk','im','queued','u1','2026-03-10'),('dingtalk','im','handled','u2','2026-03-11');
-		INSERT INTO messages(id,session_id,role,created_at,channel,usage_source,usage_actor_user_id,usage_event_key,usage)
+		INSERT INTO messages(id,session_id,role,created_at,channel,usage_source,
+			usage_actor_user_id,usage_event_key,usage)
 			VALUES ('question','im','user','2026-03-12','im','dingtalk','u1','handled',NULL),
 			('answer','im','assistant','2026-03-12','im','dingtalk','u1','handled','{"total_tokens":10}');
 	`).Error)

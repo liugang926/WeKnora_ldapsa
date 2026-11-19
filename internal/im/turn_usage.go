@@ -15,8 +15,10 @@ import (
 )
 
 // This snapshot is accounting metadata, never an authorization principal.
-type turnUsage struct{ source, actorID, eventKey string }
-type turnUsageKey struct{}
+type (
+	turnUsage    struct{ source, actorID, eventKey string }
+	turnUsageKey struct{}
+)
 
 func dingTalkEventKey(channelID, upstreamID string) string {
 	if channelID == "" || upstreamID == "" {

@@ -46,8 +46,12 @@ func TestDingTalkUsageIdentityIsPerSubmission(t *testing.T) {
 	require.Equal(t, []string{"a"}, actors)
 	require.Equal(t, "a", imAssistantMessage(ctx, "shared", "req", nil).UsageActorUserID)
 	for _, c := range []struct{ corp, staff, sender, want string }{
-		{"other", "s", "s", "b"}, {"corp", "u", "u", ""}, {"corp", "", "s", ""}, {"", "s", "s", ""},
-		{"other", "s", "bad", ""}, {"corp", "s", "s", ""},
+		{"other", "s", "s", "b"},
+		{"corp", "u", "u", ""},
+		{"corp", "", "s", ""},
+		{"", "s", "s", ""},
+		{"other", "s", "bad", ""},
+		{"corp", "s", "s", ""},
 	} {
 		msg.SenderCorpID, msg.SenderStaffID, msg.UserID = c.corp, c.staff, c.sender
 		m := stampIMTurn(s.withTurnUsage(context.Background(), channel, msg), &types.Message{})

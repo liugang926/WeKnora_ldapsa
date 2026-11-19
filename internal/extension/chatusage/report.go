@@ -168,7 +168,8 @@ func sessionUsage(dialect string) string {
 // DingTalk senders. COUNT DISTINCT keeps shared group conversations unique.
 const totals = `COUNT(DISTINCT CASE WHEN question_count > 0 THEN session_id END) AS session_count,
 	COALESCE(SUM(question_count),0) AS question_count, COALESCE(SUM(web_question_count),0) AS web_question_count,
-	COALESCE(SUM(dingtalk_question_count),0) AS dingtalk_question_count, COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
+	COALESCE(SUM(dingtalk_question_count),0) AS dingtalk_question_count,
+	COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
 	COALESCE(SUM(completion_tokens),0) AS completion_tokens, COALESCE(SUM(total_tokens),0) AS total_tokens,
 	COALESCE(SUM(reported_turns),0) AS reported_turns, COALESCE(SUM(unreported_turns),0) AS unreported_turns`
 
