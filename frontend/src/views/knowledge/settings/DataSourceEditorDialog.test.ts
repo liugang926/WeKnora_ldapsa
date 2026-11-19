@@ -536,3 +536,22 @@ test('Confluence PAT replacement uses the credentials subresource and keeps the 
     assert.equal(update.config.settings.token, undefined)
   } finally { f.close() }
 })
+
+test('DingTalk per-source download limit round-trips without rewriting legacy defaults', async () => {
+  const f = await fixture({ type: 'dingtalk', settings: { include_uploaded_files: true } })
+  try {
+    assert.equal(f.vm.dingtalkDownloadMiB, 64)
+    assert.equal('max_download_mib' in f.vm.buildConfigPayload().settings, false)
+    f.vm.dingtalkDownloadMiB = 257
+    await f.vm.handleSubmit()
+    assert.equal(f.calls.length, 0)
+    f.vm.dingtalkDownloadMiB = 128
+    await f.vm.handleSubmit()
+    const put = f.calls.find(call => call.method === 'updateDataSource')!
+    assert.deepEqual(put.args[1].config.settings, { include_uploaded_files: true, max_download_mib: 128 })
+    const reopened = await fixture({ type: 'dingtalk', settings: put.args[1].config.settings })
+    try {
+      assert.equal(reopened.vm.dingtalkDownloadMiB, 128)
+    } finally { reopened.close() }
+  } finally { f.close() }
+})

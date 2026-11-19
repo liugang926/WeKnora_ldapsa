@@ -352,6 +352,13 @@ func (s *DataSourceService) processDingTalkSync(
 				importDone)
 			continue
 		}
+		if dingtalk.IsEmptyUpload(item) {
+			result.Skipped++
+			importDone++
+			progress.reportImport(result.Total, result.Created, result.Updated,
+				result.Skipped, result.Failed, importDone)
+			continue
+		}
 		k, outcome, err := s.ingestDingTalkItem(ctx, ds, item, tagIDs)
 		if err != nil && isSerializationConflict(err) {
 			// Postgres SERIALIZABLE / concurrent-update conflicts are a normal

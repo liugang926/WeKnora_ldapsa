@@ -962,6 +962,7 @@ func (c *Connector) sync(
 		newRevisions := make(map[string]string, len(documents))
 		currentDocuments := make(map[string]struct{}, len(documents))
 		synced := 0
+		emptyUploads := 0
 		failed := 0
 
 		for _, scanned := range documents {
@@ -996,7 +997,7 @@ func (c *Connector) sync(
 					"[DingTalk] read document %s (name=%q extension=%s) failed, will retry next sync: %v",
 					document.ID, document.title(), document.Extension, err)
 				items = append(items, failedDocument(
-					scope.ResourceID, scope.Reference.WorkspaceID, document, err,
+					scope.ResourceID, scope.Reference.WorkspaceID, document, err, cfg.downloadMiB,
 				))
 				failed++
 				fetchDone++
@@ -1008,10 +1009,18 @@ func (c *Connector) sync(
 				}
 				continue
 			}
-			sealFetchedArtifact(ctx, &item, scope, document, configDigest)
+			if IsEmptyUpload(&item) {
+				// Keep the visible node in the inventory without marking its
+				// revision ingested. Some stores populate bytes before their
+				// listing timestamp changes; retry that node on the next scan.
+				newRevisions[document.ID] = ""
+				emptyUploads++
+			} else {
+				sealFetchedArtifact(ctx, &item, scope, document, configDigest)
+				newRevisions[document.ID] = revision
+				synced++
+			}
 			items = append(items, item)
-			synced++
-			newRevisions[document.ID] = revision
 			fetchDone++
 			reportFetch()
 		}
@@ -1031,7 +1040,7 @@ func (c *Connector) sync(
 		// failed + skipped — so a scope that quietly loses two thirds of its
 		// nodes can no longer look like a clean run.
 		logger.Infof(ctx, "[DingTalk] scope %s: total=%d synced=%d skipped=%d failed=%d",
-			scopeLabel(scope), len(documents)+len(skipped), synced, len(skipped), failed)
+			scopeLabel(scope), len(documents)+len(skipped), synced, len(skipped)+emptyUploads, failed)
 		failedDocuments += failed
 	}
 
@@ -1437,8 +1446,25 @@ func readDocument(
 		if err != nil {
 			return types.FetchedItem{}, err
 		}
-		return fetchedBinaryDocument(sourceResourceID, workspaceID, document, data, folders), nil
+		item := fetchedBinaryDocument(sourceResourceID, workspaceID, document, data, folders)
+		if len(data) == 0 {
+			item.OriginalArtifact = emptyUpload{}
+		}
+		return item, nil
 	}
+}
+
+type emptyUpload struct{}
+
+// IsEmptyUpload distinguishes a successful zero-byte file download from an
+// empty rendered document, a tombstone or a missing/failed transfer. The
+// marker only exists in memory and cannot authorize publishing an artifact.
+func IsEmptyUpload(item *types.FetchedItem) bool {
+	if item == nil || item.IsDeleted || len(item.Content) != 0 {
+		return false
+	}
+	_, ok := item.OriginalArtifact.(emptyUpload)
+	return ok
 }
 
 // documentFolders assembles the folder segments a document's FileName encodes:
@@ -1613,12 +1639,13 @@ func failedDocument(
 	workspaceID string,
 	document node,
 	err error,
+	limitMiB int,
 ) types.FetchedItem {
 	reasonCode := "dingtalk_document_failed"
 	reason := "DingTalk document could not be read; retry on the next sync"
 	if errors.Is(err, errDocumentTooLarge) {
 		reasonCode = "dingtalk_document_too_large"
-		reason = "DingTalk file exceeds the 64 MiB download limit; skipped for this sync. Compress or split the file."
+		reason = fmt.Sprintf("DingTalk file exceeds this source's %d MiB download limit.", limitMiB)
 	}
 	return types.FetchedItem{
 		ExternalID:       document.ID,

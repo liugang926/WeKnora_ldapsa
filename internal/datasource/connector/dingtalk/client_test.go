@@ -638,3 +638,39 @@ func TestDocumentBlocksReadsMultiplePagesAndAcceptsEmptyDocument(t *testing.T) {
 		t.Fatalf("empty document: %#v, %v", blocks, err)
 	}
 }
+
+func TestSourceDownloadLimit(t *testing.T) {
+	source := testConfig()
+	cfg, err := parseConfig(source)
+	if err != nil || newClient(cfg).maxDownloadBytes() != 64<<20 {
+		t.Fatalf("missing setting must use 64 MiB: %v", err)
+	}
+	for _, v := range []any{nil, 0, 257, 1.25, "128", true} {
+		source.Settings["max_download_mib"] = v
+		if _, err := parseConfig(source); err == nil {
+			t.Fatalf("accepted invalid setting %v", v)
+		}
+	}
+	source.Settings["max_download_mib"] = float64(128)
+	cfg, err = parseConfig(source)
+	if err != nil || newClient(cfg).maxDownloadBytes() != 128<<20 {
+		t.Fatalf("source limit not applied: %v", err)
+	}
+	item := failedDocument("r", "w", node{}, errDocumentTooLarge, cfg.downloadMiB)
+	if !strings.Contains(item.Metadata["error_reason"], "128 MiB") {
+		t.Fatal("size refusal omitted the effective limit")
+	}
+}
+
+func TestSourceDownloadRejectsPartialObject(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Range", "bytes 0-2/114612124")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = io.WriteString(w, "abc")
+	}))
+	defer server.Close()
+	c := testClient(server)
+	if data, _, err := c.fetchSigned(context.Background(), downloadTarget{URL: server.URL}); err == nil || data != nil {
+		t.Fatal("partial response accepted as a complete file")
+	}
+}

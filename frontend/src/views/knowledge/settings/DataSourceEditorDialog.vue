@@ -241,6 +241,14 @@ const dingtalkIncludeUploadedFiles = computed({
   },
 })
 
+// Read the default without adding a key to legacy sources' signed settings.
+const dingtalkDownloadMiB = computed({
+  get: () => form.value.config.settings?.max_download_mib ?? 64,
+  set: (value: number | string | undefined) => {
+    form.value.config.settings = { ...form.value.config.settings, max_download_mib: value }
+  },
+})
+
 // Step 2: Resources
 const resources = ref<Resource[]>([])
 const loadingResources = ref(false)
@@ -1442,6 +1450,11 @@ async function commitCredentialsIfNeeded(dsId: string): Promise<boolean> {
 
 // --- Final submit ---
 async function handleSubmit() {
+  if (form.value.type === 'dingtalk' && (!Number.isInteger(dingtalkDownloadMiB.value) ||
+      dingtalkDownloadMiB.value < 1 || dingtalkDownloadMiB.value > 256)) {
+    MessagePlugin.error(t('datasource.dingtalkDownloadLimitHint'))
+    return
+  }
   form.value.config.resource_ids = selectedResourceIds.value
   submitting.value = true
   try {
@@ -2278,6 +2291,13 @@ const drawerConfirmText = computed(() => {
           </t-checkbox>
         </div>
         <p class="form-desc">{{ t('datasource.dingtalkIncludeUploadedFilesHint') }}</p>
+        <div class="form-item form-item--flat">
+          <label>
+            {{ t('datasource.dingtalkDownloadLimit') }}
+            <t-input-number v-model="dingtalkDownloadMiB" :min="1" :max="256" :step="1" :decimal-places="0" />
+          </label>
+          <p class="form-desc">{{ t('datasource.dingtalkDownloadLimitHint') }}</p>
+        </div>
       </section>
 
       <!-- Yuque only: how synced documents are laid out, and what may be admitted. -->
