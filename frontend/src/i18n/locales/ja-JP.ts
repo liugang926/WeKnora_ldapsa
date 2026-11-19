@@ -3,7 +3,15 @@ import { directoryAccessLocale } from './directoryAccessLocale'
 export default {
   chatUsage: {
     title: 'チャット使用量',
-    scope: 'すべてのワークスペースでユーザーが開始したチャットを集計します。ユーザーを選択すると開始日時とワークスペースを確認できます。',
+    global: '全体の合計',
+    questions: '質問数',
+    webQuestions: 'Web の質問',
+    dingtalkQuestions: 'DingTalk の質問',
+    source: '送信元',
+    web: 'Web',
+    dingtalk: 'DingTalk IM',
+    unattributed: 'DingTalk IM · 利用者不明',
+    scope: '全スペースの Web と DingTalk の利用状況です。回答が中断されても質問は 1 回と数えます。全体の合計には利用者不明の分も含み、共有の会話は重複して数えません。',
     people: '利用人数',
     sessions: 'チャット数',
     tokens: '報告済みトークン',

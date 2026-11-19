@@ -3,6 +3,9 @@ import { get } from '@/utils/request'
 export const CHAT_USAGE_PAGE_SIZE = 20
 
 export interface ChatUsage {
+  question_count: number
+  web_question_count: number
+  dingtalk_question_count: number
   prompt_tokens: number
   completion_tokens: number
   total_tokens: number
@@ -10,14 +13,18 @@ export interface ChatUsage {
   unreported_turns: number
 }
 
-export interface ChatUserUsage extends ChatUsage {
-  user_id: string
-  display_name?: string
-  username: string
+export interface ChatUsageCounts extends ChatUsage {
   session_count: number
 }
 
+export interface ChatUserUsage extends ChatUsageCounts {
+  user_id: string
+  display_name?: string
+  username: string
+}
+
 export interface ChatSessionUsage extends ChatUsage {
+  source: 'web' | 'dingtalk'
   session_id: string
   started_at: string
   workspace_id: number
@@ -31,7 +38,10 @@ interface Page<T> {
   page_size: number
 }
 
-type UserPage = Page<ChatUserUsage> & { summary: ChatUsage & { user_count: number; session_count: number } }
+type UserPage = Page<ChatUserUsage> & {
+  summary: ChatUsageCounts & { user_count: number }
+  unattributed_dingtalk: ChatUsageCounts
+}
 const usersURL = '/api/v1/system/admin/chat-usage/users'
 
 async function readPage<T>(url: string, page: number, signal: AbortSignal, q?: string, pageSize = CHAT_USAGE_PAGE_SIZE) {

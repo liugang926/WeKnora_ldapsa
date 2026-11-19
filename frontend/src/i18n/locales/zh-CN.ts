@@ -3,7 +3,15 @@ import { directoryAccessLocale } from './directoryAccessLocale'
 export default {
   chatUsage: {
     title: '会话用量',
-    scope: '汇总所有空间中由人员发起的会话。选择人员可查看每次会话的时间和所在空间。',
+    global: '全局合计',
+    questions: '提问次数',
+    webQuestions: '网页提问',
+    dingtalkQuestions: '钉钉提问',
+    source: '来源',
+    web: '网页',
+    dingtalk: '钉钉 IM',
+    unattributed: '钉钉 IM · 未归属',
+    scope: '按人员跨空间统计网页与钉钉问答。每次主动提问计一次，即使回答中断。全局合计包含未归属用量；同一个群聊会话在全局只计一次。',
     people: '发起人数',
     sessions: '会话数',
     tokens: '已上报 Token',

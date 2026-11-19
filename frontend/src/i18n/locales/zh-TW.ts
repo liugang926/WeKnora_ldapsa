@@ -1,7 +1,15 @@
 export default {
   chatUsage: {
     title: '對話用量',
-    scope: '彙總所有空間中由人員發起的對話。選取人員可查看每次對話的時間及所在空間。',
+    global: '全域合計',
+    questions: '提問次數',
+    webQuestions: '網頁提問',
+    dingtalkQuestions: '釘釘提問',
+    source: '來源',
+    web: '網頁',
+    dingtalk: '釘釘 IM',
+    unattributed: '釘釘 IM · 未歸屬',
+    scope: '依人員跨空間統計網頁與釘釘問答。每次主動提問均計一次，即使回答中斷。全域合計包含未歸屬用量；同一個群聊工作階段在全域只計一次。',
     people: '發起人數',
     sessions: '對話數',
     tokens: '已回報 Token',
