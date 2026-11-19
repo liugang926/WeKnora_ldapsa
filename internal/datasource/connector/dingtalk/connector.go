@@ -997,7 +997,7 @@ func (c *Connector) sync(
 					"[DingTalk] read document %s (name=%q extension=%s) failed, will retry next sync: %v",
 					document.ID, document.title(), document.Extension, err)
 				items = append(items, failedDocument(
-					scope.ResourceID, scope.Reference.WorkspaceID, document, err,
+					scope.ResourceID, scope.Reference.WorkspaceID, document, err, cfg.downloadMiB,
 				))
 				failed++
 				fetchDone++
@@ -1639,12 +1639,13 @@ func failedDocument(
 	workspaceID string,
 	document node,
 	err error,
+	limitMiB int,
 ) types.FetchedItem {
 	reasonCode := "dingtalk_document_failed"
 	reason := "DingTalk document could not be read; retry on the next sync"
 	if errors.Is(err, errDocumentTooLarge) {
 		reasonCode = "dingtalk_document_too_large"
-		reason = "DingTalk file exceeds the 64 MiB download limit; skipped for this sync. Compress or split the file."
+		reason = fmt.Sprintf("DingTalk file exceeds this source's %d MiB download limit.", limitMiB)
 	}
 	return types.FetchedItem{
 		ExternalID:       document.ID,

@@ -33,10 +33,13 @@ const (
 	// maxDocumentBytes bounds a single uploaded file transfer. DingTalk lists a
 	// "size" per node that does not match the stored object, so the cap is
 	// enforced on the transfer itself instead of on listing metadata.
-	maxDocumentBytes = 64 << 20
+	defaultDownloadMiB = 64
+	maximumDownloadMiB = 256
+	maxDocumentBytes   = defaultDownloadMiB << 20
 )
 
 type config struct {
+	downloadMiB  int    // Derived from per-source settings, never from credentials.
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret"`
 	OperatorID   string `json:"operator_id"`
@@ -68,6 +71,18 @@ func parseConfig(dataSourceConfig *types.DataSourceConfig) (*config, error) {
 		return nil, fmt.Errorf("%w: client_secret is required", datasource.ErrInvalidCredentials)
 	case cfg.OperatorID == "":
 		return nil, fmt.Errorf("%w: operator_id is required", datasource.ErrInvalidCredentials)
+	}
+	cfg.downloadMiB = defaultDownloadMiB
+	if value, ok := dataSourceConfig.Settings["max_download_mib"]; ok {
+		// Settings come from JSON. Reject strings, fractions and null instead
+		// of silently loosening the ceiling on an invalid configuration.
+		b, err := json.Marshal(value)
+		n, parseErr := strconv.Atoi(string(b))
+		if err != nil || parseErr != nil || n < 1 || n > maximumDownloadMiB {
+			return nil, fmt.Errorf("%w: max_download_mib must be an integer from 1 to %d",
+				datasource.ErrInvalidConfig, maximumDownloadMiB)
+		}
+		cfg.downloadMiB = n
 	}
 	return &cfg, nil
 }
@@ -243,15 +258,16 @@ func dingTalkCredentialsFor(appKey, appSecret string) *dingTalkCredentials {
 
 func newClient(cfg *config) *client {
 	return &client{
-		baseURL:     apiBaseURL,
-		minInterval: dingTalkAPIMinInterval,
-		operator:    cfg.OperatorID,
-		appKey:      cfg.ClientID,
-		appSecret:   cfg.ClientSecret,
-		creds:       dingTalkCredentialsFor(cfg.ClientID, cfg.ClientSecret),
-		http:        datasource.NewConnectorHTTPClient(apiTimeout),
-		sleep:       sleepContext,
-		fileHTTP:    datasource.NewConnectorHTTPClient(downloadTimeout),
+		baseURL:       apiBaseURL,
+		downloadLimit: int64(cfg.downloadMiB) << 20,
+		minInterval:   dingTalkAPIMinInterval,
+		operator:      cfg.OperatorID,
+		appKey:        cfg.ClientID,
+		appSecret:     cfg.ClientSecret,
+		creds:         dingTalkCredentialsFor(cfg.ClientID, cfg.ClientSecret),
+		http:          datasource.NewConnectorHTTPClient(apiTimeout),
+		sleep:         sleepContext,
+		fileHTTP:      datasource.NewConnectorHTTPClient(downloadTimeout),
 	}
 }
 
@@ -714,6 +730,11 @@ func (c *client) fetchSigned(ctx context.Context, target downloadTarget) ([]byte
 			"download DingTalk document: %w", decodeAPIError(resp.StatusCode, detail))
 	}
 
+	// A partial object is not an original file. Only a complete successful
+	// download can enter the knowledge base (including a valid empty 200).
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Range") != "" {
+		return nil, false, errors.New("DingTalk did not return a complete file")
+	}
 	limit := c.maxDownloadBytes()
 	if resp.ContentLength > limit {
 		return nil, false, fmt.Errorf(
