@@ -15,7 +15,36 @@ function message(text, error = false) {
   $('notice').classList.toggle('error', error)
 }
 
-async function api(path, method = 'GET', body) {
+// Render only known connector diagnostics. Other server errors can contain private
+// URLs, upstream bodies, or database details and must not be echoed into the UI.
+const configReasons = new Map([
+  ['invalid configuration: Nextcloud server address is not permitted', '实例地址未通过 WeKnora 的出站地址检查。请管理员核对域名解析及该实例的访问策略。'],
+  ['invalid configuration: HTTPS instance URL, username and app password are required', '请核对 HTTPS 实例地址、专用服务账号和应用密码。'],
+  ['invalid configuration: invalid Nextcloud folder path', '所选目录路径无效，请重新选择目录。'],
+  ['invalid configuration: select one or more Nextcloud folders', '请选择要同步的目录。'],
+  ['invalid or incomplete Nextcloud directory listing', 'Nextcloud 返回的 WebDAV 目录清单无效或与请求路径不匹配。请核对实例地址和账号的 WebDAV 用户 ID。'],
+  ['failed to fetch items from source: Nextcloud PROPFIND request failed', 'WeKnora 无法完成 WebDAV 请求。请核对实例地址、网络连通性和证书。'],
+  ['knowledge base not found', '未找到当前工作区的目标知识库。'],
+  ['data source not found', '未找到目标数据源，请刷新页面。'],
+])
+
+function configReason(error) {
+  const message = typeof error === 'string' ? error : error?.message
+  if (typeof message !== 'string') return ''
+  const diagnostic = message.replace(/^failed to update credentials: /, '')
+  if (configReasons.has(diagnostic)) return configReasons.get(diagnostic)
+  const match = /^(?:invalid credentials|resource not found in source system|failed to fetch items from source): Nextcloud PROPFIND returned HTTP ([1-5]\d\d)$/.exec(diagnostic)
+  if (!match) return ''
+  switch (match[1]) {
+    case '401': return 'Nextcloud 拒绝认证（401）。请核对专用服务账号及其应用密码。'
+    case '403': return 'Nextcloud 拒绝 WebDAV 访问（403）。请核对服务账号的目录读取权限和服务器访问策略。'
+    case '404': return 'Nextcloud 找不到请求的 WebDAV 路径（404）。请核对实例地址、WebDAV 用户 ID 和所选目录。'
+    case '405': return '服务器未接受 WebDAV 的 PROPFIND 请求（405）。请核对实例地址及反向代理设置。'
+    default: return 'Nextcloud 的 WebDAV 请求返回 HTTP ' + match[1] + '。'
+  }
+}
+
+async function api(operation, path, method = 'GET', body) {
   const token = session()
   if (!token) throw new Error('请先登录 WeKnora。')
   const headers = { Authorization: 'Bearer ' + token, 'Accept-Language': 'zh-CN' }
@@ -31,10 +60,23 @@ async function api(path, method = 'GET', body) {
     }
     if (response.status === 409) throw new Error('设置已发生变化，请刷新后重新核对。')
     if (response.status === 403) throw new Error('当前账户没有权限执行此操作。')
-    throw new Error('请求失败（HTTP ' + response.status + '），请检查连接凭证、知识库和目录设置。')
+    let reason = ''
+    if (response.status === 400) {
+      const payload = await response.json().catch(() => null)
+      reason = configReason(payload?.error)
+    }
+    const requestId = response.headers?.get('X-Request-ID') || ''
+    const trace = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(requestId) ? ' 请求 ID：' + requestId : ''
+    throw new Error(operation + '失败（HTTP ' + response.status + '）。' +
+      (reason || '请管理员根据请求时间或请求 ID 核对 WeKnora 服务端日志。') + trace)
   }
   if (response.status === 204) return null
-  const result = await response.json()
+  const result = await response.json().catch(() => {
+    throw new Error(operation + '未获得有效的 JSON 响应，请管理员核对服务端日志。')
+  })
+  if (result?.success === false) {
+    throw new Error(operation + '失败。' + (configReason(result.error) || '请管理员根据请求时间核对 WeKnora 服务端日志。'))
+  }
   return result?.data ?? result
 }
 
@@ -68,6 +110,9 @@ function credentials() {
   try { url = new URL(base) } catch { /* Show a field-specific error below. */ }
   if (!url || url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || base.includes('\\')) {
     throw new Error('请填写 HTTPS 实例地址，地址中不能包含凭证、查询参数或片段。')
+  }
+  if (/\/remote\.php\/(?:dav|webdav)(?:\/|$)/i.test(url.pathname)) {
+    throw new Error('请填写 Nextcloud 实例地址（可包含安装子目录），去掉 /remote.php/ 开始的 WebDAV 路径。')
   }
   if (!username || !password) throw new Error('请填写专用服务账号和该账号的应用密码。')
   return { base_url: base, username, app_password: password }
@@ -139,7 +184,7 @@ function selectPath(path) {
 
 async function browse(path = null) {
   const query = path === null ? '' : '?' + new URLSearchParams({ parent_id: path })
-  const rows = await api(sourcePath('/resources') + query)
+  const rows = await api('读取目录', sourcePath('/resources') + query)
   folder = path
   $('browser').hidden = false
   $('path').textContent = path ?? '账号文件根目录'
@@ -191,7 +236,7 @@ async function loadSources(id = '') {
   sources = []
   $('source').replaceChildren(new Option('新增数据源', ''))
   showSource()
-  const list = await api(dsAPI + '?' + new URLSearchParams({ kb_id: $('kb').value }))
+  const list = await api('读取数据源列表', dsAPI + '?' + new URLSearchParams({ kb_id: $('kb').value }))
   sources = (list || []).filter(row => row.type === TYPE && row.knowledge_base_id === $('kb').value)
   for (const row of sources) $('source').add(new Option(row.name, row.id))
   $('source').value = id
@@ -206,17 +251,21 @@ for (const id of ['url', 'user']) {
 on('kb', 'change', () => loadSources())
 on('source', 'change', showSource)
 on('test', 'click', async () => {
-  await api(dsAPI + '/validate-credentials', 'POST', { type: TYPE, credentials: credentials() })
+  const result = await api('测试连接', dsAPI + '/validate-credentials', 'POST', { type: TYPE, credentials: credentials() })
+  if (result?.status !== 'connected') throw new Error('测试连接未获得服务端确认。')
   message('已验证连接。')
 })
 on('create', 'click', async () => {
   const name = $('name').value.trim()
   if (!name) throw new Error('请填写数据源名称。')
-  const created = await api(dsAPI, 'POST', {
+  const created = await api('保存暂停的数据源', dsAPI, 'POST', {
     type: TYPE, name, knowledge_base_id: $('kb').value,
     config: { type: TYPE, credentials: credentials(), resource_ids: [], settings: {} },
     status: 'paused', sync_mode: 'incremental', sync_schedule: '', conflict_strategy: 'overwrite', sync_deletions: false,
   })
+  if (typeof created?.id !== 'string' || !created.id.trim()) {
+    throw new Error('服务端未返回数据源 ID，无法确认是否已保存。请先查看数据源列表，避免重复创建。')
+  }
   clearConnection()
   await loadSources(created.id)
   message('已保存暂停的数据源。请选择需要同步的目录。')
@@ -231,7 +280,7 @@ on('save', 'click', async () => {
   // Saving the schedule also binds the editor's authorization to a changed folder selection.
   const patch = { sync_schedule: $('schedule').value }
   if (foldersChanged()) patch.resource_ids = selection
-  await api(sourcePath('/sync-settings'), 'PATCH', patch)
+  await api('保存目录和计划', sourcePath('/sync-settings'), 'PATCH', patch)
   await loadSources(id)
   message('目录和定时计划已保存。')
 })
@@ -239,13 +288,13 @@ on('toggle', 'click', async () => {
   const id = source.id
   const resume = source.status === 'paused'
   if (resume && (settingsChanged() || !source.config?.resource_ids?.length)) throw new Error('请先保存目录和计划。')
-  await api(sourcePath(resume ? '/resume' : '/pause'), 'POST', {})
+  await api(resume ? '启用数据源' : '暂停数据源', sourcePath(resume ? '/resume' : '/pause'), 'POST', {})
   await loadSources(id)
   message(resume ? '数据源已启用。' : '数据源已暂停。')
 })
 on('sync', 'click', async () => {
   if (source.status === 'paused' || settingsChanged() || !source.config?.resource_ids?.length) throw new Error('请先保存设置并启用数据源。')
-  await api(sourcePath('/sync'), 'POST', {})
+  await api('提交同步', sourcePath('/sync'), 'POST', {})
   message('同步请求已提交。')
 })
 on('rotate', 'click', () => {
@@ -256,14 +305,17 @@ on('rotate', 'click', () => {
 on('cancel', 'click', () => { clearConnection(); $('connection').hidden = true })
 on('replace', 'click', async () => {
   if (source.status !== 'paused') throw new Error('请先暂停数据源，再更换凭证。')
-  await api(sourcePath('/credentials'), 'PUT', { credentials: credentials() })
+  const result = await api('更换连接凭证', sourcePath('/credentials'), 'PUT', { credentials: credentials() })
+  if (result?.fields?.credentials?.configured !== true) {
+    throw new Error('服务端未确认新凭证已配置。请先核对数据源的凭证状态。')
+  }
   clearConnection()
   $('connection').hidden = true
   $('browser').hidden = true
   message('新凭证已保存。请核对目录后再启用。')
 })
 on('logs', 'click', async () => {
-  const records = await api(sourcePath('/logs') + '?limit=20')
+  const records = await api('读取同步记录', sourcePath('/logs') + '?limit=20')
   const labels = { running: '运行中', success: '成功', partial: '部分成功', failed: '失败', canceled: '已取消' }
   $('entries').replaceChildren()
   for (const row of records || []) {
@@ -284,14 +336,14 @@ run(async () => {
   const sourceId = query.get('source_id')
   if (sourceId && !kbId) throw new Error('数据源链接缺少目标知识库。')
   if (kbId) {
-    const kb = await api('/api/v1/knowledge-bases/' + encodeURIComponent(kbId))
+    const kb = await api('读取目标知识库', '/api/v1/knowledge-bases/' + encodeURIComponent(kbId))
     if (kb?.id !== kbId) throw new Error('找不到指定的知识库。')
     $('kb').add(new Option(kb.name, kb.id))
     $('kb').disabled = true
     await loadSources(sourceId || '')
     if (sourceId && !source) throw new Error('当前知识库中找不到指定的 Nextcloud WebDAV 数据源。')
   } else {
-    const rows = await api('/api/v1/knowledge-bases')
+    const rows = await api('读取知识库列表', '/api/v1/knowledge-bases')
     for (const kb of rows || []) $('kb').add(new Option(kb.name, kb.id))
     if (!$('kb').value) { message('当前工作区没有可用知识库。'); return }
     await loadSources()

@@ -21,7 +21,8 @@
 <h2>连接器凭证</h2>
 <p>请填写专用 Nextcloud 服务账号。管理员保存一次后，手动同步和定时同步都使用这组凭证。</p>
 <label id="newName">数据源名称<input id="name" value="Nextcloud" maxlength="128"></label>
-<label>Nextcloud 实例地址<input id="url" type="url" placeholder="https://cloud.example.com" autocomplete="off" spellcheck="false"></label>
+<label>Nextcloud 实例地址<input id="url" type="url" placeholder="https://cloud.example.com" autocomplete="off" spellcheck="false" aria-describedby="urlHint"></label>
+<p id="urlHint">填写 Nextcloud 安装地址，例如 https://cloud.example.com 或 https://cloud.example.com/nextcloud。WebDAV 路径由连接器自动添加。</p>
 <div class="pair">
 <label>专用服务账号<input id="user" autocomplete="off" spellcheck="false"></label>
 <label>服务账号的应用密码<input id="password" type="password" autocomplete="new-password"></label>
