@@ -8,6 +8,7 @@ let source = null
 let selection = []
 let folder = null
 let busy = false
+let initialized = false
 
 function message(text, error = false) {
   $('notice').textContent = text
@@ -46,7 +47,7 @@ async function run(task) {
   catch (error) { message(error.message || '请求失败，请重试。', true) }
   finally {
     busy = false
-    $('controls').disabled = !session() || !$('kb').value || !$('login').hidden
+    $('controls').disabled = !initialized || !session() || !$('kb').value || !$('login').hidden
   }
 }
 
@@ -278,10 +279,22 @@ window.addEventListener('storage', event => {
 })
 run(async () => {
   if (!session()) { $('login').hidden = false; return }
-  const rows = await api('/api/v1/knowledge-bases')
-  for (const kb of rows || []) $('kb').add(new Option(kb.name, kb.id))
-  if (!$('kb').value) { message('当前工作区没有可用知识库。'); return }
-  const requested = new URLSearchParams(location.search).get('kb_id')
-  if (requested && [...$('kb').options].some(option => option.value === requested)) $('kb').value = requested
-  await loadSources()
+  const query = new URLSearchParams(location.search)
+  const kbId = query.get('kb_id')
+  const sourceId = query.get('source_id')
+  if (sourceId && !kbId) throw new Error('数据源链接缺少目标知识库。')
+  if (kbId) {
+    const kb = await api('/api/v1/knowledge-bases/' + encodeURIComponent(kbId))
+    if (kb?.id !== kbId) throw new Error('找不到指定的知识库。')
+    $('kb').add(new Option(kb.name, kb.id))
+    $('kb').disabled = true
+    await loadSources(sourceId || '')
+    if (sourceId && !source) throw new Error('当前知识库中找不到指定的 Nextcloud WebDAV 数据源。')
+  } else {
+    const rows = await api('/api/v1/knowledge-bases')
+    for (const kb of rows || []) $('kb').add(new Option(kb.name, kb.id))
+    if (!$('kb').value) { message('当前工作区没有可用知识库。'); return }
+    await loadSources()
+  }
+  initialized = true
 })

@@ -8498,7 +8498,9 @@ export default {
       failedItemsMore: '{n} more failed documents not shown',
       docsFailedSummary: '{n} document(s) failed to sync'
     },
+    connectorUnavailable: 'This data source extension is not enabled on this server.',
     connector: {
+      nextcloud_webdav: 'Nextcloud WebDAV',
       feishu: 'Feishu',
       lark: 'Lark',
       feishu_drive: 'Feishu Drive',
@@ -8513,6 +8515,7 @@ export default {
       seafile: 'Seafile'
     },
     connectorDesc: {
+      nextcloud_webdav: 'Import files from Nextcloud folders using a dedicated service account.',
       feishu: 'Sync documents, spreadsheets and files from Feishu Wiki',
       lark: 'Sync documents, spreadsheets and files from Lark Wiki (Feishu international)',
       feishu_drive: 'Sync documents, spreadsheets and files from a Feishu Drive folder',

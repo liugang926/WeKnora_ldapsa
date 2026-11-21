@@ -24,6 +24,7 @@ import { getDatasourceIconUrl } from './datasourceIcons'
 const props = defineProps<{
   kbId: string
   dataSource: DataSource | null
+  managerLinks?: { type: string; href: string }[]
 }>()
 
 const visible = defineModel<boolean>('visible', { default: false })
@@ -1709,6 +1710,13 @@ const drawerConfirmText = computed(() => {
           </div>
           <div class="ds-type-desc">{{ t(`datasource.connectorDesc.${def.type}`) }}</div>
         </button>
+        <a v-for="link in managerLinks" :key="link.type" class="ds-type-card" :href="link.href">
+          <div class="ds-type-header">
+            <DataSourceTypeIcon :type="link.type" :size="20" />
+            <span class="ds-type-name">{{ t(`datasource.connector.${link.type}`) }}</span>
+          </div>
+          <div class="ds-type-desc">{{ t(`datasource.connectorDesc.${link.type}`) }}</div>
+        </a>
       </div>
     </section>
 
@@ -2426,6 +2434,7 @@ const drawerConfirmText = computed(() => {
 
 .ds-type-card {
   .ds-surface-card--interactive();
+  text-decoration: none;
   padding: 14px;
   cursor: pointer;
   text-align: left;

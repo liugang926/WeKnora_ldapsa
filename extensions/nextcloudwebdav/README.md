@@ -10,7 +10,7 @@
 go build -overlay=extensions/nextcloudwebdav/integration/overlay.json -o WeKnora ./cmd/server
 ```
 
-通过正常部署流程使用该二进制，并通过同一个 WeKnora 站点进入 `/api/v1/extensions/nextcloud-webdav/`。页面使用当前登录的工作区身份。具备相应管理和目标知识库编辑权限的用户可以配置数据源。配置包括 Nextcloud 实例地址（例如 `https://cloud.example.org`）、专用服务账号和该账号的应用密码。保存暂停的数据源后，选择目录、保存计划并启用。选择服务账号的文件根目录表示将整个可读取范围作为同步候选。
+通过正常部署流程使用该二进制后，在目标知识库的「设置 → 数据源 → 添加数据源」中选择 **Nextcloud WebDAV**。点击已保存的数据源卡片可以编辑该源。也可以通过同一个 WeKnora 站点进入 `/api/v1/extensions/nextcloud-webdav/`。页面使用当前登录的工作区身份。具备相应管理和目标知识库编辑权限的用户可以配置数据源。配置包括 Nextcloud 实例地址（例如 `https://cloud.example.org`）、专用服务账号和该账号的应用密码。保存暂停的数据源后，选择目录、保存计划并启用。选择服务账号的文件根目录表示将整个可读取范围作为同步候选。
 
 扩展注册的类型是 `nextcloud_webdav`。保存后可以在该知识库已有的数据源列表中查看同步状态和历史。凭证由普通数据源的凭证接口成组替换，读取数据源配置时仅返回配置状态。定时任务沿用此分支现有的普通连接器计划授权；保存计划的编辑者需持续拥有所需权限。
 

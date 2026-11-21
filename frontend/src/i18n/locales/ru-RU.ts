@@ -1553,6 +1553,7 @@ export default {
       cloudFolderLimitation: 'Confluence Cloud пока не может показать здесь страницы из папок верхнего уровня пространства; при выборе всего пространства они будут синхронизированы.'
     },
     connectorDesc: {
+      nextcloud_webdav: 'Импорт файлов из папок Nextcloud с помощью служебной учётной записи.',
       feishu: 'Синхронизация документов, таблиц и файлов из Feishu Wiki',
       lark: 'Синхронизация документов, таблиц и файлов из Lark Wiki',
       feishu_drive: 'Синхронизация документов, таблиц и файлов из папки Feishu Drive',
@@ -1566,7 +1567,9 @@ export default {
       gitlab: 'Синхронизация файлов из проектов GitLab',
       seafile: 'Синхронизация папок и файлов из библиотек Seafile'
     },
+    connectorUnavailable: 'Это расширение источника данных не включено на сервере.',
     connector: {
+      nextcloud_webdav: 'Nextcloud WebDAV',
       feishu: 'Feishu (Фэйшу)',
       lark: 'Lark',
       feishu_drive: 'Feishu Drive',
