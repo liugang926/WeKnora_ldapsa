@@ -1,0 +1,33 @@
+name: Nextcloud WebDAV configuration page
+
+on:
+  pull_request:
+    paths:
+      - "extensions/nextcloudwebdav/adminui/**"
+      - ".github/workflows/webdav-adminui.yml"
+  push:
+    branches: [main]
+    paths:
+      - "extensions/nextcloudwebdav/adminui/**"
+      - ".github/workflows/webdav-adminui.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test WebDAV configuration page
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Run configuration page tests
+        run: |
+          git rev-parse HEAD
+          node --test extensions/nextcloudwebdav/adminui/manager.test.mjs
