@@ -31,6 +31,25 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
+      - &enable_webdav
+        name: Enable the Nextcloud WebDAV extension in the release build context
+        shell: python
+        run: |
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          target = Path("cmd/server/nextcloud_webdav_extension.go")
+          source = Path("extensions/nextcloudwebdav/integration/server_bootstrap.go.in")
+          overlay = json.loads(source.with_name("overlay.json").read_text())
+          if overlay["Replace"] != {str(target): str(source)}:
+              raise SystemExit("Release bootstrap differs from the WebDAV build overlay")
+          bootstrap = subprocess.check_output(["git", "show", f"{os.environ['GITHUB_SHA']}:{source}"])
+          if bootstrap != source.read_bytes():
+              raise SystemExit("Release bootstrap differs from the committed source")
+          with target.open("xb") as output:
+              output.write(bootstrap)
       - name: Validate production release helpers
         run: |
           for script in deploy/production/*.sh; do bash -n "$script"; done
@@ -129,6 +148,7 @@ jobs:
           docker-images: true
           swap-storage: true
       - uses: docker/setup-buildx-action@v4
+      - *enable_webdav
       - name: Build application
         uses: docker/build-push-action@v7
         with:
@@ -167,6 +187,9 @@ jobs:
           set -euo pipefail
           docker image inspect "weknora-production-app:$GITHUB_SHA" --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -Fx "WEKNORA_BUILD_COMMIT=$GITHUB_SHA"
           docker run --rm --entrypoint sh "weknora-production-app:$GITHUB_SHA" -c 'test -x /app/WeKnora && test -x /usr/local/bin/migrate'
+          # Go retains this function name in its runtime table in stripped builds.
+          docker run --rm --entrypoint grep "weknora-production-app:$GITHUB_SHA" \
+            -aFq 'github.com/Tencent/WeKnora/extensions/nextcloudwebdav/integration.Install' /app/WeKnora
           docker run --rm --entrypoint sh "weknora-production-docreader:$GITHUB_SHA" -c 'test -x /bin/grpc_health_probe && test -x /app/.venv/bin/python'
           docker pull paradedb/paradedb:v0.25.11-pg17@sha256:78d65750f0f88a56548526201bcab9910f83b90fe929cdbf979890f3f80b0f95
           docker tag paradedb/paradedb:v0.25.11-pg17@sha256:78d65750f0f88a56548526201bcab9910f83b90fe929cdbf979890f3f80b0f95 paradedb/paradedb:v0.25.11-pg17
