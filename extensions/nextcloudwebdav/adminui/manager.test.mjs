@@ -181,3 +181,53 @@ test('only a connected response confirms credentials, and full DAV URLs are reje
   }
   assert.deepEqual(urls, ['https://cloud.example/nc', 'https://cloud.example/nc'])
 })
+
+test('creation requires a returned source ID before clearing the form and loading the source', async () => {
+  const {env, field} = await connectionForm()
+  const loaded = []
+  env.captureLoad = id => loaded.push(id)
+  vm.runInContext('loadSources = captureLoad', env)
+  let body
+  env.fetch = async () => ({ok: true, status: 201, json: async () => body})
+  for (const response of [
+    {}, {id: ' '}, {success: false, error: {message: 'fixture-app-secret'}, data: {id: 's2'}},
+  ]) {
+    body = response
+    await field('create').events.click()
+    const notice = field('notice').textContent
+    assert.match(notice, response.success === false ? /保存暂停的数据源失败/ : /避免重复创建/)
+    assert.ok(!notice.includes('fixture-app-secret'))
+    assert.equal(field('password').value, 'fixture-app-secret')
+    assert.deepEqual(loaded, [])
+  }
+  body = {id: 's2', type: 'nextcloud_webdav', knowledge_base_id: 'kb', status: 'paused'}
+  await field('create').events.click()
+  assert.match(field('notice').textContent, /已保存暂停的数据源/)
+  assert.equal(field('password').value, '')
+  assert.deepEqual(loaded, ['s2'])
+})
+
+test('credential replacement requires an affirmative configured flag before dismissing the form', async () => {
+  const {env, field} = await connectionForm()
+  field('connection').hidden = false
+  let body
+  env.fetch = async () => ({ok: true, status: 200, json: async () => body})
+  const configured = {fields: {credentials: {configured: true}}}
+  for (const response of [
+    {}, {success: true, data: {fields: {credentials: {configured: false}}}},
+    {success: false, error: 'fixture-app-secret', data: configured},
+  ]) {
+    body = response
+    await field('replace').events.click()
+    const notice = field('notice').textContent
+    assert.match(notice, response.success === false ? /更换连接凭证失败/ : /未确认新凭证/)
+    assert.ok(!notice.includes('fixture-app-secret'))
+    assert.equal(field('password').value, 'fixture-app-secret')
+    assert.equal(field('connection').hidden, false)
+  }
+  body = {success: true, data: configured}
+  await field('replace').events.click()
+  assert.match(field('notice').textContent, /新凭证已保存/)
+  assert.equal(field('password').value, '')
+  assert.equal(field('connection').hidden, true)
+})

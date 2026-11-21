@@ -74,6 +74,9 @@ async function api(operation, path, method = 'GET', body) {
   const result = await response.json().catch(() => {
     throw new Error(operation + '未获得有效的 JSON 响应，请管理员核对服务端日志。')
   })
+  if (result?.success === false) {
+    throw new Error(operation + '失败。' + (configReason(result.error) || '请管理员根据请求时间核对 WeKnora 服务端日志。'))
+  }
   return result?.data ?? result
 }
 
@@ -260,6 +263,9 @@ on('create', 'click', async () => {
     config: { type: TYPE, credentials: credentials(), resource_ids: [], settings: {} },
     status: 'paused', sync_mode: 'incremental', sync_schedule: '', conflict_strategy: 'overwrite', sync_deletions: false,
   })
+  if (typeof created?.id !== 'string' || !created.id.trim()) {
+    throw new Error('服务端未返回数据源 ID，无法确认是否已保存。请先查看数据源列表，避免重复创建。')
+  }
   clearConnection()
   await loadSources(created.id)
   message('已保存暂停的数据源。请选择需要同步的目录。')
@@ -299,7 +305,10 @@ on('rotate', 'click', () => {
 on('cancel', 'click', () => { clearConnection(); $('connection').hidden = true })
 on('replace', 'click', async () => {
   if (source.status !== 'paused') throw new Error('请先暂停数据源，再更换凭证。')
-  await api('更换连接凭证', sourcePath('/credentials'), 'PUT', { credentials: credentials() })
+  const result = await api('更换连接凭证', sourcePath('/credentials'), 'PUT', { credentials: credentials() })
+  if (result?.fields?.credentials?.configured !== true) {
+    throw new Error('服务端未确认新凭证已配置。请先核对数据源的凭证状态。')
+  }
   clearConnection()
   $('connection').hidden = true
   $('browser').hidden = true
