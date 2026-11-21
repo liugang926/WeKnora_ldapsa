@@ -21,7 +21,7 @@ async function editor(status, savedFolders) {
   }
   let loggedIn = false
   const env = vm.createContext({
-    document: {getElementById: field}, window: {addEventListener() {}},
+    URL, document: {getElementById: field}, window: {addEventListener() {}},
     localStorage: {getItem: key => loggedIn && key === 'weknora_token' ? 'fixture-session' : ''},
     fetch: async (path, request) => {
       requests.push([path, request.method, JSON.parse(request.body)])
@@ -110,4 +110,74 @@ test('an inaccessible KB or a missing, foreign or legacy source cannot fall back
   const denied = await openLink('?kb_id=kbA', [], 403)
   assert.equal(denied.field('controls').disabled, true)
   assert.equal(denied.calls.length, 1)
+})
+
+
+async function connectionForm() {
+  const form = await editor('paused', ['/'])
+  form.field('name').value = 'Nextcloud'
+  form.field('url').value = 'https://cloud.example/nc'
+  form.field('user').value = 'service'
+  form.field('password').value = 'fixture-app-secret'
+  return form
+}
+
+test('connection test, creation and credential replacement report their actual WebDAV and WeKnora errors', async () => {
+  const id = 'a38d02c9-2222-4166-9bab-e7ac62cef217'
+  const unauthorized = 'invalid credentials: Nextcloud PROPFIND returned HTTP 401'
+  const missing = 'resource not found in source system: Nextcloud PROPFIND returned HTTP 404'
+  for (const [action, status, body, expected] of [
+    ['test', 400, {error: unauthorized}, /测试连接失败.*Nextcloud 拒绝认证（401）/],
+    ['test', 400, {error: missing}, /测试连接失败.*WebDAV 路径（404）/],
+    ['create', 400, {error: missing}, /保存暂停的数据源失败.*WebDAV 路径（404）/],
+    ['replace', 400, {error: {code: 400, message: 'failed to update credentials: ' + unauthorized}}, /更换连接凭证失败.*Nextcloud 拒绝认证（401）/],
+    ['test', 400, {error: 'invalid configuration: Nextcloud server address is not permitted'}, /出站地址检查/],
+    ['test', 401, {error: unauthorized}, /登录已过期/],
+  ]) {
+    const {env, field} = await connectionForm()
+    env.fetch = async () => ({ok: false, status, json: async () => body, headers: {get: () => id}})
+    await field(action).events.click()
+    assert.match(field('notice').textContent, expected)
+    assert.equal(field('login').hidden, status !== 401)
+    if (status === 400) assert.ok(field('notice').textContent.includes(id))
+  }
+})
+
+test('unrecognized error text, malformed bodies and unsafe request identifiers stay private', async () => {
+  const secret = 'fixture-app-secret'
+  const malformed = async () => { throw new SyntaxError('<html>' + secret) }
+  for (const [ok, json] of [
+    [false, async () => ({error: secret, details: secret})],
+    [false, async () => ({error: {message: 'invalid credentials: Nextcloud PROPFIND returned HTTP 401 ' + secret}})],
+    [false, malformed], [true, malformed],
+  ]) {
+    const {env, field} = await connectionForm()
+    env.fetch = async () => ({ok, status: ok ? 200 : 400, json, headers: {get: () => secret}})
+    await field('test').events.click()
+    assert.match(field('notice').textContent, /服务端日志/)
+    assert.ok(!field('notice').textContent.includes(secret))
+    assert.ok(!field('notice').textContent.includes('拒绝认证'))
+  }
+})
+
+test('only a connected response confirms credentials, and full DAV URLs are rejected before sending', async () => {
+  const {env, field} = await connectionForm()
+  const urls = []
+  let result = {valid: false}
+  env.fetch = async (path, request) => {
+    assert.equal(path, '/api/v1/datasource/validate-credentials')
+    urls.push(JSON.parse(request.body).credentials.base_url)
+    return {ok: true, status: 200, json: async () => result}
+  }
+  await field('test').events.click()
+  assert.match(field('notice').textContent, /未获得服务端确认/)
+  result = {status: 'connected'}
+  await field('test').events.click()
+  assert.equal(field('notice').textContent, '已验证连接。')
+  for (const suffix of ['/remote.php/dav/files/service/', '/remote.php/webdav']) {
+    field('url').value = 'https://cloud.example/nc' + suffix
+    await field('test').events.click()
+    assert.match(field('notice').textContent, /实例地址.*去掉/)
+  }
+  assert.deepEqual(urls, ['https://cloud.example/nc', 'https://cloud.example/nc'])
 })
