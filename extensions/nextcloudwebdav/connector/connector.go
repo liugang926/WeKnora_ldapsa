@@ -23,9 +23,13 @@ const (
 
 var _ datasource.StreamingConnector = (*Connector)(nil)
 
+// Connector imports the files visible in selected WebDAV folders.
 type Connector struct{}
 
-func NewConnector() *Connector  { return &Connector{} }
+// NewConnector creates a connector whose requests use the credentials of each data source.
+func NewConnector() *Connector { return &Connector{} }
+
+// Type identifies the connector in the data source registry.
 func (*Connector) Type() string { return sourceType }
 
 func selectedRoots(ids []string) ([]string, error) {
@@ -57,6 +61,7 @@ func selectedRoots(ids []string) ([]string, error) {
 	return roots, nil
 }
 
+// Validate checks that the service account can list each selected folder.
 func (*Connector) Validate(ctx context.Context, ds *types.DataSourceConfig) error {
 	c, err := newClient(ds)
 	if err != nil {
@@ -78,7 +83,12 @@ func (*Connector) Validate(ctx context.Context, ds *types.DataSourceConfig) erro
 	return nil
 }
 
-func (*Connector) ListResources(ctx context.Context, ds *types.DataSourceConfig, parent string) ([]types.Resource, error) {
+// ListResources returns the account root or the immediate child folders of parent.
+func (*Connector) ListResources(
+	ctx context.Context,
+	ds *types.DataSourceConfig,
+	parent string,
+) ([]types.Resource, error) {
 	c, err := newClient(ds)
 	if err != nil {
 		return nil, err
@@ -99,13 +109,24 @@ func (*Connector) ListResources(ctx context.Context, ds *types.DataSourceConfig,
 	out := make([]types.Resource, 0)
 	for _, e := range entries {
 		if e.folder() {
-			out = append(out, types.Resource{ExternalID: e.path, Name: path.Base(e.path), Type: "folder", ParentID: parent, HasChildren: true})
+			out = append(out, types.Resource{
+				ExternalID:  e.path,
+				Name:        path.Base(e.path),
+				Type:        "folder",
+				ParentID:    parent,
+				HasChildren: true,
+			})
 		}
 	}
 	return out, nil
 }
 
-func (*Connector) ResolveResourceAncestors(_ context.Context, _ *types.DataSourceConfig, ids []string) ([]string, error) {
+// ResolveResourceAncestors returns the parent folders needed to display a saved selection.
+func (*Connector) ResolveResourceAncestors(
+	_ context.Context,
+	_ *types.DataSourceConfig,
+	ids []string,
+) ([]string, error) {
 	set := make(map[string]bool)
 	for _, p := range ids {
 		if !validPath(p) {
@@ -134,30 +155,46 @@ type collector struct {
 func (h *collector) Emit(_ context.Context, item types.FetchedItem) error {
 	h.bytes += int64(len(item.Content))
 	if h.bytes > 256<<20 {
-		return errors.New("Nextcloud batch too large; use streaming sync")
+		return errors.New("batch of Nextcloud files exceeds memory limit; use streaming sync")
 	}
 	h.items = append(h.items, item)
 	return nil
 }
 func (*collector) Checkpoint(context.Context, *types.SyncCursor) error { return nil }
 
-func (c *Connector) FetchAll(ctx context.Context, ds *types.DataSourceConfig, ids []string) ([]types.FetchedItem, error) {
+// FetchAll collects all supported files in the specified folders.
+func (c *Connector) FetchAll(
+	ctx context.Context,
+	ds *types.DataSourceConfig,
+	ids []string,
+) ([]types.FetchedItem, error) {
 	if ds == nil {
 		return nil, datasource.ErrInvalidConfig
 	}
-	copy := *ds
-	copy.ResourceIDs = ids
-	items, _, err := c.FetchIncremental(ctx, &copy, nil)
+	config := *ds
+	config.ResourceIDs = ids
+	items, _, err := c.FetchIncremental(ctx, &config, nil)
 	return items, err
 }
 
-func (c *Connector) FetchIncremental(ctx context.Context, ds *types.DataSourceConfig, old *types.SyncCursor) ([]types.FetchedItem, *types.SyncCursor, error) {
+// FetchIncremental collects files whose revision or path changed since the previous cursor.
+func (c *Connector) FetchIncremental(
+	ctx context.Context,
+	ds *types.DataSourceConfig,
+	old *types.SyncCursor,
+) ([]types.FetchedItem, *types.SyncCursor, error) {
 	h := new(collector)
 	next, err := c.FetchStream(ctx, ds, old, h)
 	return h.items, next, err
 }
 
-func (c *Connector) FetchStream(ctx context.Context, ds *types.DataSourceConfig, old *types.SyncCursor, h datasource.StreamHandler) (*types.SyncCursor, error) {
+// FetchStream reads changed files one at a time and checkpoints successfully emitted revisions.
+func (c *Connector) FetchStream(
+	ctx context.Context,
+	ds *types.DataSourceConfig,
+	old *types.SyncCursor,
+	h datasource.StreamHandler,
+) (*types.SyncCursor, error) {
 	client, err := newClient(ds)
 	if err != nil {
 		return nil, err
@@ -192,10 +229,19 @@ func readVersions(old *types.SyncCursor, namespace string) (map[string]interface
 }
 
 func (c *client) cursor(files map[string]interface{}) *types.SyncCursor {
-	return &types.SyncCursor{LastSyncTime: time.Now().UTC(), ConnectorCursor: map[string]interface{}{"namespace": c.namespace, "files": files}}
+	return &types.SyncCursor{
+		LastSyncTime:    time.Now().UTC(),
+		ConnectorCursor: map[string]interface{}{"namespace": c.namespace, "files": files},
+	}
 }
 
-func (c *client) sync(ctx context.Context, roots []string, old *types.SyncCursor, h datasource.StreamHandler, limit int64) (*types.SyncCursor, error) {
+func (c *client) sync(
+	ctx context.Context,
+	roots []string,
+	old *types.SyncCursor,
+	h datasource.StreamHandler,
+	limit int64,
+) (*types.SyncCursor, error) {
 	versions, err := readVersions(old, c.namespace)
 	if err != nil {
 		return nil, err
@@ -218,7 +264,7 @@ func (c *client) sync(ctx context.Context, roots []string, old *types.SyncCursor
 		}
 		total += len(entries)
 		if total > maxEntries {
-			return nil, errors.New("Nextcloud sync exceeds the entry limit; select a smaller folder")
+			return nil, errors.New("too many Nextcloud entries; select a smaller folder")
 		}
 		for _, e := range entries {
 			if err := ctx.Err(); err != nil {
@@ -292,8 +338,16 @@ func (c *client) item(e entry, root string) types.FetchedItem {
 	parts[last] += ext
 	updated, _ := http.ParseTime(e.Modified)
 	return types.FetchedItem{
-		ExternalID: sourceType + ":" + c.namespace + ":" + e.ID, Title: path.Base(e.path), FileName: strings.Join(parts, "/"),
-		UpdatedAt: updated, SourceResourceID: root,
-		Metadata: map[string]string{"source_type": sourceType, "webdav_file_id": e.ID, "webdav_path": e.path, "webdav_etag": e.ETag},
+		ExternalID:       sourceType + ":" + c.namespace + ":" + e.ID,
+		Title:            path.Base(e.path),
+		FileName:         strings.Join(parts, "/"),
+		UpdatedAt:        updated,
+		SourceResourceID: root,
+		Metadata: map[string]string{
+			"source_type":    sourceType,
+			"webdav_file_id": e.ID,
+			"webdav_path":    e.path,
+			"webdav_etag":    e.ETag,
+		},
 	}
 }

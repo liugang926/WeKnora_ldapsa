@@ -18,7 +18,16 @@ func davEntry(href string, folder bool, id, etag string, size int) string {
 	if folder {
 		typ = "<d:collection/>"
 	}
-	return fmt.Sprintf(`<d:response><d:href>%s</d:href><d:propstat><d:prop><d:resourcetype>%s</d:resourcetype><oc:fileid>%s</oc:fileid><d:getetag>%s</d:getetag><d:getcontentlength>%d</d:getcontentlength></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`, href, typ, id, etag, size)
+	return fmt.Sprintf(`<d:response>
+  <d:href>%s</d:href>
+  <d:propstat>
+    <d:prop>
+      <d:resourcetype>%s</d:resourcetype>
+      <oc:fileid>%s</oc:fileid><d:getetag>%s</d:getetag><d:getcontentlength>%d</d:getcontentlength>
+    </d:prop>
+    <d:status>HTTP/1.1 200 OK</d:status>
+  </d:propstat>
+</d:response>`, href, typ, id, etag, size)
 }
 
 func TestDirectorySyncAndReadRevocation(t *testing.T) {
@@ -63,10 +72,14 @@ func TestDirectorySyncAndReadRevocation(t *testing.T) {
 				body += entry(sub+"/", true, "2", "", 0)
 			}
 			if p == sub && !hidden {
-				body += entry(file, false, "42", etag, len(data)) + entry(sub+"/not-imported.rar", false, "43", etag, 100)
+				body += entry(file, false, "42", etag, len(data))
+				body += entry(sub+"/not-imported.rar", false, "43", etag, 100)
 			}
 			w.WriteHeader(http.StatusMultiStatus)
-			fmt.Fprint(w, `<d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">`+body+`</d:multistatus>`)
+			const prefix = `<d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">`
+			if _, err := fmt.Fprint(w, prefix+body+`</d:multistatus>`); err != nil {
+				t.Error(err)
+			}
 		case "GET":
 			if p != file || r.Header.Get("If-Match") != etag {
 				t.Error("unexpected or unpinned file read")
@@ -75,7 +88,9 @@ func TestDirectorySyncAndReadRevocation(t *testing.T) {
 			}
 			requests++
 			w.Header().Set("ETag", etag)
-			fmt.Fprint(w, data)
+			if _, err := fmt.Fprint(w, data); err != nil {
+				t.Error(err)
+			}
 		default:
 			t.Error("unexpected method", r.Method)
 			w.WriteHeader(405)
@@ -83,7 +98,10 @@ func TestDirectorySyncAndReadRevocation(t *testing.T) {
 	}))
 	defer srv.Close()
 	u, _ := url.Parse(srv.URL + "/nc")
-	c := client{http: srv.Client(), base: *u, davRoot: root, username: "tester", password: "test-pass", namespace: "instance"}
+	c := client{
+		http: srv.Client(), base: *u, davRoot: root,
+		username: "tester", password: "test-pass", namespace: "instance",
+	}
 	ctx := context.Background()
 	var cursor *types.SyncCursor
 	sync := func(want int) *types.FetchedItem {
@@ -104,7 +122,8 @@ func TestDirectorySyncAndReadRevocation(t *testing.T) {
 		return &h.items[0]
 	}
 	first := sync(1)
-	if string(first.Content) != data || first.SourceResourceID != folder || first.URL != srv.URL+"/nc/f/42" || first.Metadata["webdav_path"] != file {
+	if string(first.Content) != data || first.SourceResourceID != folder ||
+		first.URL != srv.URL+"/nc/f/42" || first.Metadata["webdav_path"] != file {
 		t.Fatal(first)
 	}
 	sync(0)
@@ -138,7 +157,14 @@ func TestScopeAndHref(t *testing.T) {
 	}
 	u, _ := url.Parse("https://cloud.example/nc")
 	c := client{base: *u, davRoot: "/nc/remote.php/dav/files/alice"}
-	for _, href := range []string{"https://foreign.example" + c.davRoot + "/x", "//cloud.example" + c.davRoot + "/x", c.davRoot + "2/x", c.davRoot + "/%2e%2e/foreign", c.davRoot + "/child%2fgrandchild", c.davRoot + "/x?token=never"} {
+	for _, href := range []string{
+		"https://foreign.example" + c.davRoot + "/x",
+		"//cloud.example" + c.davRoot + "/x",
+		c.davRoot + "2/x",
+		c.davRoot + "/%2e%2e/foreign",
+		c.davRoot + "/child%2fgrandchild",
+		c.davRoot + "/x?token=never",
+	} {
 		if _, err := c.relative(href); err == nil {
 			t.Errorf("unexpected href %s", href)
 		}
@@ -146,8 +172,15 @@ func TestScopeAndHref(t *testing.T) {
 }
 
 func TestCredentialConfiguration(t *testing.T) {
-	for _, endpoint := range []string{"http://example.test", "https://user@example.test", "https://example.test?token=bad", "https://example.test/base/../x"} {
-		ds := &types.DataSourceConfig{Credentials: map[string]interface{}{"base_url": endpoint, "username": "user", "app_password": "not-for-logs"}}
+	for _, endpoint := range []string{
+		"http://example.test",
+		"https://user@example.test",
+		"https://example.test?token=bad",
+		"https://example.test/base/../x",
+	} {
+		ds := &types.DataSourceConfig{Credentials: map[string]interface{}{
+			"base_url": endpoint, "username": "user", "app_password": "not-for-logs",
+		}}
 		if _, err := newClient(ds); err == nil || strings.Contains(err.Error(), "not-for-logs") {
 			t.Fatal("unsafe configuration")
 		}

@@ -12,6 +12,7 @@ import (
 	"go.uber.org/dig"
 )
 
+// Install adds the WebDAV connector and its static configuration page to the server container.
 func Install(c *dig.Container) error {
 	if err := c.Decorate(registerConnector); err != nil {
 		return fmt.Errorf("register Nextcloud WebDAV connector hook: %w", err)

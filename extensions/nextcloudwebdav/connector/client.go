@@ -22,7 +22,13 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-const properties = `<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:prop><d:resourcetype/><oc:fileid/><d:getetag/><d:getcontentlength/><d:getcontenttype/><d:getlastmodified/></d:prop></d:propfind>`
+const properties = `<?xml version="1.0"?>
+<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
+  <d:prop>
+    <d:resourcetype/><oc:fileid/><d:getetag/>
+    <d:getcontentlength/><d:getcontenttype/><d:getlastmodified/>
+  </d:prop>
+</d:propfind>`
 
 type client struct {
 	http               *http.Client
@@ -40,8 +46,11 @@ func newClient(ds *types.DataSourceConfig) (*client, error) {
 	user, _ := ds.Credentials["username"].(string)
 	password, _ := ds.Credentials["app_password"].(string)
 	u, err := url.Parse(strings.TrimSpace(base))
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || !validSegment(user) || strings.Contains(user, ":") || password == "" {
-		return nil, fmt.Errorf("%w: HTTPS instance URL, username and app password are required", datasource.ErrInvalidConfig)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil ||
+		u.RawQuery != "" || u.ForceQuery || u.Fragment != "" ||
+		!validSegment(user) || strings.Contains(user, ":") || password == "" {
+		return nil, fmt.Errorf("%w: HTTPS instance URL, username and app password are required",
+			datasource.ErrInvalidConfig)
 	}
 	u.Path = strings.TrimSuffix(u.Path, "/")
 	if strings.Contains(strings.ToLower(u.EscapedPath()), "%2f") || (u.Path != "" && !validPath(u.Path)) {
@@ -54,11 +63,19 @@ func newClient(ds *types.DataSourceConfig) (*client, error) {
 	}
 	h := datasource.NewConnectorHTTPClient(90 * time.Second)
 	h.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &client{http: h, base: *u, davRoot: u.Path + "/remote.php/dav/files/" + user, username: user, password: password, namespace: fmt.Sprintf("%x", sha256.Sum256([]byte(u.String()+"\x00"+user)))}, nil
+	return &client{
+		http:      h,
+		base:      *u,
+		davRoot:   u.Path + "/remote.php/dav/files/" + user,
+		username:  user,
+		password:  password,
+		namespace: fmt.Sprintf("%x", sha256.Sum256([]byte(u.String()+"\x00"+user))),
+	}, nil
 }
 
 func validSegment(s string) bool {
-	return s != "" && s != "." && s != ".." && utf8.ValidString(s) && !strings.ContainsAny(s, "/\\") && !strings.ContainsFunc(s, unicode.IsControl)
+	return s != "" && s != "." && s != ".." && utf8.ValidString(s) &&
+		!strings.ContainsAny(s, "/\\") && !strings.ContainsFunc(s, unicode.IsControl)
 }
 
 func validPath(p string) bool {
@@ -114,7 +131,7 @@ func (c *client) request(ctx context.Context, method, rel string, depth, etag st
 		want = http.StatusMultiStatus
 	}
 	if res.StatusCode != want {
-		res.Body.Close()
+		_ = res.Body.Close()
 		cause := datasource.ErrFetchFailed
 		switch res.StatusCode {
 		case http.StatusUnauthorized:
@@ -157,7 +174,8 @@ func (e entry) folder() bool { return e.Type != nil && e.Type.Collection != nil 
 
 func (c *client) relative(href string) (string, error) {
 	u, err := url.Parse(href)
-	if err != nil || u.Opaque != "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(strings.ToLower(u.EscapedPath()), "%2f") {
+	if err != nil || u.Opaque != "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" ||
+		strings.Contains(strings.ToLower(u.EscapedPath()), "%2f") {
 		return "", errListing
 	}
 	if u.IsAbs() {
@@ -185,7 +203,7 @@ func (c *client) list(ctx context.Context, dir, depth string) ([]entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	raw, err := readBounded(res.Body, 8<<20)
 	if err != nil {
 		return nil, err
@@ -257,26 +275,26 @@ func (c *client) list(ctx context.Context, dir, depth string) ([]entry, error) {
 
 func (c *client) download(ctx context.Context, e entry, limit int64) ([]byte, error) {
 	if e.Size == nil || *e.Size < 0 || *e.Size > limit {
-		return nil, errors.New("Nextcloud file has missing or excessive size")
+		return nil, errors.New("missing or excessive Nextcloud file size")
 	}
 	// Strong version precondition binds downloaded bytes to the DAV listing.
 	if !validETag(e.ETag) {
-		return nil, errors.New("Nextcloud file has no strong ETag")
+		return nil, errors.New("missing strong ETag for Nextcloud file")
 	}
 	res, err := c.request(ctx, http.MethodGet, e.path, "", e.ETag)
 	if err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if tag := res.Header.Get("ETag"); tag != "" && tag != e.ETag {
-		return nil, errors.New("Nextcloud file changed during download")
+		return nil, errors.New("content of Nextcloud file changed during download")
 	}
 	body, err := readBounded(res.Body, *e.Size)
 	if err != nil {
 		return nil, err
 	}
 	if int64(len(body)) != *e.Size {
-		return nil, errors.New("Nextcloud file size changed during download")
+		return nil, errors.New("size of Nextcloud file changed during download")
 	}
 	return body, nil
 }

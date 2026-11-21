@@ -31,7 +31,9 @@ func Register(router *gin.Engine) {
 		mimeType := asset.mime
 		shell.GET(asset.path, func(c *gin.Context) {
 			c.Header("Cache-Control", "no-store")
-			c.Header("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+			c.Header("Content-Security-Policy",
+				"default-src 'none'; script-src 'self'; style-src 'self'; "+
+					"connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
 			c.Header("Referrer-Policy", "no-referrer")
 			c.Header("X-Content-Type-Options", "nosniff")
 			c.Data(http.StatusOK, mimeType, content)

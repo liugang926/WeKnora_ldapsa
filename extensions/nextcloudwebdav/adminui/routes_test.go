@@ -35,10 +35,12 @@ func TestStaticNavigationWithWeKnoraAuth(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if w.Code != http.StatusOK || w.Header().Get("Content-Type") != asset.mime || !bytes.Equal(w.Body.Bytes(), want) {
+			if w.Code != http.StatusOK || w.Header().Get("Content-Type") != asset.mime ||
+				!bytes.Equal(w.Body.Bytes(), want) {
 				t.Fatalf("embedded file not served: status %d, type %q", w.Code, w.Header().Get("Content-Type"))
 			}
-			if w.Header().Get("Content-Security-Policy") == "" || w.Header().Get("X-Content-Type-Options") != "nosniff" {
+			if w.Header().Get("Content-Security-Policy") == "" ||
+				w.Header().Get("X-Content-Type-Options") != "nosniff" {
 				t.Fatal("missing static content headers")
 			}
 		})
