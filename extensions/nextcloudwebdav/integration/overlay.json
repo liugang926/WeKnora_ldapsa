@@ -1,0 +1,5 @@
+{
+  "Replace": {
+    "cmd/server/nextcloud_webdav_extension.go": "extensions/nextcloudwebdav/integration/server_bootstrap.go.in"
+  }
+}

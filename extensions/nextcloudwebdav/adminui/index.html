@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nextcloud 数据源 · WeKnora</title>
+<link rel="stylesheet" href="./manager.css">
+<script type="module" src="./manager.js"></script>
+</head>
+<body>
+<main>
+<header><a href="/platform/knowledge-bases">WeKnora / 知识库</a><h1>Nextcloud 数据源</h1></header>
+<p id="notice" role="status" aria-live="polite"></p>
+<p id="login" hidden>请在同一站点登录 WeKnora，然后刷新此页。 <a href="/login" target="_blank" rel="noopener">打开登录页</a></p>
+<fieldset id="controls" disabled>
+<section class="pair">
+<label>目标知识库<select id="kb" required></select></label>
+<label>数据源<select id="source"></select></label>
+</section>
+<section id="connection">
+<h2>连接器凭证</h2>
+<p>请填写专用 Nextcloud 服务账号。管理员保存一次后，手动同步和定时同步都使用这组凭证。</p>
+<label id="newName">数据源名称<input id="name" value="Nextcloud" maxlength="128"></label>
+<label>Nextcloud 实例地址<input id="url" type="url" placeholder="https://cloud.example.com" autocomplete="off" spellcheck="false"></label>
+<div class="pair">
+<label>专用服务账号<input id="user" autocomplete="off" spellcheck="false"></label>
+<label>服务账号的应用密码<input id="password" type="password" autocomplete="new-password"></label>
+</div>
+<div class="actions"><button id="test">测试连接</button><button id="create" class="primary">保存为暂停的数据源</button><button id="replace" hidden>保存新凭证</button><button id="cancel" hidden>取消更换</button></div>
+</section>
+<section id="settings" hidden>
+<div class="row"><h2>同步设置</h2><span id="state"></span></div>
+<p>所选目录的文件入库后，由本知识库权限控制。</p>
+<div class="row"><h3>可读取目录</h3><button id="browse">浏览目录</button></div>
+<div id="browser" hidden><div class="row"><strong id="path"></strong><button id="up">上一级</button></div><ul id="folders"></ul></div>
+<h3>已选目录</h3><ul id="selection"></ul>
+<label>定时计划<select id="schedule"><option value="">仅手动</option><option value="0 0 * * * *">每小时</option><option value="0 0 */6 * * *">每 6 小时</option><option value="0 0 1 * * *">每天 01:00（服务器时区）</option></select></label>
+<p id="pending" hidden>目录或计划已更改，请先保存设置。</p>
+<div class="actions"><button id="save" class="primary">保存设置</button><button id="toggle"></button><button id="sync">立即同步</button><button id="rotate">更换连接凭证</button></div>
+</section>
+<section id="history" hidden><div class="row"><h2>同步记录</h2><button id="logs">查看最近记录</button></div><ul id="entries"></ul></section>
+</fieldset>
+</main></body></html>

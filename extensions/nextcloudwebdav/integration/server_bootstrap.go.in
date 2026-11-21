@@ -1,0 +1,12 @@
+package main
+
+import (
+	"github.com/Tencent/WeKnora/extensions/nextcloudwebdav/integration"
+	"github.com/Tencent/WeKnora/internal/runtime"
+)
+
+func init() {
+	if err := integration.Install(runtime.GetContainer()); err != nil {
+		panic(err)
+	}
+}
