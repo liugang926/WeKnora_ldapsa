@@ -5,6 +5,8 @@ import { useI18n } from 'vue-i18n'
 import { useConnectorLabel } from '@/composables/useConnectorLabel'
 import {
   listDataSources,
+  getConnectorTypes,
+  type ConnectorMeta,
   deleteDataSource,
   triggerSync,
   pauseDataSource,
@@ -14,6 +16,7 @@ import {
 import { humanizeCron, relativeTime } from '@/utils/cronHumanize'
 import { dataSourceError } from './syncRunError'
 import DataSourceEditorDialog from './DataSourceEditorDialog.vue'
+import { managerHref } from './managedDataSources'
 import DataSourceSyncLogs from './DataSourceSyncLogs.vue'
 import NextcloudFailedCandidates from './NextcloudFailedCandidates.vue'
 import NextcloudCapacity from './NextcloudCapacity.vue'
@@ -78,12 +81,39 @@ async function loadList(silent = false) {
   }
 }
 
+const installedTypes = ref<string[]>([])
+const managerLinks = computed(() => installedTypes.value.flatMap(type => {
+  const href = managerHref(type, props.kbId)
+  return href ? [{ type, href }] : []
+}))
+
+async function refreshTypes(): Promise<void> {
+  installedTypes.value = []
+  const types: ConnectorMeta[] = await getConnectorTypes()
+  installedTypes.value = types.map(connector => connector.type)
+}
+
 function openCreate() {
   editingDs.value = null
   editorVisible.value = true
+  void refreshTypes().catch(error => MessagePlugin.error(error?.message || t('error.networkError')))
 }
 
-function openEdit(ds: DataSource) {
+async function openEdit(ds: DataSource) {
+  const href = managerHref(ds.type, props.kbId, ds.id)
+  if (href) {
+    try {
+      await refreshTypes()
+      if (!installedTypes.value.includes(ds.type)) {
+        MessagePlugin.error(t('datasource.connectorUnavailable'))
+        return
+      }
+      if (props.kbId === ds.knowledge_base_id) window.location.assign(href)
+    } catch (error: any) {
+      MessagePlugin.error(error?.message || t('error.networkError'))
+    }
+    return
+  }
   editingDs.value = ds
   editorVisible.value = true
 }
@@ -371,6 +401,7 @@ onBeforeUnmount(stopPolling)
       v-model:visible="editorVisible"
       :kb-id="kbId"
       :data-source="editingDs"
+      :manager-links="managerLinks"
       @saved="onEditorSaved"
     />
 

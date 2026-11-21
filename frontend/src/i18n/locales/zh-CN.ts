@@ -1593,6 +1593,7 @@ export default {
       cloudFolderLimitation: 'Confluence Cloud 暂不支持在此列出空间顶层文件夹等容器下的页面；选择整个空间仍会同步它们。'
     },
     connectorDesc: {
+      nextcloud_webdav: '使用专用服务账号导入 Nextcloud 目录中的文件。',
       feishu: '同步飞书知识库中的文档、表格、文件',
       lark: '同步 Lark 知识库中的文档、表格、文件（飞书国际版）',
       feishu_drive: "同步飞书云盘文件夹中的文档、表格、文件",
@@ -1606,7 +1607,9 @@ export default {
       gitlab: '同步 GitLab 项目中的文件',
       seafile: '同步 Seafile 资料库中的目录与文件'
     },
+    connectorUnavailable: '当前服务器未启用此数据源扩展。',
     connector: {
+      nextcloud_webdav: 'Nextcloud WebDAV',
       feishu: '飞书',
       lark: 'Lark（飞书国际版）',
       feishu_drive: "飞书云盘",

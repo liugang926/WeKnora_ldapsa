@@ -1553,6 +1553,7 @@ export default {
       cloudFolderLimitation: 'Confluence Cloud는 아직 스페이스 최상위 폴더 등 컨테이너 아래의 페이지를 여기에 나열할 수 없습니다. 스페이스 전체를 선택하면 함께 동기화됩니다.'
     },
     connectorDesc: {
+      nextcloud_webdav: '전용 서비스 계정으로 Nextcloud 폴더의 파일을 가져옵니다.',
       feishu: '페이슈 위키에서 문서, 스프레드시트, 파일 동기화',
       lark: 'Lark 위키에서 문서, 스프레드시트, 파일 동기화',
       feishu_drive: "페이슈 드라이브 폴더에서 문서, 스프레드시트, 파일 동기화",
@@ -1566,7 +1567,9 @@ export default {
       gitlab: 'GitLab 프로젝트의 파일 동기화',
       seafile: 'Seafile 라이브러리의 폴더와 파일 동기화'
     },
+    connectorUnavailable: '이 서버에는 해당 데이터 소스 확장 기능이 활성화되어 있지 않습니다.',
     connector: {
+      nextcloud_webdav: 'Nextcloud WebDAV',
       feishu: '페이슈 (Feishu)',
       lark: 'Lark (Feishu 글로벌)',
       feishu_drive: "페이슈 드라이브",

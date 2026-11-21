@@ -8498,7 +8498,9 @@ export default {
       failedItemsMore: '他{n}件の失敗したドキュメントは表示されていません',
       docsFailedSummary: '{n}件のドキュメントの同期に失敗しました'
     },
+    connectorUnavailable: 'このサーバーでは、このデータソース拡張機能が有効になっていません。',
     connector: {
+      nextcloud_webdav: 'Nextcloud WebDAV',
       feishu: 'Feishu',
       lark: 'Lark',
       feishu_drive: 'Feishu Drive',
@@ -8513,6 +8515,7 @@ export default {
       seafile: 'Seafile'
     },
     connectorDesc: {
+      nextcloud_webdav: '専用サービスアカウントで Nextcloud フォルダーからファイルを取り込みます。',
       feishu: 'Feishu Wikiからドキュメント、スプレッドシート、ファイルを同期します',
       lark: 'Lark Wiki（Feishu国際版）からドキュメント、スプレッドシート、ファイルを同期します',
       feishu_drive: 'Feishu Driveのフォルダからドキュメント、スプレッドシート、ファイルを同期します',
