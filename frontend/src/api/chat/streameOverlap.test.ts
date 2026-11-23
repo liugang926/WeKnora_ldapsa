@@ -10,7 +10,7 @@ import { renderToString } from 'vue/server-renderer'
 
 type Call = {
   url: string
-  options: { signal: AbortSignal, onmessage: (ev: { data: string }) => void, onclose: () => void }
+  options: { signal: AbortSignal, onopen: (response: Response) => Promise<void>, onerror: (error: unknown) => never, onmessage: (ev: { data: string }) => void, onclose: () => void }
   resolve: () => void
   reject: (err: unknown) => void
 }
@@ -228,4 +228,61 @@ test('a silent broken proxy connection times out and resumes by GET; heartbeats 
   await run
   assert.equal(stream.isStreaming.value, false)
   assert.equal(stream.error.value, null)
+})
+
+async function rejectHandshake(call: Call, response: Response) {
+  await assert.rejects(call.options.onopen(response), error => {
+    assert.throws(() => call.options.onerror(error), streamError => {
+      call.reject(streamError)
+      return true
+    })
+    return true
+  })
+}
+
+const historyRequest = {
+  session_id: 'web-session', query: 'historical-answer', method: 'GET', url: '/api/v1/sessions/continue-stream',
+}
+const noEvents = () => Response.json({ success: false, error: 'No stream events found' }, { status: 404 })
+
+test('only an idle history probe can settle the specific empty event-buffer response quietly', async () => {
+  let stream!: ReturnType<typeof useStream>
+  await renderToString(createSSRApp({ setup() { stream = useStream(); return () => null } }))
+  for (const [response, recovery, quiet] of [
+    [noEvents(), 'idle', true],
+    [noEvents(), undefined, false],
+    [Response.json({ success: false, error: 'Incomplete message not found' }, { status: 404 }), 'idle', false],
+    [new Response('<h1>Not found</h1>', { status: 404 }), 'idle', false],
+    [new Response(null, { status: 403 }), 'idle', false],
+    [new Response(null, { status: 503 }), 'idle', false],
+  ] as const) {
+    const base = transport.calls.length
+    const done = stream.startStream(historyRequest, recovery)
+    await rejectHandshake(await nextCall(base + 1), response)
+    assert.equal(await done, quiet ? 'history-unavailable' : undefined)
+    if (quiet) assert.equal(stream.error.value, null)
+    else assert.match(String(stream.error.value), new RegExp('HTTP ' + response.status))
+    assert.equal(stream.isStreaming.value, false)
+    assert.equal(stream.isLoading.value, false)
+  }
+})
+
+test('a pending web history attach waits for the first event and consumes the same run', async () => {
+  let stream!: ReturnType<typeof useStream>
+  await renderToString(createSSRApp({ setup() { stream = useStream(); return () => null } }))
+  const base = transport.calls.length
+  const done = stream.startStream(historyRequest, 'pending')
+  const first = await nextCall(base + 1)
+  await rejectHandshake(first, noEvents())
+  await new Promise(r => setTimeout(r, 1050))
+  const retry = await nextCall(base + 2)
+  assert.equal(retry.url, first.url)
+  assert.equal(stream.error.value, null)
+  await retry.options.onopen(new Response())
+  retry.options.onmessage({ data: JSON.stringify({ response_type: 'complete' }) })
+  retry.options.onclose()
+  retry.resolve()
+  await done
+  assert.equal(stream.error.value, null)
+  assert.equal(stream.isStreaming.value, false)
 })

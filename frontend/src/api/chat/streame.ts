@@ -17,6 +17,10 @@ import {
   runStreamWithAuthRetry,
 } from '@/utils/authRefresh';
 
+// Only the implicit history handshake distinguishes a missing event buffer from
+// other 404s (missing session, inaccessible message, or a proxy error).
+class MissingHistoryEvents extends Error {}
+
 /** The WeKnora page the user has open; agent-chat only. */
 export interface PageContextPayload {
   page?: string
@@ -71,7 +75,7 @@ export function useStream() {
   let renderTimer: number | null = null
 
   // 启动流式请求
-  const startStream = async (params: { session_id: any; query: any; knowledge_base_ids?: string[]; knowledge_ids?: string[]; tag_ids?: string[]; agent_enabled?: boolean; agent_id?: string; agent_source_tenant_id?: string | number; web_search_enabled?: boolean; local_browser_enabled?: boolean; summary_model_id?: string; reasoning_effort?: string; mcp_service_ids?: string[]; skill_names?: string[]; mentioned_items?: Array<{id: string; name: string; type: string; kb_type?: string; kb_id?: string; kb_name?: string; service_id?: string; skill_name?: string}>; images?: Array<{data: string}>; attachment_uploads?: Array<{data: string; file_name: string; file_size: number}>; attachment_ids?: string[]; suggestion_attribution?: { suggestion_set_id: string; question_id: string }; question_origin?: { knowledge_base_id: string; knowledge_id?: string }; page_context?: PageContextPayload; assistant_access?: AssistantAccessLevel; method: string; url: string; resume_pending_id?: string; embed_token?: string; embed_session_sig?: string; embed_visitor_id?: string }) => {
+  const startStream = async (params: { session_id: any; query: any; knowledge_base_ids?: string[]; knowledge_ids?: string[]; tag_ids?: string[]; agent_enabled?: boolean; agent_id?: string; agent_source_tenant_id?: string | number; web_search_enabled?: boolean; local_browser_enabled?: boolean; summary_model_id?: string; reasoning_effort?: string; mcp_service_ids?: string[]; skill_names?: string[]; mentioned_items?: Array<{id: string; name: string; type: string; kb_type?: string; kb_id?: string; kb_name?: string; service_id?: string; skill_name?: string}>; images?: Array<{data: string}>; attachment_uploads?: Array<{data: string; file_name: string; file_size: number}>; attachment_ids?: string[]; suggestion_attribution?: { suggestion_set_id: string; question_id: string }; question_origin?: { knowledge_base_id: string; knowledge_id?: string }; page_context?: PageContextPayload; assistant_access?: AssistantAccessLevel; method: string; url: string; resume_pending_id?: string; embed_token?: string; embed_session_sig?: string; embed_visitor_id?: string }, historyRecovery?: 'idle' | 'pending') => {
     const myGeneration = ++streamGeneration
     const streamAbort = controller
     // 重置状态
@@ -255,6 +259,14 @@ export function useStream() {
         onopen: async (res) => {
           // 401 is recoverable (refresh + replay); everything else is not.
           if (res.status === 401) throw new StreamAuthError(res.status);
+          if (historyRecovery && !receivedAssistantId && res.status === 404 &&
+              streamMethod === 'GET' && params.url === '/api/v1/sessions/continue-stream' &&
+              res.headers.get('content-type')?.includes('application/json')) {
+            const body = await res.json().catch(() => null);
+            if (body?.success === false && body.error === 'No stream events found') {
+              throw new MissingHistoryEvents(`HTTP ${res.status}`);
+            }
+          }
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           console.log(`[TTFB] response:headers request_id=${requestID} elapsed_ms=${(performance.now() - sentAt).toFixed(1)}`);
           if (myGeneration === streamGeneration) isLoading.value = false;
@@ -285,7 +297,7 @@ export function useStream() {
         },
 
         onerror: (err) => {
-          if (isStreamAuthError(err)) throw err;
+          if (isStreamAuthError(err) || err instanceof MissingHistoryEvents) throw err;
           throw new Error(`${i18n.global.t('error.streamFailed')}: ${err}`);
         },
 
@@ -322,7 +334,17 @@ export function useStream() {
           });
           break;
         } catch (err) {
-          if (!canReconnect() || isStreamAuthError(err) || reconnectAttempts >= 8) throw err;
+          if (err instanceof MissingHistoryEvents) {
+            if (myGeneration !== streamGeneration || streamAbort.signal.aborted) return;
+            if (historyRecovery === 'idle') {
+              stopStream();
+              return 'history-unavailable' as const;
+            }
+            // A just-created turn can be visible before its first event is written.
+            if (reconnectAttempts >= 2) throw new Error(`${i18n.global.t('error.streamFailed')}: ${err.message}`);
+          } else if (!canReconnect() || isStreamAuthError(err) || reconnectAttempts >= 8) {
+            throw err;
+          }
           reconnectAttempts++;
           // The server may still be restarting. A stop/new turn invalidates
           // this retry before it can attach or change visible state.
@@ -336,6 +358,7 @@ export function useStream() {
             streamAbort.signal.addEventListener('abort', done, { once: true });
           });
           if (myGeneration !== streamGeneration || streamAbort.signal.aborted) return;
+          if (err instanceof MissingHistoryEvents) continue;
           streamMethod = 'GET';
           url = `${apiUrl}/api/v1/sessions/continue-stream/${encodeURIComponent(params.session_id)}?message_id=${encodeURIComponent(receivedAssistantId)}`;
         }
