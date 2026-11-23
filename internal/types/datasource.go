@@ -45,6 +45,9 @@ const (
 	ConnectorTypeNextcloud   = "nextcloud"
 	ConnectorTypeSeafile     = "seafile"
 
+	// ConnectorTypeNextcloudWebDAV identifies the independently configured WebDAV extension.
+	ConnectorTypeNextcloudWebDAV = "nextcloud_webdav"
+
 	// Sync modes
 	SyncModeIncremental = "incremental"
 	SyncModeFull        = "full"

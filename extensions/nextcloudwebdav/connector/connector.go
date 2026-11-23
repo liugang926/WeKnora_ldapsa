@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	sourceType = "nextcloud_webdav"
+	sourceType = types.ConnectorTypeNextcloudWebDAV
 	maxEntries = 100000
 )
 
