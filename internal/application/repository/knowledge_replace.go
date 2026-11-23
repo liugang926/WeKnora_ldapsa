@@ -17,7 +17,7 @@ func (r *knowledgeRepository) ReplaceKnowledge(
 	if invalidKnowledgeReplacement(before, after) {
 		return fmt.Errorf("invalid knowledge replacement")
 	}
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	write := func(tx *gorm.DB) error {
 		if err := retireKnowledgeForReplacement(tx, before); err != nil {
 			return err
 		}
@@ -29,6 +29,14 @@ func (r *knowledgeRepository) ReplaceKnowledge(
 			return repo.SetKnowledgeTags(ctx, after.ID, tagIDs)
 		}
 		return nil
+	}
+	return retryKnowledgeTagWrite(ctx, r.db, func() error {
+		original := *after
+		err := r.db.WithContext(ctx).Transaction(write)
+		if serializationAborted(err) {
+			*after = original
+		}
+		return err
 	})
 }
 
@@ -72,7 +80,7 @@ func (s *KnowledgeInputProvenanceStore) ReplaceKnowledgeWithInput(
 	}
 	attempt := matchingKnowledgeReplacementAttempt(ctx, before, after)
 	var proof *types.KnowledgeBuildInputProof
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	write := func(tx *gorm.DB) error {
 		sourceType, err := registeredOrdinaryReplacementType(tx, after)
 		if err != nil {
 			return err
@@ -108,6 +116,20 @@ func (s *KnowledgeInputProvenanceStore) ReplaceKnowledgeWithInput(
 			attempt.store, attempt.sourceType, attempt.proof = s, sourceType, cloneKnowledgeInputProof(proof)
 		}
 		return nil
+	}
+	err := retryKnowledgeTagWrite(ctx, s.db, func() error {
+		original := *after
+		err := s.db.WithContext(ctx).Transaction(write)
+		if serializationAborted(err) {
+			*after = original
+			proof = nil
+			// A server-declared abort at COMMIT is a known rollback. Only a
+			// possibly committed write may supply an acknowledgement proof.
+			if attempt != nil {
+				attempt.store, attempt.sourceType, attempt.proof = nil, "", nil
+			}
+		}
+		return err
 	})
 	if err != nil {
 		return nil, err

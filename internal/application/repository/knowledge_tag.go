@@ -21,9 +21,11 @@ func (r *knowledgeRepository) SetKnowledgeTags(
 	knowledgeID string,
 	tagIDs []string,
 ) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return r.setKnowledgeTagsInTx(ctx, tx, knowledgeID, tagIDs, nil)
-	}, knowledgeDisplayWriteOptions(r.db))
+	return retryKnowledgeTagWrite(ctx, r.db, func() error {
+		return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			return r.setKnowledgeTagsInTx(ctx, tx, knowledgeID, tagIDs, nil)
+		}, knowledgeDisplayWriteOptions(r.db))
+	})
 }
 
 // SetKnowledgeTagsBatch rechecks each preflighted binding under its document
