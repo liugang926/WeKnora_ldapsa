@@ -148,8 +148,14 @@ func (r *knowledgeRepository) SettleWikiPendingOp(
 func (s *KnowledgeInputProvenanceStore) LoadKnowledgeOriginalInput(
 	ctx context.Context, tenant uint64, kb, id string,
 ) (*types.KnowledgeBuildInputProof, error) {
+	return loadKnowledgeOriginalInput(s.db.WithContext(ctx), tenant, kb, id)
+}
+
+func loadKnowledgeOriginalInput(
+	query *gorm.DB, tenant uint64, kb, id string,
+) (*types.KnowledgeBuildInputProof, error) {
 	var a knowledgeInputAdmission
-	err := s.db.WithContext(ctx).Table("knowledge_input_admissions AS a").Select("a.*").
+	err := query.Table("knowledge_input_admissions AS a").Select("a.*").
 		Joins("JOIN knowledge_input_material_receipts r ON r.admission_id=a.admission_id "+
 			"AND r.row_kind='knowledge' AND r.row_id=a.knowledge_id").
 		Where("a.tenant_id=? AND a.knowledge_base_id=? AND a.knowledge_id=?", tenant, kb, id).Take(&a).Error

@@ -3411,14 +3411,20 @@ func (s *knowledgeService) reparseKnowledge(
 	if err != nil {
 		return nil, err
 	}
-	originalInput, err := s.admitDingTalkLocalReparseInput(ctx, existing, kb, processOverrides)
+	var originalInput *types.KnowledgeBuildInputProof
+	switch existing.Channel {
+	case types.ConnectorTypeNextcloudWebDAV:
+		originalInput, err = s.prepareWebDAVReparseInput(ctx, existing, kb, processOverrides)
+	case types.ConnectorTypeDingTalk:
+		originalInput, err = s.admitDingTalkLocalReparseInput(ctx, existing, kb, processOverrides)
+	}
 	if err != nil {
 		return nil, err
 	}
 	if originalInput != nil {
 		ctx = repository.WithKnowledgeBuildInputProof(ctx, s.knowledgeInputs, originalInput)
 	}
-	if originalInput != nil {
+	if existing.Channel == types.ConnectorTypeDingTalk && originalInput != nil {
 		defer func() {
 			if retErr != nil {
 				if store, ok := s.knowledgeInputs.(dingTalkRecoveryStore); ok {
