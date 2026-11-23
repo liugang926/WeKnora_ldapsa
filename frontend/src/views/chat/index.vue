@@ -105,7 +105,7 @@
                     -->
                         <div v-for="(session, index) in messagesList"
                             :key="session.id || `${session.role}-${session.created_at}-${index}`" class="msg-item-wrapper"
-                            :class="{ 'is-steer-prefix': session.steerForked, 'is-empty-segment': session.role === 'assistant' && !shouldRenderAssistantMessage(session) }">
+                            :class="{ 'is-steer-prefix': session.steerForked, 'is-empty-segment': session.role === 'assistant' && !session.historyStreamUnavailable && !shouldRenderAssistantMessage(session) }">
                             <MessageTimestamp v-if="shouldShowConversationTimestamp(messagesList, index)"
                                 :value="session.created_at" />
 
@@ -125,9 +125,12 @@
                                     @rewind="handleRewind">
                                 </usermsg>
                             </div>
-                            <div v-if="session.role == 'assistant' && shouldRenderAssistantMessage(session)"
+                            <div v-if="session.role == 'assistant' && (session.historyStreamUnavailable || shouldRenderAssistantMessage(session))"
                                 class="message-row"
                                 :data-message-id="session.id || undefined">
+                                <span v-if="session.historyStreamUnavailable && !session.content && !session.agentEventStream?.length">
+                                    {{ t('chat.noAnswerContent') }}
+                                </span>
                                 <botmsg :content="session.content" :session="session" :session-id="session_id"
                                     :user-query="getUserQuery(index)" @scroll-bottom="scrollToBottom"
                                     :isFirstEnter="isFirstEnter" :embeddedMode="embeddedMode"
@@ -1065,7 +1068,9 @@ const fetchMessageList = (data) => getMessageList(data);
 const hydrateSteerQueue = async ({ onlyWhenLive = false } = {}) => {
     if (!session_id.value) return;
     try {
-        const res = await listSteerSession(session_id.value);
+        const targetSession = session_id.value;
+        const res = await listSteerSession(targetSession);
+        if (session_id.value !== targetSession) return;
         if (onlyWhenLive && !res?.assistant_message_id) return;
         const items = Array.isArray(res?.items) ? res.items : [];
         steerQueue.value = items.map((item) => ({
@@ -1078,6 +1083,7 @@ const hydrateSteerQueue = async ({ onlyWhenLive = false } = {}) => {
         for (const item of steerQueue.value) {
             if (item.delivery === 'inject') previewSteerMessage(messagesList, item);
         }
+        if (res?.success === true) return res.assistant_message_id || '';
     } catch (e) {
         console.warn('[Steer] Failed to restore queue:', e);
     }
@@ -1117,9 +1123,12 @@ const {
                 void loadFollowUpSuggestions(message, false);
             }
         }
+        const historySession = session_id.value;
+        let liveAssistantId;
         if (!steerQueue.value.length) {
-            await hydrateSteerQueue();
+            liveAssistantId = await hydrateSteerQueue();
         }
+        if (session_id.value !== historySession) return;
         // Resume the trailing *assistant*, not simply the last row: a turn
         // that absorbed a mid-run message ends with the injected user bubble
         // in some orderings, and keying off that row would skip the resume
@@ -1136,7 +1145,7 @@ const {
         if (!props.embeddedMode && !locallyRunning && !lastMessage) {
             sessionActivity.update(activitySessionId.value, false);
         }
-        if (lastMessage) {
+        if (lastMessage && !locallyRunning && !isStreaming.value) {
             isReplying.value = true;
             // Such a turn renders as several assistant segments; only the
             // persisted id addresses the row continue-stream and stop
@@ -1147,18 +1156,36 @@ const {
             // Only IM-originated replies (channel === 'im') get the quiet poll-to-recover
             // path: their answer is generated on the IM side and never streams through
             // this server, so continue-stream always 404s even though the reply *is*
-            // coming. Web/api replies keep the original behaviour (a real failure to
-            // resume the stream still surfaces as an error) — we don't touch them.
+            // coming. Keep that polling path separate from web history recovery.
             isAttachingImStream.value = lastMessage.channel === 'im';
-            await startStream({
-                session_id: session_id.value,
+            // Use the default replay retention as a conservative startup grace period.
+            // Still try the buffer even for old rows: a long-running turn can have events.
+            const lastUpdate = Date.parse(lastMessage.updated_at || lastMessage.created_at);
+            const idleHistory = liveAssistantId === '' && Date.now() - lastUpdate > 60 * 60 * 1000;
+            const recovery = lastMessage.channel === 'web' ? (idleHistory ? 'idle' : 'pending') : undefined;
+            const result = await startStream({
+                session_id: historySession,
                 query: resumeId,
                 method: 'GET',
                 url: '/api/v1/sessions/continue-stream',
-            });
+            }, recovery);
+            if (result === 'history-unavailable' && session_id.value === historySession &&
+                currentAssistantMessageId.value === resumeId) {
+                // Settle only this view of the history row. Preserve its saved text and
+                // steps and avoid trying the same empty buffer when paginating.
+                lastMessage.historyStreamUnavailable = true;
+                lastMessage.is_completed = true;
+                lastMessage.suggestionSet = null;
+                currentAssistantMessageId.value = '';
+                loading.value = false;
+                isReplying.value = false;
+            }
             // On success the stream resumed normally; on failure the error watcher
             // already took over (quiet recovery for IM), so only clear the flag here.
-            if (!error.value) isAttachingImStream.value = false;
+            if (!error.value && session_id.value === historySession &&
+                (!currentAssistantMessageId.value || currentAssistantMessageId.value === resumeId)) {
+                isAttachingImStream.value = false;
+            }
         }
     },
     onAgentQuery: (data, existingMessage) => {
