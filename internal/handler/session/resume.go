@@ -102,7 +102,7 @@ func (h *Handler) awaitSuspendedRunSettled(
 		if err != nil {
 			return fmt.Errorf("load assistant message: %w", err)
 		}
-		if msg == nil || msg.IsCompleted {
+		if msg == nil || msg.IsCompleted || msg.AgentGenerationFailed() {
 			return fmt.Errorf("assistant message is no longer open")
 		}
 		if msg.RunState != types.MessageRunStateAwaitingInput &&

@@ -272,7 +272,8 @@ func (s *AutomationService) closeAbandonedMessage(ctx context.Context, run *type
 		return
 	}
 	msg, err := s.messages.GetMessage(ctx, run.SessionID, run.AssistantMessageID)
-	if err != nil || msg == nil || msg.IsCompleted || msg.RunState == types.MessageRunStateAwaitingInput {
+	if err != nil || msg == nil || msg.IsCompleted || msg.AgentGenerationFailed() ||
+		msg.RunState == types.MessageRunStateAwaitingInput {
 		return
 	}
 	msg.IsCompleted, msg.UpdatedAt = true, s.now()

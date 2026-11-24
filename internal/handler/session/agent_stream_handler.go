@@ -72,6 +72,8 @@ type AgentStreamHandler struct {
 	answerSegments  []*answerSegment     // Per-answer-event-ID accumulation, so superseded preambles can be dropped
 	eventStartTimes map[string]time.Time // Track start time for duration calculation
 	mu              sync.Mutex
+	errorMu         sync.Mutex
+	errorSent       bool
 }
 
 // answerSegment accumulates the streamed content of a single final-answer event
@@ -849,6 +851,12 @@ func (h *AgentStreamHandler) handleError(ctx context.Context, evt event.Event) e
 		return types.ErrSourceLineageUnknown
 	}
 
+	// The engine and the request handler can both report the same failure.
+	h.errorMu.Lock()
+	defer h.errorMu.Unlock()
+	if h.errorSent {
+		return nil
+	}
 	// Provider errors and stage metadata can contain source text or secrets.
 	// This code-origin control neither authenticates the failed assistant nor
 	// certifies a source lineage, and is bound to this handler's exact run.
@@ -861,7 +869,9 @@ func (h *AgentStreamHandler) handleError(ctx context.Context, evt event.Event) e
 		Data:      map[string]interface{}{"error_code": "generation_failed"},
 	}); err != nil {
 		logger.GetLogger(h.ctx).Error("Append error event to stream failed", "error", err)
+		return err
 	}
+	h.errorSent = true
 
 	return nil
 }

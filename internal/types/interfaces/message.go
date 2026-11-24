@@ -78,6 +78,12 @@ type MessageService interface {
 	) (*types.ArtifactDeleteResult, error)
 }
 
+// AgentFailureRecorder records only the outcome of an exact, previously
+// admitted assistant request. Generated text is deliberately not an argument.
+type AgentFailureRecorder interface {
+	MarkAgentReplyFailed(ctx context.Context, sessionID, messageID, requestID string) error
+}
+
 // MessageRepository defines the message repository interface
 type MessageRepository interface {
 	// CreateMessage creates a message

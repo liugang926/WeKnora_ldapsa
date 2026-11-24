@@ -93,9 +93,17 @@ func NewMessageHandler(
 // already scoped to the caller's session.
 func (h *MessageHandler) attachPendingPrompts(ctx context.Context, sessionID string, messages []*types.Message) {
 	ids := make([]string, 0, len(messages))
+	eligible := make([]*types.Message, 0, len(messages))
 	for _, m := range messages {
-		ids = append(ids, m.ID)
+		if !m.AgentGenerationFailed() {
+			eligible = append(eligible, m)
+			ids = append(ids, m.ID)
+		}
 	}
+	if len(eligible) == 0 {
+		return
+	}
+	messages = eligible
 	if h.CollaborationStatuses != nil {
 		if rows, err := h.CollaborationStatuses(ctx, sessionID, ids); err == nil {
 			for _, m := range messages {
