@@ -49,7 +49,9 @@ func TestDataSchemaRegisteredSnapshotAndAccess(t *testing.T) {
 			registry.RegisterTool(schema)
 			registry.SetRAGChunkSnapshotReader(read.snapshotReader)
 			ctx := types.WithRAGSourceLineage(t.Context(), turn)
-			result, err := registry.ExecuteToolWithSourceLineage(ctx, ToolDataSchema, json.RawMessage(`{"knowledge_id":"doc"}`))
+			result, err := registry.ExecuteToolWithSourceLineage(
+				ctx, ToolDataSchema, json.RawMessage(`{"knowledge_id":"doc"}`),
+			)
 			switch scenario {
 			case "allowed", "workspace_authority":
 				require.NoError(t, err)

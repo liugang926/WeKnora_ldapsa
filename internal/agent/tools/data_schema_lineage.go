@@ -80,7 +80,8 @@ func (t *DataSchemaTool) ExecuteSourceLineage(
 
 func validateSchemaChunk(snapshot types.RAGChunkInputSnapshot, _ *types.SourceLineage, requireComplete bool) error {
 	chunk := snapshot.Chunk
-	if chunk == nil || (chunk.ChunkType != types.ChunkTypeTableSummary && chunk.ChunkType != types.ChunkTypeTableColumn) {
+	if chunk == nil ||
+		(chunk.ChunkType != types.ChunkTypeTableSummary && chunk.ChunkType != types.ChunkTypeTableColumn) {
 		return ErrToolSourceLineageUnavailable
 	}
 	// Recheck the listing's eligibility on the hydrated row as a reindex may

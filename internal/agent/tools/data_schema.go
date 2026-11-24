@@ -40,6 +40,7 @@ func (t *DataSchemaTool) WithSearchTargets(searchTargets types.SearchTargets) *D
 	return t
 }
 
+// NewDataSchemaTool creates a tool for reading a document's table structure.
 func NewDataSchemaTool(
 	knowledgeService interfaces.KnowledgeService,
 	chunkRepo interfaces.ChunkRepository,
