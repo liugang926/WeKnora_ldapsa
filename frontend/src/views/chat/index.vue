@@ -259,7 +259,7 @@ import { questionOriginFromSuggestion } from '@/utils/questionOrigin';
 import { deleteTemporaryAttachment, uploadTemporaryAttachment } from '@/api/chat/temporary-attachments';
 import { useStream } from '../../api/chat/streame'
 import { listSteerSession, promoteSteerSession, removeSteerSession, steerSession } from '@/api/chat/steer';
-import { persistedAssistantId, previewSteerMessage, discardSteerPreview, reconcileSteerMessageId } from '@/utils/steerStreamFork';
+import { findHistoryStreamTarget, persistedAssistantId, previewSteerMessage, discardSteerPreview, reconcileSteerMessageId } from '@/utils/steerStreamFork';
 import { resumeSuspendedRunKey } from '@/utils/suspendedRun';
 import { useMenuStore } from '@/stores/menu';
 import { useSettingsStore } from '@/stores/settings';
@@ -891,7 +891,7 @@ const loadFollowUpSuggestions = async (message, ensure = false, regenerate = fal
     const messageId = resolveAssistantMessageId(message);
     const targetSessionId = session_id.value;
     if (!messageId || !targetSessionId || message.suggestionsDismissed) return;
-    if (isAwaitingInput(message)) return;
+    if (isAwaitingInput(message) || message.run_state === 'failed') return;
     message.suggestionLoading = true;
     try {
         let response = ensure
@@ -1133,9 +1133,7 @@ const {
         // that absorbed a mid-run message ends with the injected user bubble
         // in some orderings, and keying off that row would skip the resume
         // entirely, leaving a running agent with no visible output.
-        const lastMessage = findLastMessage(
-            (message) => message.role === 'assistant' && !message.is_completed
-        );
+        const lastMessage = findHistoryStreamTarget(messagesList, { liveAssistantId });
         const locallyRunning = isReplying.value || isImRecovering.value;
         // History reload can finish after sendMsg already marked this session
         // running. Do not clear that marker just because the snapshot's last
@@ -1509,9 +1507,7 @@ const attachSteerFollowUp = async (completedAssistantId) => {
             const res = await getMessageList({ session_id: sessionId, limit: 30, created_at: '' });
             if (sessionChanged()) return;
             const batch = res?.data || [];
-            const newAssistant = [...batch].reverse().find((m) =>
-                m.role === 'assistant' && !m.is_completed && !isAwaitingInput(m) && m.id && m.id !== completedAssistantId
-            );
+            const newAssistant = findHistoryStreamTarget(batch, { afterAssistantId: completedAssistantId });
             if (newAssistant) {
                 // The follow-up run persists its query under its own
                 // request_id, so the new user rows are identified exactly.
@@ -1798,7 +1794,8 @@ const recoverIncompleteMessage = () => {
         try {
             const res = await getMessageList({ session_id: targetSession, limit: limit.value, created_at: '' });
             const target = (res?.data || []).find((m) => m.id === targetMessageId);
-            if (target && target.is_completed) {
+            if (session_id.value !== targetSession || currentAssistantMessageId.value !== targetMessageId) return;
+            if (target && (target.is_completed || target.run_state === 'failed')) {
                 created_at.value = '';
                 messagesList.splice(0);
                 getmsgList({ session_id: targetSession, limit: limit.value, created_at: '' });
@@ -1902,7 +1899,7 @@ watch(error, (newError) => {
     currentAssistantMessageId.value = '';
 });
 
-onChunk((data) => {
+onChunk((data, postedAgentRequestId) => {
     if (data.response_type === 'session_title') {
         const title = data.content || data.data?.title;
         if (title && data.data?.session_id) {
@@ -1919,7 +1916,7 @@ onChunk((data) => {
         }
         return;
     }
-    processStreamChunk(data);
+    processStreamChunk(data, postedAgentRequestId);
 });
 
 const handleSessionMutation = (event) => {

@@ -150,7 +150,8 @@ func (r *messageRepository) SessionHasIncompleteAssistant(
 	var id string
 	err := r.db.WithContext(ctx).Model(&types.Message{}).
 		Select("id").
-		Where("session_id = ? AND role = ? AND is_completed = ?", sessionID, "assistant", false).
+		Where("session_id = ? AND role = ? AND is_completed = ? AND COALESCE(run_state, '') <> ?",
+			sessionID, "assistant", false, types.MessageRunStateFailed).
 		Limit(1).
 		Scan(&id).Error
 	if err != nil {

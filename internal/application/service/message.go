@@ -81,7 +81,18 @@ func (
 	// Session ownership/tenant scope is the WeKnora read boundary. Nextcloud
 	// receipts remain lifecycle evidence and do not filter saved conversation
 	// history.
-	return rawUserContentOnly(messages), nil
+	rows := rawUserContentOnly(messages)
+	for i, m := range rows {
+		if m.AgentGenerationFailed() {
+			// A failed turn has no published answer. Return only the identity
+			// and terminal state, even if an earlier segment stored steps.
+			rows[i] = &types.Message{
+				ID: m.ID, SessionID: m.SessionID, RequestID: m.RequestID,
+				Role: m.Role, RunState: m.RunState, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt,
+			}
+		}
+	}
+	return rows, nil
 }
 
 // sessionTenantIDForLookup returns the tenant ID to use for session lookup.
@@ -236,6 +247,7 @@ func (s *messageService) GetMessageForControl(
 		RequestID:     message.RequestID,
 		Role:          message.Role,
 		IsCompleted:   message.IsCompleted,
+		RunState:      message.RunState,
 		AgentID:       message.AgentID,
 		AgentTenantID: message.AgentTenantID,
 	}, nil
@@ -381,6 +393,15 @@ func (s *messageService) GetMessagesBySessionBeforeTime(ctx context.Context,
 		return nil, err
 	}
 	return s.clarifyReadArtifactVersions(ctx, sessionID, messages), nil
+}
+
+// MarkAgentReplyFailed delegates the exact owner-scoped terminal transition.
+func (s *messageService) MarkAgentReplyFailed(ctx context.Context, sessionID, messageID, requestID string) error {
+	recorder, ok := s.messageRepo.(interfaces.AgentFailureRecorder)
+	if !ok {
+		return access.ErrNextcloudPublicationUnavailable
+	}
+	return recorder.MarkAgentReplyFailed(ctx, sessionID, messageID, requestID)
 }
 
 // UpdateMessage updates an existing message's content or metadata

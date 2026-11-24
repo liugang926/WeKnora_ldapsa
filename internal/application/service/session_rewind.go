@@ -649,7 +649,7 @@ func (s *SessionRewindService) rejectIfIncompleteTurn(ctx context.Context, sessi
 		return fmt.Errorf("session rewind: check incomplete turn: %w", err)
 	}
 	for _, msg := range msgs {
-		if msg != nil && msg.Role == "assistant" && !msg.IsCompleted {
+		if msg != nil && msg.Role == "assistant" && !msg.IsCompleted && !msg.AgentGenerationFailed() {
 			return ErrRewindSourceBusy
 		}
 	}

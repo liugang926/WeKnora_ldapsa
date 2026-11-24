@@ -1,5 +1,6 @@
 <template>
-  <div ref="rootElement" class="agent-stream-display" :class="{ 'is-embedded': embeddedMode, 'is-rag-mode': ragMode, 'is-steer-prefix': session?.steerForked }">
+  <p v-if="session.run_state === 'failed'" class="generation-failure" role="status">{{ t('chat.generationFailed') }}</p>
+  <div v-else ref="rootElement" class="agent-stream-display" :class="{ 'is-embedded': embeddedMode, 'is-rag-mode': ragMode, 'is-steer-prefix': session?.steerForked }">
 
     <t-drawer v-if="selectedChild && !childAgentTabs" attach="body" :close-btn="true" :z-index="2000" :visible="true" :header="selectedChild.displayName" size="min(680px, 95vw)" :footer="false" @close="selectedChildId = ''">
       <ChildAgentStream :key="selectedChild.id + ':' + selectedChild.runId" :task="selectedChild" />
@@ -3509,6 +3510,8 @@ const handleAddToKnowledge = (answerEvent: any) => {
 @import '../../../components/css/chat-message-shared.less';
 @import '../../../components/css/chat-citations.less';
 @import '../../../components/css/chat-timeline-loading.less';
+
+.generation-failure { margin: 0; color: var(--td-error-color); }
 
 .agent-stream-display {
   display: flex;

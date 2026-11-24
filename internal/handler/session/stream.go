@@ -152,6 +152,11 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 		return
 	}
 
+	if message.AgentGenerationFailed() {
+		setSSEHeaders(c)
+		emitSafeTerminalGenerationError(c, message.RequestID)
+		return
+	}
 	if message.IsCompleted {
 		// The metadata probe may have observed the last running moment. Retry
 		// after completion without authorizing its cached frames from row lineage.
@@ -519,8 +524,8 @@ func (h *Handler) StopSession(c *gin.Context) {
 		}
 	}
 
-	// Check if message is already completed (stopped)
-	if message.IsCompleted {
+	// A terminal run cannot accept a later stop event.
+	if message.IsCompleted || message.AgentGenerationFailed() {
 		logger.Infof(ctx, "Message %s is already completed, no need to stop", assistantMessageID)
 		c.JSON(200, gin.H{
 			"success": true,

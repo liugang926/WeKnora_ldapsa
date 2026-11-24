@@ -5440,6 +5440,7 @@ export default {
     wikiAffectedCount: 'Ссылки на {count} страницах обновлены',
     processError: 'Ошибка обработки',
     sessionExcerpt: 'Выдержка из сессии',
+    generationFailed: 'Не удалось сформировать ответ. Вы можете задать вопрос ещё раз.',
     noAnswerContent: '(Нет содержимого ответа)',
     manualSourcesHeading: 'Источники',
     noMatchFound: 'Совпадений не найдено',

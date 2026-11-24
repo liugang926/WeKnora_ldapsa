@@ -711,6 +711,15 @@ func (m *Message) BeforeCreate(tx *gorm.DB) (err error) {
 // suspended on an agent prompt and will resume once the user answers.
 const MessageRunStateAwaitingInput = "awaiting_input"
 
+// MessageRunStateFailed is terminal. IsCompleted remains false because no
+// successful assistant answer was produced or admitted for replay.
+const MessageRunStateFailed = "failed"
+
+// AgentGenerationFailed reports a terminal agent error without a completed answer.
+func (m *Message) AgentGenerationFailed() bool {
+	return m != nil && m.Role == "assistant" && !m.IsCompleted && m.RunState == MessageRunStateFailed
+}
+
 // MessageSearchMode represents the search mode for message search
 type MessageSearchMode string
 

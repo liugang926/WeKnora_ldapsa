@@ -28,6 +28,11 @@ func (s *messageService) BeginCompletedMessageMaterialReplay(
 	if err := s.checkAutomationStreamControl(ctx, control); err != nil {
 		return nil, nil, nil, err
 	}
+	if control.AgentGenerationFailed() {
+		// The sender can emit a fixed failure notice using this owner-checked
+		// identity alone. It must never replay cached output from this run.
+		return control, nil, nil, nil
+	}
 	complete, err := s.materialStore.MessageCompletionControl(ctx, sessionID, messageID)
 	if err != nil {
 		return nil, nil, nil, err

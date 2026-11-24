@@ -20,7 +20,7 @@ import (
 )
 
 func TestIMRealMessageProducerBothOutputPaths(t *testing.T) {
-	for _, fault := range []string{"none", "unknown", "revoked"} {
+	for _, fault := range []string{"none", "unknown", "revoked", "execution"} {
 		for _, stream := range []bool{false, true} {
 			t.Run(map[bool]string{false: "plain", true: "stream"}[stream]+fault, func(t *testing.T) {
 				db, messages := newIMPublicationMessages(t)
@@ -61,6 +61,14 @@ func TestIMRealMessageProducerBothOutputPaths(t *testing.T) {
 							bus *event.EventBus,
 						) error {
 							lineage, _ := types.NewCompleteSourceLineage()
+							if fault == "execution" {
+								// The producer can emit Complete while unwinding, then fail.
+								_ = bus.Emit(ctx, event.Event{
+									Type: event.EventAgentComplete, SourceLineage: lineage,
+									Data: event.AgentCompleteData{FinalAnswer: "intermediate private draft"},
+								})
+								return errors.New("internal tool failure")
+							}
 							if fault == "unknown" {
 								lineage = types.UnknownSourceLineage()
 							}
@@ -131,9 +139,14 @@ func TestIMRealMessageProducerBothOutputPaths(t *testing.T) {
 							"key",
 							nil)
 						if fault != "none" {
-							updates, final, _ := adapter.snapshot()
+							updates, final, ended := adapter.snapshot()
 							require.Empty(t, updates)
-							require.Empty(t, final)
+							if fault != "revoked" {
+								require.Equal(t, imErrorFallback, final)
+								require.True(t, ended)
+							} else {
+								require.Empty(t, final)
+							}
 						}
 					} else {
 						answer, e := svc.runQA(ownedCtx, session, "fixture question", agent, nil, nil, nil, "key", nil)
@@ -152,7 +165,23 @@ func TestIMRealMessageProducerBothOutputPaths(t *testing.T) {
 						require.NotEmpty(t, boundMessage)
 					}
 					if fault != "none" {
-						require.Error(t, runErr)
+						if stream && fault != "revoked" {
+							require.NoError(t, runErr) // failure control delivered
+						} else {
+							require.Error(t, runErr)
+						}
+						var failed types.Message
+						require.NoError(t, db.First(&failed, "id = ?", boundMessage).Error)
+						if fault == "revoked" {
+							// The channel lost its write grant before finalization.
+							require.Empty(t, failed.RunState)
+						} else {
+							require.Equal(t, types.MessageRunStateFailed, failed.RunState)
+						}
+						require.False(t, failed.IsCompleted)
+						require.Empty(t, failed.Content)
+						require.Empty(t, failed.AgentSteps)
+						require.Empty(t, failed.KnowledgeReferences)
 						return
 					}
 					require.NoError(t, runErr)

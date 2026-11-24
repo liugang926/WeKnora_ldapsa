@@ -388,7 +388,18 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
     }
   }
 
+  // is_completed drives the local spinner and history resume. A failed row
+  // remains unsuccessful on the wire, but it has no stream left to follow.
+  const settleFailedGeneration = (message: ChatMessage) => {
+    message.run_state = 'failed'
+    message.is_completed = true
+    message.isAgentMode = true
+    message.thinking = false
+    message.artifactsCollecting = false
+  }
+
   const shouldRenderAssistantMessage = (session: ChatMessage) => {
+    if (session?.run_state === 'failed') return !session.steerForked
     if (!session?.isAgentMode) return true
     if (!session.is_completed) return true
     if (session.collaborationStatus?.tasks.length) return true
@@ -630,6 +641,12 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
       if (item.collaboration_status) item.collaborationStatus = item.collaboration_status
       if (item.id && existingIds.has(item.id)) continue
       if (item.id) existingIds.add(item.id)
+
+      if (item.role === 'assistant' && item.run_state === 'failed') {
+        settleFailedGeneration(item)
+        processed.push(item)
+        continue
+      }
 
       item.isAgentMode = false
       if (item.collaborationStatus) {
@@ -1551,7 +1568,41 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
     scrollToBottom()
   }
 
-  const processStreamChunk = (data: ChatMessage) => {
+  const processStreamChunk = (data: ChatMessage, postedAgentRequestId?: string) => {
+    if (data.response_type === 'error' && (data.data as ChatMessage | undefined)?.error_code === 'generation_failed') {
+      const ownPost = !!postedAgentRequestId && data.id === postedAgentRequestId
+      let message = findLastMessage(item =>
+        item.role === 'assistant' && Boolean(data.id || data.assistant_message_id) &&
+        (!data.id || item.request_id === data.id || item.id === data.id) &&
+        (!data.assistant_message_id || persistedAssistantId(item) === data.assistant_message_id),
+      )
+      // Quick-answer mode has its own persisted failure/complete sequence.
+      if (ownPost || (!message?.isRagMode && (message?.isAgentMode || isAgentStreamSession()))) {
+        // The server may discard a whole batch on failure, including the
+        // opening agent_query. Only the identified outgoing POST owns this row.
+        if (!message && ownPost && !currentAssistantMessageId.value) {
+          message = { id: data.assistant_message_id || data.id, request_id: data.id, role: 'assistant', content: '' }
+          messagesList.push(message)
+          emitMessageCreated(message)
+        }
+        if (!message || message.is_completed) return
+        const isActive = ownPost || (currentAssistantMessageId.value
+          ? currentAssistantMessageId.value === persistedAssistantId(message)
+          : message === getTrailingIncompleteAssistant())
+        settleFailedGeneration(message)
+        if (data.id) replaySegments.delete(String(data.id))
+        if (isActive) {
+          loading.value = false
+          isReplying.value = false
+          fullContent.value = ''
+          currentAssistantMessageId.value = ''
+          emitMessageUpdated(message, { is_completed: true })
+          scrollToBottom()
+        }
+        return
+      }
+    }
+
     log('[Agent Event Received]', {
       response_type: data.response_type,
       id: data.id,

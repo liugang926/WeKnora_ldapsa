@@ -5407,6 +5407,7 @@ export default {
     wikiAffectedCount: '{count} 個頁面的連結已更新',
     processError: '處理出錯',
     sessionExcerpt: '會話摘錄',
+    generationFailed: '回覆產生失敗，可以重新提問。',
     noAnswerContent: '（無回答內容）',
     manualSourcesHeading: '參考來源',
     noMatchFound: '未找到比對的內容',

@@ -42,7 +42,7 @@ test('resume and stop address the persisted assistant id, not a fork id', () => 
   // An injected user row can be the last entry in the list. Keying the resume
   // off the tail row would then skip continue-stream and the still-running
   // agent would produce nothing visible.
-  assert.match(hook, /findLastMessage\(\s*\(message\) => message\.role === 'assistant' && !message\.is_completed\s*\)/)
+  assert.match(hook, /findHistoryStreamTarget\(messagesList, \{ liveAssistantId \}\)/)
   assert.doesNotMatch(hook, /messagesList\[messagesList\.length - 1\]/)
 })
 

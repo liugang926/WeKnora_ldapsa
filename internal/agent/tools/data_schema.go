@@ -13,8 +13,7 @@ import (
 var dataSchemaTool = BaseTool{
 	name: ToolDataSchema,
 	description: "Use this tool to get the schema information of a CSV or Excel file loaded into DuckDB. " +
-		"It returns the columns and row count. When querying the document with data_analysis, " +
-		"reference it as the table \"" + DataAnalysisTableName + "\".",
+		"It returns the stored table summary and column descriptions.",
 	schema: utils.GenerateSchema[DataSchemaInput](),
 }
 
@@ -26,6 +25,7 @@ type DataSchemaTool struct {
 	BaseTool
 	knowledgeService interfaces.KnowledgeService
 	chunkRepo        interfaces.ChunkRepository
+	snapshotReader   interfaces.RAGChunkSnapshotReader
 	targetChunkTypes []types.ChunkType
 	searchTargets    types.SearchTargets
 	scopeEnforced    bool
@@ -40,7 +40,12 @@ func (t *DataSchemaTool) WithSearchTargets(searchTargets types.SearchTargets) *D
 	return t
 }
 
-func NewDataSchemaTool(knowledgeService interfaces.KnowledgeService, chunkRepo interfaces.ChunkRepository, targetChunkTypes ...types.ChunkType) *DataSchemaTool {
+// NewDataSchemaTool creates a tool for reading a document's table structure.
+func NewDataSchemaTool(
+	knowledgeService interfaces.KnowledgeService,
+	chunkRepo interfaces.ChunkRepository,
+	targetChunkTypes ...types.ChunkType,
+) *DataSchemaTool {
 	if len(targetChunkTypes) == 0 {
 		targetChunkTypes = []types.ChunkType{types.ChunkTypeTableSummary, types.ChunkTypeTableColumn}
 	}
@@ -80,28 +85,7 @@ func (t *DataSchemaTool) Execute(ctx context.Context, args json.RawMessage) (*ty
 		}, err
 	}
 
-	// Get chunks for the knowledge ID using ChunkRepository
-	// We only need table summary and column chunks
-	chunkTypes := t.targetChunkTypes
-	page := &types.Pagination{
-		Page:     1,
-		PageSize: 100, // Should be enough for schema chunks
-	}
-	enabled := true
-
-	chunks, _, err := t.chunkRepo.ListPagedChunksByKnowledgeID(
-		ctx,
-		knowledge.TenantID,
-		input.KnowledgeID,
-		page,
-		chunkTypes,
-		nil, // tagIDs
-		"",  // keyword
-		"",  // searchField
-		"",  // sortOrder
-		"",  // knowledgeType
-		&enabled,
-	)
+	chunks, _, err := t.listSchemaChunks(ctx, knowledge)
 	if err != nil {
 		return &types.ToolResult{
 			Success: false,
@@ -109,6 +93,23 @@ func (t *DataSchemaTool) Execute(ctx context.Context, args json.RawMessage) (*ty
 		}, err
 	}
 
+	result := tableSchemaResult(input.KnowledgeID, chunks)
+	if !result.Success {
+		return result, fmt.Errorf("no schema info found")
+	}
+	result.Output += fmt.Sprintf("\n\nQuery this document with data_analysis as the table %q.", DataAnalysisTableName)
+	return result, nil
+}
+
+func (t *DataSchemaTool) listSchemaChunks(ctx context.Context, k *types.Knowledge) ([]*types.Chunk, int64, error) {
+	enabled := true
+	return t.chunkRepo.ListPagedChunksByKnowledgeID(
+		ctx, k.TenantID, k.ID, &types.Pagination{Page: 1, PageSize: 100}, t.targetChunkTypes,
+		nil, "", "", "", "", &enabled,
+	)
+}
+
+func tableSchemaResult(knowledgeID string, chunks []*types.Chunk) *types.ToolResult {
 	var summaryContent, columnContent string
 	for _, chunk := range chunks {
 		if chunk.ChunkType == types.ChunkTypeTableSummary {
@@ -121,21 +122,16 @@ func (t *DataSchemaTool) Execute(ctx context.Context, args json.RawMessage) (*ty
 	if summaryContent == "" || columnContent == "" {
 		return &types.ToolResult{
 			Success: false,
-			Error:   fmt.Sprintf("No table schema information found for knowledge ID '%s'", input.KnowledgeID),
-		}, fmt.Errorf("no schema info found")
+			Error:   fmt.Sprintf("No table schema information found for knowledge ID '%s'", knowledgeID),
+		}
 	}
-
-	output := fmt.Sprintf(
-		"%s\n\n%s\n\nQuery this document with data_analysis as the table %q.",
-		summaryContent, columnContent, DataAnalysisTableName,
-	)
 
 	return &types.ToolResult{
 		Success: true,
-		Output:  output,
+		Output:  summaryContent + "\n\n" + columnContent,
 		Data: map[string]interface{}{
 			"summary": summaryContent,
 			"columns": columnContent,
 		},
-	}, nil
+	}
 }

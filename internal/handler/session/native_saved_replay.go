@@ -45,6 +45,11 @@ func (h *Handler) tryNativeSavedReplay(
 	if message == nil {
 		return false
 	}
+	if message.AgentGenerationFailed() && message.ID == messageID && message.SessionID == sessionID {
+		setSSEHeaders(c)
+		emitSafeTerminalGenerationError(c, message.RequestID)
+		return true
+	}
 	if check == nil || closeRead == nil || !message.IsCompleted || message.Role != "assistant" ||
 		message.ID != messageID ||
 		message.SessionID != sessionID ||

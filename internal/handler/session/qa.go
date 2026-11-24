@@ -889,7 +889,7 @@ type sseStreamContext struct {
 	releaseTurn func()
 }
 
-// A failed non-cancelled Agent run must remain incomplete. A user-requested
+// A failed Agent run records a terminal failure outside the successful answer path. A user-requested
 // stop still persists the partial turn, matching the existing stop semantics.
 func shouldCompleteAgentTurn(executionFailed bool, contextErr error) bool {
 	return !executionFailed || contextErr != nil
@@ -1770,11 +1770,19 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 				)
 
 				if !shouldCompleteAgentTurn(agentExecutionFailed, streamCtx.asyncCtx.Err()) {
-					logger.Infof(
-						updateCtx,
-						"Agent QA did not complete; retaining assistant message as incomplete for session: %s",
-						sessionID,
-					)
+					// The failed producer may hold unauthorized intermediate data.
+					// Persist only the status, bound to the original request.
+					if recorder, ok := h.messageService.(interfaces.AgentFailureRecorder); ok {
+						if err := recorder.MarkAgentReplyFailed(updateCtx, sessionID,
+							livePublicationMessage.ID, reqCtx.requestID); err != nil {
+							logger.Errorf(updateCtx, "Failed to record terminal agent failure: %v", err)
+						}
+					}
+					if streamCtx.streamHandler != nil {
+						_ = streamCtx.streamHandler.handleError(updateCtx, event.Event{
+							SessionID: sessionID, RequestID: reqCtx.requestID, Data: event.ErrorData{},
+						})
+					}
 				} else {
 					// Claim any follow-up before completing this row. liveAgentRun
 					// treats a completed assistant as idle and would ClearLiveRun
