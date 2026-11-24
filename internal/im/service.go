@@ -2973,7 +2973,9 @@ loop:
 	if activeAgentTurn && finalErr != nil {
 		s.recordIMAgentFailure(qaCtx, useAgent, assistantMsg)
 		if scope, ok := types.IMChannelScopeFromContext(ctx); ok {
-			err := scope.Check(ctx, scope.TenantID, types.GroupResourceTypeAgent, scope.AgentID, types.ResourceActionUse)
+			err := scope.Check(
+				ctx, scope.TenantID, types.GroupResourceTypeAgent, scope.AgentID, types.ResourceActionUse,
+			)
 			if err != nil {
 				return err
 			}
