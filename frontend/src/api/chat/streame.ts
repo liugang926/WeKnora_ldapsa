@@ -112,6 +112,7 @@ export function useStream() {
     // matching on X-Request-ID.
     const sentAt = performance.now();
     const requestID = generateRandomString(12);
+    const postedAgentRequestId = params.method === 'POST' && params.url.endsWith('/agent-chat') ? requestID : undefined;
     let firstAnswerLogged = false;
     let receivedAssistantId = '';
     let receivedTerminal = false;
@@ -292,7 +293,7 @@ export function useStream() {
           buffer.push(parsed); // 数据存入缓冲
           // 执行自定义处理
           if (chunkHandler) {
-            chunkHandler(parsed);
+            chunkHandler(parsed, postedAgentRequestId);
           }
         },
 
@@ -372,9 +373,9 @@ export function useStream() {
     }
   }
 
-  let chunkHandler: ((data: any) => void) | null = null
+  let chunkHandler: ((data: any, postedAgentRequestId?: string) => void) | null = null
   // 注册块处理器
-  const onChunk = (handler: (data: any) => void) => {
+  const onChunk = (handler: (data: any, postedAgentRequestId?: string) => void) => {
     chunkHandler = handler
   }
 

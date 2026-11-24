@@ -5440,6 +5440,7 @@ export default {
     wikiAffectedCount: '{count}개 페이지의 링크가 업데이트되었습니다',
     processError: '처리 오류',
     sessionExcerpt: '대화 발췌',
+    generationFailed: '답변을 생성하지 못했습니다. 다시 질문할 수 있습니다.',
     noAnswerContent: '(답변 내용 없음)',
     manualSourcesHeading: '참고 출처',
     noMatchFound: '일치하는 내용을 찾을 수 없습니다',

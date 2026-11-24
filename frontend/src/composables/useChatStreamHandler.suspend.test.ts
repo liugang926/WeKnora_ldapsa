@@ -46,7 +46,7 @@ function setup() {
     onTurnComplete: (m) => turns.push(m),
     preserveIncompleteStreamReactive: true,
   })
-  return { handler, messagesList, isReplying, currentAssistantMessageId, turns }
+  return { handler, messagesList, loading, isReplying, currentAssistantMessageId, fullContent, turns }
 }
 
 const awaitingRow = () => ({
@@ -443,4 +443,61 @@ test('approval resume keeps updates that arrived while approval was pending', as
   handler.processStreamChunk({ response_type: 'agent_query', id: 'r1', assistant_message_id: 'a1',
     data: { resume_pending_id: 'p1', resume_tool_call_id: 'call-1' } })
   assert.equal(m.agentEventStream.filter((e: any) => e.content === 'another child finished').length, 1)
+})
+
+test('failed history is visible and settled regardless of its wire completion flag', async () => {
+  const { handler, messagesList } = setup()
+  for (const completed of [false, true]) {
+    await handler.handleMsgList([{
+      id: String(completed), role: 'assistant', run_state: 'failed', content: '', is_completed: completed,
+    }])
+  }
+  for (const message of messagesList) {
+    assert.equal(message.is_completed, true)
+    assert.equal(message.run_state, 'failed')
+    assert.equal(handler.shouldRenderAssistantMessage(message), true)
+  }
+  handler.prepareForNewOutgoingMessage()
+  assert.ok(messagesList.every(m => m.run_state === 'failed'))
+})
+
+test('a matched generation failure ends the live turn without publishing an answer or a duplicate', () => {
+  const { handler, messagesList, isReplying, currentAssistantMessageId, fullContent, turns } = setup()
+  handler.processStreamChunk({ response_type: 'agent_query', id: 'r1', assistant_message_id: 'a1' })
+  isReplying.value = true
+  const failure = {
+    response_type: 'error', id: 'r1', content: 'provider diagnostic',
+    done: true, data: { error_code: 'generation_failed' },
+  }
+  handler.processStreamChunk({ ...failure, id: 'unknown' })
+  handler.processStreamChunk({ ...failure, assistant_message_id: 'a2' }, 'r1')
+  assert.equal(isReplying.value, true)
+  assert.equal(currentAssistantMessageId.value, 'a1')
+  handler.processStreamChunk(failure)
+  handler.processStreamChunk(failure)
+  assert.equal(messagesList.length, 1)
+  assert.equal(messagesList[0].run_state, 'failed')
+  assert.equal(messagesList[0].content, '')
+  assert.equal(isReplying.value, false)
+  assert.equal(currentAssistantMessageId.value, '')
+  assert.equal(fullContent.value, '')
+  assert.equal(turns.length, 0)
+  handler.processStreamChunk({ response_type: 'agent_query', id: 'r2', assistant_message_id: 'a2' })
+  isReplying.value = true
+  handler.processStreamChunk(failure)
+  assert.equal(currentAssistantMessageId.value, 'a2')
+  assert.equal(isReplying.value, true)
+})
+
+test('an agent POST can end with a failure before agent_query is delivered', () => {
+  const { handler, messagesList, loading, isReplying } = setup()
+  loading.value = isReplying.value = true
+  const failure = { response_type: 'error', id: 'first', data: { error_code: 'generation_failed' }, done: true }
+  handler.processStreamChunk(failure, 'different-post')
+  assert.equal(messagesList.length, 0)
+  assert.equal(loading.value, true)
+  handler.processStreamChunk(failure, 'first')
+  assert.equal(messagesList[0].run_state, 'failed')
+  assert.equal(loading.value, false)
+  assert.equal(isReplying.value, false)
 })

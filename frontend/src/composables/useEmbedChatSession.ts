@@ -377,7 +377,7 @@ export function useEmbedChatSession(options: {
           options.channelId, options.token, sid, limit.value, undefined, options.sessionSig.value,
         )
         const latest = (res?.data as Record<string, unknown>[] | undefined)?.find((m) => m.id === messageId)
-        if (!latest || latest.is_completed || latest.run_state === 'awaiting_input' || Date.now() > deadline) {
+        if (!latest || latest.is_completed || latest.run_state === 'failed' || latest.run_state === 'awaiting_input' || Date.now() > deadline) {
           resetAndLoad(sid)
           return
         }
@@ -399,7 +399,7 @@ export function useEmbedChatSession(options: {
     }
   })
 
-  onChunk((data) => {
+  onChunk((data, postedAgentRequestId) => {
     if (data.response_type === 'session_title') {
       const title = String(data.content || (data.data as { title?: string })?.title || '').trim()
       if (title) {
@@ -407,7 +407,7 @@ export function useEmbedChatSession(options: {
       }
       return
     }
-    processStreamChunk(data)
+    processStreamChunk(data, postedAgentRequestId)
   })
 
   const resetAndLoad = (sid: string) => {

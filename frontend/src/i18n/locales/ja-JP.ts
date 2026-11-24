@@ -4697,6 +4697,7 @@ export default {
     wikiAffectedCount: '{count}件のページリンクを更新しました',
     processError: '処理エラー',
     sessionExcerpt: 'セッション抜粋',
+    generationFailed: '回答を生成できませんでした。もう一度質問できます。',
     noAnswerContent: '（回答内容なし）',
     manualSourcesHeading: '参照元',
     noMatchFound: '一致する内容が見つかりません',

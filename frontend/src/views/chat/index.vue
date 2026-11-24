@@ -891,7 +891,7 @@ const loadFollowUpSuggestions = async (message, ensure = false, regenerate = fal
     const messageId = resolveAssistantMessageId(message);
     const targetSessionId = session_id.value;
     if (!messageId || !targetSessionId || message.suggestionsDismissed) return;
-    if (isAwaitingInput(message)) return;
+    if (isAwaitingInput(message) || message.run_state === 'failed') return;
     message.suggestionLoading = true;
     try {
         let response = ensure
@@ -1510,7 +1510,7 @@ const attachSteerFollowUp = async (completedAssistantId) => {
             if (sessionChanged()) return;
             const batch = res?.data || [];
             const newAssistant = [...batch].reverse().find((m) =>
-                m.role === 'assistant' && !m.is_completed && !isAwaitingInput(m) && m.id && m.id !== completedAssistantId
+                m.role === 'assistant' && !m.is_completed && m.run_state !== 'failed' && !isAwaitingInput(m) && m.id && m.id !== completedAssistantId
             );
             if (newAssistant) {
                 // The follow-up run persists its query under its own
@@ -1798,7 +1798,8 @@ const recoverIncompleteMessage = () => {
         try {
             const res = await getMessageList({ session_id: targetSession, limit: limit.value, created_at: '' });
             const target = (res?.data || []).find((m) => m.id === targetMessageId);
-            if (target && target.is_completed) {
+            if (session_id.value !== targetSession || currentAssistantMessageId.value !== targetMessageId) return;
+            if (target && (target.is_completed || target.run_state === 'failed')) {
                 created_at.value = '';
                 messagesList.splice(0);
                 getmsgList({ session_id: targetSession, limit: limit.value, created_at: '' });
@@ -1902,7 +1903,7 @@ watch(error, (newError) => {
     currentAssistantMessageId.value = '';
 });
 
-onChunk((data) => {
+onChunk((data, postedAgentRequestId) => {
     if (data.response_type === 'session_title') {
         const title = data.content || data.data?.title;
         if (title && data.data?.session_id) {
@@ -1919,7 +1920,7 @@ onChunk((data) => {
         }
         return;
     }
-    processStreamChunk(data);
+    processStreamChunk(data, postedAgentRequestId);
 });
 
 const handleSessionMutation = (event) => {

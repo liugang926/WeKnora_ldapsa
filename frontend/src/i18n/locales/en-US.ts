@@ -4697,6 +4697,7 @@ export default {
     wikiAffectedCount: '{count} page link(s) updated',
     processError: 'Processing error',
     sessionExcerpt: 'Session Excerpt',
+    generationFailed: 'This reply could not be generated. You can ask again.',
     noAnswerContent: '(No answer content)',
     manualSourcesHeading: 'Sources',
     noMatchFound: 'No matching content found',

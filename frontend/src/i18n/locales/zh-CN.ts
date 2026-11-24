@@ -5478,6 +5478,7 @@ export default {
     wikiAffectedCount: '{count} 个页面的链接已更新',
     processError: '处理出错',
     sessionExcerpt: '会话摘录',
+    generationFailed: '回复生成失败，可以重新提问。',
     noAnswerContent: '（无回答内容）',
     manualSourcesHeading: '参考来源',
     noMatchFound: '未找到匹配的内容',
