@@ -80,9 +80,14 @@ func (t *ReadDocumentTool) ExecuteSourceLineage(ctx context.Context, args json.R
 }
 
 func (t *ReadDocumentTool) hydrateDocumentInputs(
-	ctx context.Context,
-	k *types.Knowledge,
-	chunks []*types.Chunk,
+	ctx context.Context, k *types.Knowledge, chunks []*types.Chunk,
+) (*hydratedDocumentInputs, error) {
+	return t.hydrateChunkProjection(ctx, k, chunks, validateDocumentChunkProjection)
+}
+
+func (t *ReadDocumentTool) hydrateChunkProjection(
+	ctx context.Context, k *types.Knowledge, chunks []*types.Chunk,
+	validate func(types.RAGChunkInputSnapshot, *types.SourceLineage, bool) error,
 ) (out *hydratedDocumentInputs, err error) {
 	capture := documentCaptureFromContext(ctx)
 	turn := types.RAGSourceLineageFromContext(ctx)
@@ -156,7 +161,7 @@ func (t *ReadDocumentTool) hydrateDocumentInputs(
 				c.KnowledgeID != k.ID {
 				return nil, ErrToolSourceLineageUnavailable
 			}
-			if err := validateDocumentChunkProjection(
+			if err := validate(
 				snapshot,
 				sourceLineage,
 				turn.RequiresCompleteProducerLineage(),
