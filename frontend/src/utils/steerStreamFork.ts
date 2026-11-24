@@ -54,6 +54,23 @@ export function persistedAssistantId(message: ChatMessage | undefined): string {
   return typeof message.id === 'string' ? message.id : ''
 }
 
+/** Select a stream from chronological history, including split Steer turns. */
+export function findHistoryStreamTarget(
+  messages: ChatMessage[],
+  { liveAssistantId, afterAssistantId }: { liveAssistantId?: string; afterAssistantId?: string } = {},
+): ChatMessage | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]
+    if (message.role !== 'assistant') continue
+    const id = persistedAssistantId(message)
+    if (!id || (liveAssistantId && id !== liveAssistantId)) continue
+    // Once a later turn has failed, an older placeholder cannot explain
+    // pending work. Only an explicit live-run identity can select that turn.
+    if (message.run_state === 'failed' || id === afterAssistantId) break
+    if (!message.is_completed && message.run_state !== 'awaiting_input') return message
+  }
+}
+
 export function sealAssistantSegment(message: ChatMessage): void {
   message.thinking = false
   message.is_completed = true

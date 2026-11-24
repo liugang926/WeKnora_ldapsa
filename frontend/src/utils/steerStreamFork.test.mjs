@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { expandSteerForksInHistory, forkAfterInjectedUser, resetSteerTurnForReplay, steerStepEvents, isAssistantTurnComplete, previewSteerMessage, discardSteerPreview } from './steerStreamFork.ts'
+import { findHistoryStreamTarget, expandSteerForksInHistory, forkAfterInjectedUser, resetSteerTurnForReplay, steerStepEvents, isAssistantTurnComplete, previewSteerMessage, discardSteerPreview } from './steerStreamFork.ts'
 
 test('inject forks later events onto a new assistant below the user bubble', () => {
   const assistant = {
@@ -307,4 +307,23 @@ test('failed promotion can restore its queue without leaving a duplicate bubble'
   assert.equal(list.length, 0)
   previewSteerMessage(list, { steer_id: 's', content: '补充' })
   assert.equal(list.length, 1)
+})
+
+
+test('a failed turn bounds automatic history and follow-up recovery', () => {
+  const older = { role: 'assistant', id: 'old', is_completed: false }
+  const failed = { role: 'assistant', id: 'new', run_state: 'failed', is_completed: false }
+  const user = { role: 'user', id: 'injected' }
+  const history = [older, failed, user]
+  assert.equal(findHistoryStreamTarget(history), undefined)
+  assert.equal(findHistoryStreamTarget(history, { afterAssistantId: 'previous' }), undefined)
+  assert.equal(findHistoryStreamTarget(history, { liveAssistantId: 'old' }), older)
+  assert.equal(findHistoryStreamTarget(history, { liveAssistantId: 'missing' }), undefined)
+  assert.equal(findHistoryStreamTarget(history, { liveAssistantId: 'new' }), undefined)
+
+  const fork = { role: 'assistant', id: 'split-tail', assistant_message_id: 'current', is_completed: false }
+  assert.equal(findHistoryStreamTarget([failed, fork, user]), fork)
+  assert.equal(findHistoryStreamTarget([failed, fork, user], { liveAssistantId: 'current' }), fork)
+  assert.equal(findHistoryStreamTarget([older, user]), older)
+  assert.equal(findHistoryStreamTarget([older], { afterAssistantId: 'old' }), undefined)
 })

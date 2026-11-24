@@ -259,7 +259,7 @@ import { questionOriginFromSuggestion } from '@/utils/questionOrigin';
 import { deleteTemporaryAttachment, uploadTemporaryAttachment } from '@/api/chat/temporary-attachments';
 import { useStream } from '../../api/chat/streame'
 import { listSteerSession, promoteSteerSession, removeSteerSession, steerSession } from '@/api/chat/steer';
-import { persistedAssistantId, previewSteerMessage, discardSteerPreview, reconcileSteerMessageId } from '@/utils/steerStreamFork';
+import { findHistoryStreamTarget, persistedAssistantId, previewSteerMessage, discardSteerPreview, reconcileSteerMessageId } from '@/utils/steerStreamFork';
 import { resumeSuspendedRunKey } from '@/utils/suspendedRun';
 import { useMenuStore } from '@/stores/menu';
 import { useSettingsStore } from '@/stores/settings';
@@ -1133,9 +1133,7 @@ const {
         // that absorbed a mid-run message ends with the injected user bubble
         // in some orderings, and keying off that row would skip the resume
         // entirely, leaving a running agent with no visible output.
-        const lastMessage = findLastMessage(
-            (message) => message.role === 'assistant' && !message.is_completed
-        );
+        const lastMessage = findHistoryStreamTarget(messagesList, { liveAssistantId });
         const locallyRunning = isReplying.value || isImRecovering.value;
         // History reload can finish after sendMsg already marked this session
         // running. Do not clear that marker just because the snapshot's last
@@ -1509,9 +1507,7 @@ const attachSteerFollowUp = async (completedAssistantId) => {
             const res = await getMessageList({ session_id: sessionId, limit: 30, created_at: '' });
             if (sessionChanged()) return;
             const batch = res?.data || [];
-            const newAssistant = [...batch].reverse().find((m) =>
-                m.role === 'assistant' && !m.is_completed && m.run_state !== 'failed' && !isAwaitingInput(m) && m.id && m.id !== completedAssistantId
-            );
+            const newAssistant = findHistoryStreamTarget(batch, { afterAssistantId: completedAssistantId });
             if (newAssistant) {
                 // The follow-up run persists its query under its own
                 // request_id, so the new user rows are identified exactly.
