@@ -2,11 +2,14 @@ package im
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"sync"
 
 	"github.com/Tencent/WeKnora/internal/event"
+	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
 // The channel grant and trusted producer event envelope are separate facts:
@@ -105,4 +108,23 @@ func (s *Service) checkIMMessagePublication(ctx context.Context, p *imMessagePro
 		return types.ErrSourceLineageUnknown
 	}
 	return checker.CheckLiveMessagePublication(ctx, message)
+}
+
+var errIMAgentGenerationFailed = errors.New("IM agent generation failed")
+
+// recordIMAgentFailure never writes the in-memory producer output. The
+// recorder binds the channel's original owner, tenant, turn and message.
+func (s *Service) recordIMAgentFailure(ctx context.Context, useAgent bool, message *types.Message) {
+	if !useAgent || ctx.Err() != nil {
+		return
+	}
+	recorder, ok := s.messageService.(interfaces.AgentFailureRecorder)
+	if !ok {
+		logger.Errorf(ctx, "[IM] Agent failure recorder is unavailable")
+		return
+	}
+	err := recorder.MarkAgentReplyFailed(context.WithoutCancel(ctx), message.SessionID, message.ID, message.RequestID)
+	if err != nil {
+		logger.Errorf(ctx, "[IM] Failed to persist agent failure: %v", err)
+	}
 }

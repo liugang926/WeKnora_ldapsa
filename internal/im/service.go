@@ -62,9 +62,6 @@ const (
 	// streamFlushInterval is how often buffered stream content is flushed to the IM platform.
 	// This prevents API rate-limiting while keeping perceived latency low.
 	streamFlushInterval = 300 * time.Millisecond
-	// agentCompleteWaitTimeout bounds how long IM waits for EventAgentComplete after
-	// the final answer stream finishes, preventing indefinite hangs.
-	agentCompleteWaitTimeout = 10 * time.Second
 )
 
 // imCitationTagRe matches inline citation tags produced by the agent pipeline.
@@ -815,19 +812,6 @@ func applyIMCompleteDataToMessage(msg *types.Message, data event.AgentCompleteDa
 	}
 	if steps := sanitizeIMAgentSteps(data.AgentSteps); len(steps) > 0 {
 		msg.AgentSteps = steps
-	}
-}
-
-// waitForIMAgentComplete blocks until EventAgentComplete, ctx cancellation, or timeout.
-func waitForIMAgentComplete(ctx context.Context, completeDone <-chan struct{}, sessionID string) {
-	timer := time.NewTimer(agentCompleteWaitTimeout)
-	defer timer.Stop()
-	select {
-	case <-completeDone:
-	case <-ctx.Done():
-		logger.Warnf(ctx, "[IM] QA context ended before agent complete event: session=%s", sessionID)
-	case <-timer.C:
-		logger.Warnf(ctx, "[IM] Timed out waiting for agent complete event: session=%s", sessionID)
 	}
 }
 
@@ -2592,9 +2576,7 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 		answerBuilder   strings.Builder // answer persisted to DB
 		qaErr           error
 		done            = make(chan struct{})
-		completeDone    = make(chan struct{})
 		closeOnce       sync.Once
-		completeOnce    sync.Once
 		agentDone       bool
 		assistantMsg    *types.Message
 
@@ -2614,7 +2596,6 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 		mcpAuthSeen     = make(map[string]bool)
 	)
 	closeDone := func() { closeOnce.Do(func() { close(done) }) }
-	closeComplete := func() { completeOnce.Do(func() { close(completeDone) }) }
 
 	agentWrite := func(s string) {
 		if s == "" {
@@ -2683,7 +2664,7 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 		}
 		bufMu.Unlock()
 
-		if data.Done {
+		if data.Done && !useAgent {
 			closeDone()
 		}
 		return nil
@@ -2698,8 +2679,9 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 		bufMu.Lock()
 		qaErr = fmt.Errorf("QA pipeline error: %s", data.Error)
 		bufMu.Unlock()
-		closeDone()
-		closeComplete()
+		if !useAgent {
+			closeDone()
+		}
 		return nil
 	})
 
@@ -2729,7 +2711,6 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 		applyIMCompleteDataToMessage(assistantMsg, data)
 		mergeIMAgentAnswerBuffers(&answerBuilder, &answerOuter, &agentLiveAnswer, data.FinalAnswer)
 		bufMu.Unlock()
-		closeComplete()
 		// Execute can emit EventError after Complete. The AgentQA return path
 		// closes done after those errors have been collected for finalization.
 		return nil
@@ -2883,7 +2864,6 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 		// so its return must not end the reply.
 		if useAgent {
 			defer closeDone()
-			defer closeComplete()
 		}
 		var err error
 		req := buildIMQARequest(session, msg.Content, assistantMsg.ID, userMsg.ID, customAgent, kbIDs, msg.Quote, attachments)
@@ -2902,7 +2882,6 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 			qaErr = fmt.Errorf("QA execution error: %w", err)
 			bufMu.Unlock()
 			closeDone()
-			closeComplete()
 		}
 	}()
 
@@ -2918,6 +2897,12 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 			return
 		}
 		bufMu.Lock()
+		// A provisional Complete may be followed by an execution error.
+		// Only finalization can publish after the Agent stops streaming.
+		if useAgent && (qaErr != nil || agentDone) {
+			bufMu.Unlock()
+			return
+		}
 		parts := getStreamParts()
 		snapshot := *assistantMsg
 		snapshot.KnowledgeReferences = append(types.References(nil), assistantMsg.KnowledgeReferences...)
@@ -2955,10 +2940,6 @@ loop:
 		}
 	}
 
-	if useAgent {
-		waitForIMAgentComplete(qaCtx, completeDone, session.ID)
-	}
-
 	bufMu.Lock()
 	parts := getStreamParts()
 	resolvedAnswer := pickIMStoredAnswer(
@@ -2976,31 +2957,54 @@ loop:
 	authServices := append([]imMCPAuthService(nil), mcpAuthServices...)
 	bufMu.Unlock()
 
-	if err := s.checkIMMessagePublication(ctx, provenance, assistantMsg); err != nil {
-		return fmt.Errorf("IM answer provenance: %w", err)
-	}
-
 	outCtx := imOutboundContext(ctx)
-	finalDisplay := cleanIMContent(outCtx, FormatIMFinalFromParts(parts), fileResolver)
-	if noVisibleContent || finalDisplay == "" {
-		fallback := imNoAnswerFallback
-		if finalErr != nil {
-			fallback = imQAFailureReply(finalErr)
-		}
-		finalDisplay = fallback
-		if answer == "" {
-			answer = fallback
+	var finalDisplay string
+	var deliveryErr error
+	activeAgentTurn := useAgent && qaCtx.Err() == nil
+	if !activeAgentTurn || finalErr == nil {
+		if err := s.checkIMMessagePublication(ctx, provenance, assistantMsg); err != nil {
+			if !activeAgentTurn {
+				return fmt.Errorf("IM answer provenance: %w", err)
+			}
+			logger.Warnf(ctx, "[IM] Cannot publish agent response: %v", err)
+			finalErr = err
 		}
 	}
-	if notice := s.buildIMMCPAuthNotice(ctx, authServices); notice != "" {
-		finalDisplay = appendIMAuthNotice(finalDisplay, notice)
-		answer = appendIMAuthNotice(answer, notice)
-	}
+	if activeAgentTurn && finalErr != nil {
+		s.recordIMAgentFailure(qaCtx, useAgent, assistantMsg)
+		if scope, ok := types.IMChannelScopeFromContext(ctx); ok {
+			err := scope.Check(ctx, scope.TenantID, types.GroupResourceTypeAgent, scope.AgentID, types.ResourceActionUse)
+			if err != nil {
+				return err
+			}
+		}
+		// Only deliver a fixed control. The failed producer may have buffered
+		// draft text or tool results that were never approved for publication.
+		answer, finalDisplay = imErrorFallback, imErrorFallback
+		deliveryErr = errIMAgentGenerationFailed
+	} else {
+		finalDisplay = cleanIMContent(outCtx, FormatIMFinalFromParts(parts), fileResolver)
+		if noVisibleContent || finalDisplay == "" {
+			fallback := imNoAnswerFallback
+			if finalErr != nil {
+				fallback = imQAFailureReply(finalErr)
+			}
+			finalDisplay = fallback
+			if answer == "" {
+				answer = fallback
+			}
+		}
+		if notice := s.buildIMMCPAuthNotice(ctx, authServices); notice != "" {
+			finalDisplay = appendIMAuthNotice(finalDisplay, notice)
+			answer = appendIMAuthNotice(answer, notice)
+		}
 
-	assistantMsg.Content = answer
-	assistantMsg.IsCompleted = true
-	if err := s.messageService.UpdateMessage(outCtx, assistantMsg); err != nil {
-		return fmt.Errorf("persist IM answer: %w", err)
+		assistantMsg.Content = answer
+		assistantMsg.IsCompleted = true
+		if err := s.messageService.UpdateMessage(outCtx, assistantMsg); err != nil {
+			s.recordIMAgentFailure(qaCtx, useAgent, assistantMsg)
+			return fmt.Errorf("persist IM answer: %w", err)
+		}
 	}
 
 	finalizeErr := streamer.FinalizeStream(outCtx, msg, streamID, finalDisplay)
@@ -3018,7 +3022,7 @@ loop:
 	// answer in the database while the user only sees intermediate progress.
 	var fallbackErr error
 	if finalizeErr != nil {
-		fallbackErr = s.retryFinalReply(outCtx, msg, adapter, session.ID, answer, nil,
+		fallbackErr = s.retryFinalReply(outCtx, msg, adapter, session.ID, answer, deliveryErr,
 			s.newOutboundFileServiceResolver(tenant, customAgent, kbIDs))
 		if fallbackErr != nil {
 			logger.Errorf(ctx, "[IM] Plain reply fallback after stream finalize failure failed: %v", fallbackErr)
@@ -3062,6 +3066,7 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	useAgent := customAgent != nil && customAgent.IsAgentMode()
 	eventBus := event.NewEventBus()
 	provenance := &imMessageProvenance{}
 	eventBus.On(event.EventAgentFinalAnswer,
@@ -3087,11 +3092,8 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	var mcpAuthServices []imMCPAuthService
 	mcpAuthSeen := make(map[string]bool)
 	done := make(chan struct{})
-	completeDone := make(chan struct{})
 	var closeOnce sync.Once
-	var completeOnce sync.Once
 	closeDone := func() { closeOnce.Do(func() { close(done) }) }
-	closeComplete := func() { completeOnce.Do(func() { close(completeDone) }) }
 
 	eventBus.On(event.EventAgentFinalAnswer, func(ctx context.Context, evt event.Event) error {
 		data, ok := evt.Data.(event.AgentFinalAnswerData)
@@ -3105,7 +3107,7 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 		}
 		answerBuilder.WriteString(data.Content)
 		answerMu.Unlock()
-		if data.Done {
+		if data.Done && !useAgent {
 			closeDone()
 		}
 		return nil
@@ -3120,8 +3122,9 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 		answerMu.Lock()
 		qaErr = fmt.Errorf("QA pipeline error: %s", data.Error)
 		answerMu.Unlock()
-		closeDone()
-		closeComplete()
+		if !useAgent {
+			closeDone()
+		}
 		return nil
 	})
 
@@ -3140,9 +3143,6 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 		answerMu.Unlock()
 		return nil
 	})
-
-	// Determine whether to use agent mode
-	useAgent := customAgent != nil && customAgent.IsAgentMode()
 
 	// Generate a shared RequestID to pair user and assistant messages for history
 	requestID := uuid.New().String()
@@ -3189,7 +3189,6 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 			answerBuilder.WriteString(data.FinalAnswer)
 		}
 		answerMu.Unlock()
-		closeComplete()
 		return nil
 	})
 
@@ -3205,7 +3204,6 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 		// events, while KnowledgeQA may still be consuming its answer stream.
 		if useAgent {
 			defer closeDone()
-			defer closeComplete()
 		}
 		var err error
 		req := buildIMQARequest(session, query, assistantMsg.ID, userMsg.ID, customAgent, kbIDs, quote, attachments)
@@ -3224,16 +3222,12 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 			qaErr = fmt.Errorf("QA execution error: %w", err)
 			answerMu.Unlock()
 			closeDone()
-			closeComplete()
 		}
 	}()
 
 	// Wait for completion or cancellation (e.g., /stop)
 	select {
 	case <-done:
-		if useAgent {
-			waitForIMAgentComplete(ctx, completeDone, session.ID)
-		}
 	case <-ctx.Done():
 		// Mark assistant message as completed to avoid dangling incomplete records
 		assistantMsg.Content = imCancelledFallback
@@ -3254,6 +3248,10 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	authServices := append([]imMCPAuthService(nil), mcpAuthServices...)
 	answerMu.Unlock()
 
+	if useAgent && qaError != nil && ctx.Err() == nil {
+		s.recordIMAgentFailure(ctx, useAgent, assistantMsg)
+		return "", errIMAgentGenerationFailed
+	}
 	if answer == "" && qaError != nil {
 		return "", qaError
 	}
@@ -3265,6 +3263,7 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	}
 
 	if err := s.checkIMMessagePublication(ctx, provenance, assistantMsg); err != nil {
+		s.recordIMAgentFailure(ctx, useAgent, assistantMsg)
 		return "", fmt.Errorf("IM answer provenance: %w", err)
 	}
 
@@ -3272,6 +3271,7 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	assistantMsg.Content = answer
 	assistantMsg.IsCompleted = true
 	if err := s.messageService.UpdateMessage(ctx, assistantMsg); err != nil {
+		s.recordIMAgentFailure(ctx, useAgent, assistantMsg)
 		return "", fmt.Errorf("persist IM answer: %w", err)
 	}
 
