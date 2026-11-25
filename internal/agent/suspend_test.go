@@ -64,6 +64,7 @@ func (t *suspendingTool) ExecuteSourceLineage(ctx context.Context, args json.Raw
 }
 
 type suspendFixture struct {
+	imageURLs []string
 	engine    *AgentEngine
 	first     *countingTool
 	blocked   *suspendingTool
@@ -88,8 +89,9 @@ func newSuspendFixture(t *testing.T, firstName string, parallel bool) *suspendFi
 		FinishReason: "tool_calls",
 	}}}}}
 	f := &suspendFixture{
-		engine: newTestEngine(t, model),
-		first:  newCountingTool(firstName),
+		imageURLs: []string{"https://img/1.png"},
+		engine:    newTestEngine(t, model),
+		first:     newCountingTool(firstName),
 		blocked: &suspendingTool{
 			BaseTool: tools.NewBaseTool(suspendingToolName, "", json.RawMessage(`{"type":"object"}`)),
 		},
@@ -111,7 +113,7 @@ func newSuspendFixture(t *testing.T, firstName string, parallel bool) *suspendFi
 func (f *suspendFixture) run(t *testing.T) *types.AgentState {
 	t.Helper()
 	state := &types.AgentState{}
-	f.engine.beginTurn("test query", []string{"https://img/1.png"}, state)
+	f.engine.beginTurn("test query", f.imageURLs, state)
 	_, err := f.engine.executeLoop(types.WithRAGSourceLineage(t.Context(), f.engine.turnLineage), state, "test query",
 		emptyMessages(), emptyTools(), "sess-1", "msg-1")
 	require.NoError(t, err)

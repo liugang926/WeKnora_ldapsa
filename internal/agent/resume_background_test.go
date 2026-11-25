@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -20,6 +21,9 @@ func TestResumeReplaysBackgroundNoticesAtTheirOriginalBoundaries(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newSuspendFixture(t, "first_tool", false)
+			// Background work belongs to an ordinary WeKnora workspace session.
+			f.imageURLs = nil
+			f.engine.SetWeKnoraACLSourceLineageVerifier(context.Context.Err)
 			f.engine.EnableSuspension(nil)
 			model := f.engine.chatModel.(*mockChat)
 			model.responses = append([]mockResponse{{chunks: []types.StreamResponse{{
@@ -44,6 +48,8 @@ func TestResumeReplaysBackgroundNoticesAtTheirOriginalBoundaries(t *testing.T) {
 			require.NoError(t, f.blocked.err)
 			snap, err := DecodeRunSnapshot(f.blocked.snapshot)
 			require.NoError(t, err)
+			require.True(t, snap.WeKnoraACL)
+			require.Empty(t, snap.ImageURLs)
 			require.Len(t, snap.CompletedSteps, 1)
 			first := types.BackgroundInjection{
 				Content: backgroundNoticesContent("build (sj_1) succeeded."), AckIDs: []string{"sj_1"},
@@ -63,6 +69,7 @@ func TestResumeReplaysBackgroundNoticesAtTheirOriginalBoundaries(t *testing.T) {
 
 			// A fresh replica has no unread delivery: the saved notices must be replayed.
 			resumed := newSuspendFixture(t, "first_tool", false)
+			resumed.engine.SetWeKnoraACLSourceLineageVerifier(context.Context.Err)
 			resumedModel := resumed.engine.chatModel.(*mockChat)
 			resumedModel.responses = []mockResponse{answer("done")}
 			state, err = resumed.engine.Resume(t.Context(), "sess-1", "msg-1", nil,

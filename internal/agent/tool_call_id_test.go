@@ -31,7 +31,7 @@ func TestToolCallIDsRemainDistinctThroughExecutionAndHistory(t *testing.T) {
 				engine.toolRegistry.RegisterTool(&orderedTestTool{
 					BaseTool: tools.NewBaseTool(toolName, "", json.RawMessage(`{"type":"object"}`)),
 					run: func(context.Context) *types.ToolResult {
-						return &types.ToolResult{Success: true, Output: toolName}
+						return &types.ToolResult{Success: true, Output: toolName, SourceLineage: independentAgentInput()}
 					},
 				})
 				response.ToolCalls = append(response.ToolCalls, types.LLMToolCall{
@@ -40,7 +40,8 @@ func TestToolCallIDsRemainDistinctThroughExecutionAndHistory(t *testing.T) {
 				})
 			}
 			step := &types.AgentStep{}
-			require.Nil(t, engine.executeToolCalls(t.Context(), response, step, 0, "session", "message"))
+			ctx := types.WithRAGSourceLineage(t.Context(), engine.turnLineage)
+			require.Nil(t, engine.executeToolCalls(ctx, response, step, 0, "session", "message"))
 			require.Len(t, step.ToolCalls, 2)
 			require.NotEqual(t, step.ToolCalls[0].ID, step.ToolCalls[1].ID)
 			require.Len(t, outcomes, 2)

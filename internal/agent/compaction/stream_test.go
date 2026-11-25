@@ -160,7 +160,7 @@ func TestCompactCancellationDoesNotCreateCheckpoint(t *testing.T) {
 				cancel()
 			}
 			model := &cancelOnSummaryChat{cancel: cancel, cancelAt: tc.cancelAt}
-			c := New(model, newEstimator(t), testSettings())
+			c := newLiteralTestCompactor(model, newEstimator(t), testSettings())
 			messages := withStoredHistory(reactTurn(12), storedTurn("turn-a", 1, "/workspace/a.txt"))
 
 			result, err := c.Compact(ctx, messages, ReasonThreshold)

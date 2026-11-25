@@ -117,10 +117,11 @@ func TestToolExecContextCarriesTheChatTurnRequestID(t *testing.T) {
 			meta, ok := tools.ToolExecFromContext(ctx)
 			require.True(t, ok)
 			got = meta.RequestID
-			return &types.ToolResult{Success: true}
+			return &types.ToolResult{Success: true, SourceLineage: independentAgentInput()}
 		},
 	})
-	ctx := context.WithValue(context.Background(), types.RequestIDContextKey, "turn-9")
+	ctx := context.WithValue(t.Context(), types.RequestIDContextKey, "turn-9")
+	ctx = types.WithRAGSourceLineage(ctx, engine.turnLineage)
 	engine.executeToolCallsParallel(ctx, &types.ChatResponse{ToolCalls: []types.LLMToolCall{
 		{ID: "a", Function: types.FunctionCall{Name: tools.ToolReadFile, Arguments: `{}`}},
 	}}, &types.AgentStep{}, 0, "session", "message")

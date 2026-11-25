@@ -75,26 +75,28 @@ func TestSplitTurnFallbackStaysWithinPrefixBudget(t *testing.T) {
 	settings.KeepRecentTokens = 1000
 	estimator := newEstimator(t)
 	model := &stubChat{err: assert.AnError}
-	c := New(model, estimator, settings)
+	c := newLiteralTestCompactor(model, estimator, settings)
 	const latestResult = "最新检索结果已保存。"
 	messages := []chat.Message{
-		{Role: "user", Content: "Summarize the experiment results."},
-		{Role: "assistant", ToolCalls: []chat.ToolCall{{
+		{SourceLineage: literalCompactionInput(), Role: "user", Content: "Summarize the experiment results."},
+		{SourceLineage: literalCompactionInput(), Role: "assistant", ToolCalls: []chat.ToolCall{{
 			ID: "call-1", Type: "function", Function: chat.FunctionCall{
 				Name: "search_knowledge", Arguments: `{"query":"experiment"}`,
 			},
 		}}},
 		{
-			Role: "tool", Name: "search_knowledge", ToolCallID: "call-1",
+			SourceLineage: literalCompactionInput(),
+			Role:          "tool", Name: "search_knowledge", ToolCallID: "call-1",
 			Content: strings.Repeat("🧪", 200) + latestResult,
 		},
-		{Role: "assistant", Content: filler(200)},
+		{SourceLineage: literalCompactionInput(), Role: "assistant", Content: filler(200)},
 	}
 
 	result, err := c.Compact(t.Context(), messages, ReasonThreshold)
 	require.NoError(t, err)
 	require.True(t, result.SplitTurn)
 	require.True(t, result.Degraded)
+	require.Positive(t, model.calls, "the prefix summarizer must run before fallback")
 	_, prefix, found := strings.Cut(result.Summary, splitTurnSeparator)
 	require.True(t, found)
 	used, budget := estimator.EstimateString(prefix), c.Settings().turnPrefixBudget()
@@ -108,22 +110,33 @@ func TestSplitTurnFallbackStaysWithinPrefixBudget(t *testing.T) {
 
 func TestFallbackCheckpointsStayBoundedAcrossReloads(t *testing.T) {
 	model := &stubChat{err: assert.AnError}
-	c := New(model, newEstimator(t), testSettings())
+	c := newLiteralTestCompactor(model, newEstimator(t), testSettings())
 	previous := "Original goal: prepare a report."
+	lineage := literalCompactionInput()
 	for cycle := range 8 {
-		messages := []chat.Message{{Role: "system", Content: "You are an agent."}, SummaryMessage(previous)}
+		loaded := SummaryMessage(previous)
+		loaded.SourceLineage = lineage
+		messages := []chat.Message{
+			{Role: "system", Content: "You are an agent.", SourceLineage: literalCompactionInput()},
+			loaded,
+		}
 		for turn := range 50 {
 			messages = append(messages, storedTurn(fmt.Sprintf("cycle-%d-turn-%d", cycle, turn),
 				1, fmt.Sprintf("/workspace/report-%d.txt", cycle))...)
 		}
-		messages = append(messages, chat.Message{Role: "user", Content: "Continue with the next task."})
+		messages = append(messages, chat.Message{
+			Role: "user", Content: "Continue with the next task.", SourceLineage: literalCompactionInput(),
+		})
+		priorCalls := model.calls
 		result, err := c.Compact(t.Context(), messages, ReasonThreshold)
 		require.NoError(t, err)
 		require.NotNil(t, result.Checkpoint)
 		require.True(t, result.Checkpoint.Degraded)
+		require.Greater(t, model.calls, priorCalls, "each reloaded checkpoint reaches the summarizer")
 		prep := Prepare(messages, c.settings, c.estimator)
 		metadata := prep.historyFileOps.format()
 		previous = result.Checkpoint.Summary
+		lineage = result.Checkpoint.SourceLineage
 		text := strings.TrimSuffix(previous, metadata)
 		assert.LessOrEqual(t, c.estimator.EstimateString(text), c.settings.summaryBudget(), "cycle %d", cycle)
 		assert.Contains(t, previous, "Original goal: prepare a report.")
@@ -133,8 +146,9 @@ func TestFallbackCheckpointsStayBoundedAcrossReloads(t *testing.T) {
 			c.estimator.EstimateString(text), c.estimator.EstimateString(previous))
 	}
 	model.err, model.response = nil, "Recovered summary of the report."
+	newWork := []chat.Message{{SourceLineage: literalCompactionInput(), Role: "user", Content: "New work."}}
 	text, degraded := c.summarizeHistory(t.Context(), &Preparation{
-		PreviousSummary: previous, MessagesToSummarize: []chat.Message{{Role: "user", Content: "New work."}},
+		PreviousSummary: previous, MessagesToSummarize: newWork, HistorySourceLineage: lineageOf(lineage, newWork),
 	})
 	assert.False(t, degraded)
 	assert.Equal(t, model.response, text)
