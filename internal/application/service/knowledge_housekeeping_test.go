@@ -510,7 +510,7 @@ func TestHousekeeping_RecoveredRowNamesStalledStageAndClosesSpans(t *testing.T) 
 	require.NoError(t, db.Exec(
 		`INSERT INTO knowledge_processing_spans
 		   (knowledge_id, attempt, span_id, parent_span_id, name, kind, status, updated_at)
-		 VALUES ('kid-stalled', 1, 'sub-1', 'doc-1', 'docreader.call', 'subspan', 'running', ?)`, stale,
+		 VALUES ('kid-stalled', 1, 'sub-1', 'doc-1', 'docreader.call', 'subspan', 'running', ?)`, stale.UTC(),
 	).Error)
 
 	svc.runSweep(context.Background())
@@ -754,7 +754,7 @@ func insertSoftDeletedKnowledge(t *testing.T, db *gorm.DB, id string, updatedAt 
 	require.NoError(t, db.Exec(
 		`INSERT INTO knowledges (id, parse_status, updated_at, deleted_at)
 		 VALUES (?, ?, ?, ?)`,
-		id, types.ParseStatusDeleting, updatedAt, updatedAt,
+		id, types.ParseStatusDeleting, updatedAt.UTC(), updatedAt.UTC(),
 	).Error)
 }
 

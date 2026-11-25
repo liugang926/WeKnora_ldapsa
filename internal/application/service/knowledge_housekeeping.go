@@ -265,7 +265,7 @@ func (h *HousekeepingService) runSweep(ctx context.Context) {
 	// is shorter because summary tasks are bounded by a single LLM call.
 	// No span heartbeat exists for the summary stage (it lives in a
 	// downstream asynq task), so we accept the original simple check.
-	summaryCutoff := time.Now().Add(-1 * time.Hour)
+	summaryCutoff := now.Add(-time.Hour)
 	resSummary := h.db.WithContext(ctx).Model(&types.Knowledge{}).
 		Where("summary_status = ? AND updated_at < ?", types.SummaryStatusProcessing, summaryCutoff).
 		Update("summary_status", types.SummaryStatusFailed)
