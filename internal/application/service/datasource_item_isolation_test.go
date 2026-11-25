@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/datasource/connector/feishu/core"
 	werrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -572,10 +573,11 @@ func TestProcessSync_SeafileIsolatesSingleItemIngestFailure(t *testing.T) {
 // for PNG, illegal filename characters, malformed JSON replacement) stay
 // visible with specific error codes and do not block healthy documents.
 func TestProcessSync_RealKnowledgeServiceFeishuDrivePermanentRejections(t *testing.T) {
-	h, _, _, _ := datasourceReplacementFixture(t)
-	// Wire a real no-VLM KB + tenant 7 matching datasourceReplacementFixture.
-	kb := &types.KnowledgeBase{ID: "kb-1", TenantID: 7}
-	h.svc.kbService = &processSyncKBService{kb: kb}
+	h, db, _, _ := datasourceReplacementFixtureForConnector(t, types.ConnectorTypeFeishuDrive)
+	kb, err := h.svc.kbService.GetKnowledgeBaseByID(h.ctx, h.source.KnowledgeBaseID)
+	require.NoError(t, err)
+	kb.VLMConfig = types.VLMConfig{}
+	require.NoError(t, h.queue.inputs.UpdateKnowledgeBaseWithInput(repository.WithIndependentKnowledgeInput(h.ctx), kb))
 	h.svc.task = &replaceFileEnqueuer{events: &[]string{}}
 
 	const (
@@ -597,18 +599,24 @@ func TestProcessSync_RealKnowledgeServiceFeishuDrivePermanentRejections(t *testi
 	svc, ds, logRepo, _ := newFeishuSyncServiceHarness(
 		t, srv, types.ConnectorTypeFeishuDrive, []string{rootTok}, true,
 	)
-	ds.ID = "ds-1"
-	ds.TenantID = 7
-	ds.KnowledgeBaseID = "kb-1"
-	svc.dsRepo = newKBDeleteDSRepo(ds.KnowledgeBaseID, ds)
-	svc.kbService = &processSyncKBService{kb: kb}
-	svc.tenantRepo = &processSyncTenantRepo{tenant: &types.Tenant{ID: 7, StorageQuota: 1024 * 1024}}
+	ds.ID, ds.TenantID, ds.KnowledgeBaseID = h.source.ID, h.source.TenantID, h.source.KnowledgeBaseID
+	svc.dsRepo = repository.NewDataSourceRepository(db)
+	require.NoError(t, svc.dsRepo.Update(h.ctx, ds))
+	svc.kbService = h.svc.kbService
+	svc.tenantRepo = &processSyncTenantRepo{tenant: &types.Tenant{ID: ds.TenantID, StorageQuota: 1024 * 1024}}
 	svc.knowledgeService = h.svc
+	runRound := func(id string) (*types.SyncLog, error) {
+		return runFeishuSyncTask(t, svc, ds, logRepo, types.DataSourceSyncPayload{
+			SyncLogID: id, Trigger: "manual", Initiator: types.TaskInitiatorFromContext(h.ctx),
+		})
+	}
 
-	log1, err := runFeishuSyncRound(t, svc, ds, logRepo, "real-ks-1")
+	log1, err := runRound("real-ks-1")
 	require.NoError(t, err)
 	assert.Equal(t, types.SyncLogStatusPartial, log1.Status)
-	assert.Equal(t, types.DataSourceStatusActive, ds.Status)
+	storedSource, err := svc.dsRepo.FindByID(h.ctx, ds.ID)
+	require.NoError(t, err)
+	assert.Equal(t, types.DataSourceStatusActive, storedSource.Status)
 	assert.Equal(t, 4, log1.ItemsTotal)
 	assert.Equal(t, 1, log1.ItemsCreated)
 	assert.Equal(t, 3, log1.ItemsFailed)
@@ -627,16 +635,18 @@ func TestProcessSync_RealKnowledgeServiceFeishuDrivePermanentRejections(t *testi
 	// Confirm the healthy docx actually persisted into SQLite and the original
 	// JSON knowledge row survived the rejected malformed replacement.
 	createdHealthy, lookupErr := h.svc.repo.FindByDataSourceExternalID(
-		context.Background(), 7, "kb-1", "ds-1", healthyTok,
+		h.ctx, ds.TenantID, ds.KnowledgeBaseID, ds.ID, healthyTok,
 	)
 	require.NoError(t, lookupErr)
 	require.NotNil(t, createdHealthy)
-	existingJSON, lookupErr := h.svc.repo.GetKnowledgeByID(context.Background(), 7, h.original.ID)
+	existingJSON, lookupErr := h.svc.repo.GetKnowledgeByID(h.ctx, ds.TenantID, h.original.ID)
 	require.NoError(t, lookupErr)
 	require.NotNil(t, existingJSON)
+	assert.Equal(t, h.original.FileHash, existingJSON.FileHash)
+	assert.Equal(t, h.original.FilePath, existingJSON.FilePath)
 
 	// Next incremental sync sees all 4 items in cursor and does zero redundant work.
-	log2, err := runFeishuSyncRound(t, svc, ds, logRepo, "real-ks-2")
+	log2, err := runRound("real-ks-2")
 	require.NoError(t, err)
 	assert.Equal(t, types.SyncLogStatusSuccess, log2.Status)
 	assert.Equal(t, 0, log2.ItemsTotal)

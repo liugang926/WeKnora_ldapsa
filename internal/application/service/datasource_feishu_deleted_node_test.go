@@ -340,6 +340,15 @@ func runFeishuSyncRound(
 	syncLogRepo *processSyncSyncLogRepo, logID string,
 ) (*types.SyncLog, error) {
 	t.Helper()
+	return runFeishuSyncTask(t, svc, ds, syncLogRepo, types.DataSourceSyncPayload{SyncLogID: logID})
+}
+
+func runFeishuSyncTask(
+	t *testing.T, svc *DataSourceService, ds *types.DataSource,
+	syncLogRepo *processSyncSyncLogRepo, task types.DataSourceSyncPayload,
+) (*types.SyncLog, error) {
+	t.Helper()
+	logID := task.SyncLogID
 	log := &types.SyncLog{
 		ID:           logID,
 		DataSourceID: ds.ID,
@@ -348,11 +357,9 @@ func runFeishuSyncRound(
 		StartedAt:    time.Now().UTC(),
 	}
 	syncLogRepo.logs[logID] = log
-	payload, err := json.Marshal(types.DataSourceSyncPayload{
-		DataSourceID: ds.ID,
-		TenantID:     ds.TenantID,
-		SyncLogID:    logID,
-	})
+	task.DataSourceID = ds.ID
+	task.TenantID = ds.TenantID
+	payload, err := json.Marshal(task)
 	require.NoError(t, err)
 	err = svc.ProcessSync(context.Background(), asynq.NewTask(types.TypeDataSourceSync, payload))
 	return syncLogRepo.logs[logID], err

@@ -122,6 +122,13 @@ func datasourceReplacementFixture(t *testing.T) (
 	*replacementSyncHarness, *gorm.DB, *datasourceReplacementChunks, *datasourceReplacementQueue,
 ) {
 	t.Helper()
+	return datasourceReplacementFixtureForConnector(t, conflictSkipConnectorType)
+}
+
+func datasourceReplacementFixtureForConnector(t *testing.T, connectorType string) (
+	*replacementSyncHarness, *gorm.DB, *datasourceReplacementChunks, *datasourceReplacementQueue,
+) {
+	t.Helper()
 	h := newReplaceFileHarness(t)
 	f := newEnrichmentTestFixture(t, false)
 	inputs, db := f.store, f.db
@@ -131,10 +138,10 @@ func datasourceReplacementFixture(t *testing.T) (
 	require.NotEmpty(t, types.TaskInitiatorFromContext(h.ctx).UserID)
 	h.svc.groupAccess = NewGroupAccessService(repository.NewGroupAccessRepository(db))
 	require.NoError(t, db.AutoMigrate(&types.DataSource{}))
-	cfg, err := (&types.DataSourceConfig{Type: conflictSkipConnectorType}).ToJSON()
+	cfg, err := (&types.DataSourceConfig{Type: connectorType}).ToJSON()
 	require.NoError(t, err)
 	ds := &types.DataSource{
-		ID: "ds-1", TenantID: 7, KnowledgeBaseID: "kb", Type: conflictSkipConnectorType,
+		ID: "ds-1", TenantID: 7, KnowledgeBaseID: "kb", Type: connectorType,
 		Config: cfg, SyncMode: types.SyncModeFull, Status: types.DataSourceStatusActive,
 	}
 	require.NoError(t, db.Create(ds).Error)
