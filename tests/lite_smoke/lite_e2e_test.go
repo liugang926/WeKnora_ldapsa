@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -54,7 +55,8 @@ func TestLiteEditionEndToEndSmoke(t *testing.T) {
 	repoRoot := findRepoRoot(t)
 	llmSrv := startLoopbackOpenAIServer(t)
 
-	workDir := t.TempDir()
+	workDir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	require.NoError(t, os.Symlink(filepath.Join(repoRoot, "config"), filepath.Join(workDir, "config")))
 	require.NoError(t, os.Symlink(filepath.Join(repoRoot, "migrations"), filepath.Join(workDir, "migrations")))
 
@@ -89,6 +91,8 @@ func TestLiteEditionEndToEndSmoke(t *testing.T) {
 	srvCmd.Dir = workDir
 	srvCmd.Stdout = &serverLogs
 	srvCmd.Stderr = &serverLogs
+	dbPath := filepath.Join(workDir, "data", "weknora.db")
+	journalEnv := prepareLiteJournal(t, repoRoot, workDir, dbPath, buildCmd.Env)
 	srvCmd.Env = append(os.Environ(),
 		"ENV_FILE=",
 		"REDIS_ADDR=",
@@ -99,7 +103,7 @@ func TestLiteEditionEndToEndSmoke(t *testing.T) {
 		"SERVER_HOST=127.0.0.1",
 		"SERVER_PORT="+strconv.Itoa(port),
 		"DB_DRIVER=sqlite",
-		"DB_PATH="+filepath.Join(workDir, "data", "weknora.db"),
+		"DB_PATH="+dbPath,
 		"RETRIEVE_DRIVER=sqlite",
 		"STORAGE_TYPE=local",
 		"LOCAL_STORAGE_BASE_DIR="+filepath.Join(workDir, "data", "files"),
@@ -113,6 +117,7 @@ func TestLiteEditionEndToEndSmoke(t *testing.T) {
 		"SSRF_WHITELIST=127.0.0.1,localhost",
 		"CONCURRENCY_POOL_SIZE=2",
 	)
+	srvCmd.Env = append(srvCmd.Env, journalEnv...)
 	require.NoError(t, srvCmd.Start())
 
 	var waitErr error
@@ -393,6 +398,35 @@ func TestLiteEditionEndToEndSmoke(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatalf("timed out waiting for WeKnora-lite graceful shutdown:\n%s", serverLogs.String())
 	}
+}
+
+// prepareLiteJournal provisions the external purge ledger offline, before any application reader starts.
+func prepareLiteJournal(t *testing.T, repoRoot, workDir, dbPath string, buildEnv []string) []string {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Dir(dbPath), 0o700))
+	journalDir := filepath.Join(workDir, "journal")
+	require.NoError(t, os.Mkdir(journalDir, 0o700))
+	keyPath := filepath.Join(workDir, "journal.key")
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(keyPath, key, 0o600))
+	journalEnv := []string{
+		"WEKNORA_ORIGINAL_BODY_JOURNAL_DIRECTORY=" + journalDir,
+		"WEKNORA_ORIGINAL_BODY_JOURNAL_KEY=" + keyPath,
+		"WEKNORA_ORIGINAL_BODY_JOURNAL_PIN=" + filepath.Join(workDir, "journal.pin"),
+	}
+
+	for _, mode := range []string{"migrate", "init", "verify"} {
+		cmd := exec.Command("go", "run", "-tags", "sqlite_fts5", "./cmd/original-body-retention",
+			"-driver", "sqlite", "-mode", mode)
+		cmd.Dir = repoRoot
+		cmd.Env = append(append([]string{}, buildEnv...), journalEnv...)
+		cmd.Env = append(cmd.Env, "WEKNORA_ORIGINAL_BODY_MAINTENANCE_DSN="+dbPath)
+		out, err := cmd.CombinedOutput()
+		require.NoErrorf(t, err, "offline journal %s: %s", mode, out)
+	}
+	return journalEnv
 }
 
 func startLoopbackOpenAIServer(t *testing.T) *httptest.Server {
