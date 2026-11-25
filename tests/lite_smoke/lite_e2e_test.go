@@ -108,6 +108,7 @@ func TestLiteEditionEndToEndSmoke(t *testing.T) {
 		"STORAGE_TYPE=local",
 		"LOCAL_STORAGE_BASE_DIR="+filepath.Join(workDir, "data", "files"),
 		"STREAM_MANAGER_TYPE=memory",
+		"WEKNORA_NEXTCLOUD_READ_AUTHORITY=weknora",
 		"JWT_SECRET=lite-smoke-jwt-secret-at-least-32-bytes!!",
 		"SYSTEM_AES_KEY=0123456789abcdef0123456789abcdef",
 		"NEO4J_ENABLE=false",
@@ -164,13 +165,14 @@ func TestLiteEditionEndToEndSmoke(t *testing.T) {
 		"password": password,
 	}, http.StatusCreated, nil)
 
-	var loginResp struct {
+	type loginResponse struct {
 		Success      bool   `json:"success"`
 		Token        string `json:"token"`
 		ActiveTenant *struct {
 			ID uint64 `json:"id"`
 		} `json:"active_tenant"`
 	}
+	var loginResp loginResponse
 	doJSON(t, client, http.MethodPost, baseURL+"/api/v1/auth/login", "", map[string]any{
 		"email":    email,
 		"password": password,
@@ -374,6 +376,26 @@ func TestLiteEditionEndToEndSmoke(t *testing.T) {
 		t, client, baseURL, token, kbID, "helios-appendix.md", "# Appendix\n\nExtra batch move item.",
 	)
 	waitKnowledgeIndexed(t, client, baseURL, token, extraID, 45*time.Second)
+	// Verify document visibility also from an unrelated workspace.
+	const otherEmail = "other@example.com"
+	doJSON(t, client, http.MethodPost, baseURL+"/api/v1/auth/register", "", map[string]any{
+		"username": "other-workspace", "email": otherEmail, "password": password,
+	}, http.StatusCreated, nil)
+	var otherLogin loginResponse
+	doJSON(t, client, http.MethodPost, baseURL+"/api/v1/auth/login", "", map[string]any{
+		"email": otherEmail, "password": password,
+	}, http.StatusOK, &otherLogin)
+	require.NotEmpty(t, otherLogin.Token)
+	require.NotNil(t, otherLogin.ActiveTenant)
+	require.NotZero(t, otherLogin.ActiveTenant.ID)
+	require.NotEqual(t, loginResp.ActiveTenant.ID, otherLogin.ActiveTenant.ID)
+	var denied struct {
+		Data json.RawMessage `json:"data"`
+	}
+	doJSON(t, client, http.MethodGet, baseURL+"/api/v1/knowledge/"+extraID,
+		otherLogin.Token, nil, http.StatusForbidden, &denied)
+	require.Empty(t, denied.Data)
+
 	moveIDs := []string{knowledgeID, extraID}
 
 	moveAndVerify(kbID, moveDstKBID, "reuse_vectors", moveIDs)
