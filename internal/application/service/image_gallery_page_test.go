@@ -100,31 +100,47 @@ func TestBuildImageAssetQuery_页码字段和旧默认兼容(t *testing.T) {
 // pageRowsRepository 只提供数据库已校验的投影，验证响应层使用同一页码而不重猜定位。
 type pageRowsRepository struct {
 	interfaces.ChunkRepository
-	rows []types.ImageAssetRow
+	source types.Knowledge
+	rows   []types.ImageAssetRow
 }
 
 func (r *pageRowsRepository) ListImageAssets(
-	context.Context,
-	uint64,
-	string,
-	*types.ImageAssetQuery,
+	ctx context.Context,
+	tenantID uint64,
+	kbID string,
+	query *types.ImageAssetQuery,
 ) ([]types.ImageAssetRow, int64, error) {
+	if tenantID != r.source.TenantID || kbID != r.source.KnowledgeBaseID {
+		return nil, 0, nil
+	}
+	visible, err := query.AuthorizeSource(ctx, &r.source)
+	if err != nil || !visible {
+		return nil, 0, err
+	}
 	return r.rows, int64(len(r.rows)), nil
 }
 
 func TestListImages_旧图回退页码进入响应并剔除非法页码(t *testing.T) {
 	page := int64(2)
-	repo := &pageRowsRepository{rows: []types.ImageAssetRow{
-		{ChunkID: "legacy", AttrsJSON: `{"contain.text":"block"}`, SourcePage: &page},
-		{ChunkID: "invalid", AttrsJSON: `{"source.page":"invalid","contain.text":"none"}`},
+	doc := types.Knowledge{ID: "doc", TenantID: 1, KnowledgeBaseID: "kb"}
+	repo := &pageRowsRepository{
+		source: doc,
+		rows: []types.ImageAssetRow{
+			{KnowledgeID: doc.ID, ChunkID: "legacy", AttrsJSON: `{"contain.text":"block"}`, SourcePage: &page},
+			{KnowledgeID: doc.ID, ChunkID: "invalid", AttrsJSON: `{"source.page":"invalid","contain.text":"none"}`},
+		},
+	}
+	filter := &types.ImageListFilter{AuthorizeSource: func(_ context.Context, k *types.Knowledge) (bool, error) {
+		return k.ID == doc.ID && k.TenantID == doc.TenantID && k.KnowledgeBaseID == doc.KnowledgeBaseID, nil
 	}}
 	svc := &chunkService{chunkRepository: repo}
 	result, err := svc.ListImagesByKnowledgeBaseID(
-		types.WithExecutionTenant(context.Background(), 1), "kb", &types.Pagination{}, nil,
+		types.WithExecutionTenant(context.Background(), doc.TenantID), doc.KnowledgeBaseID, &types.Pagination{}, filter,
 	)
 	require.NoError(t, err, "图片响应应能构建")
 	images, ok := result.Data.([]types.ImageAsset)
 	require.True(t, ok, "分页内容应为图片资产")
+	require.Len(t, images, 2)
 	require.Equal(t, int64(2), images[0].Attrs["source.page"], "旧图卡片必须展示排序实际采用的页码")
 	require.Equal(t, "block", images[0].Attrs["contain.text"], "来源元数据不能覆盖模型属性")
 	require.NotContains(t, images[1].Attrs, "source.page", "非法页码应在响应中省略")

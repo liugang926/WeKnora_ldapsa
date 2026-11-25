@@ -128,7 +128,7 @@ func TestEditImageEvidenceSurvivesConcurrentParentWrite(t *testing.T) {
 			require.NoError(t, err)
 			sqlDB.SetMaxOpenConns(1)
 			t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
-			require.NoError(t, db.AutoMigrate(&types.Chunk{}, &types.ChunkRevision{}))
+			require.NoError(t, db.AutoMigrate(&types.Knowledge{}, &types.Chunk{}, &types.ChunkRevision{}))
 			r := repository.NewChunkRepository(db)
 			ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
 			ctx = context.WithValue(ctx, types.TenantInfoContextKey, &types.Tenant{
@@ -155,10 +155,13 @@ func TestEditImageEvidenceSurvivesConcurrentParentWrite(t *testing.T) {
 				Content: "old", ImageInfo: info, ChunkType: types.ChunkTypeImageCaption, ParentChunkID: source.ID,
 				IsEnabled: !enableParent, IndexStatus: "ready",
 			}
+			require.NoError(t, db.Create(&types.Knowledge{
+				ID: source.KnowledgeID, TenantID: source.TenantID, KnowledgeBaseID: source.KnowledgeBaseID,
+			}).Error)
 			require.NoError(t, r.CreateChunks(ctx, []*types.Chunk{source, child}))
 			engine := &imageEditEngine{started: make(chan struct{}), release: make(chan struct{})}
 			s := &chunkService{
-				chunkRepository: r, knowledgeRepo: editableChunkKnowledgeRepo{}, kbRepository: imageEditKB{},
+				chunkRepository: r, knowledgeRepo: repository.NewKnowledgeRepository(db), kbRepository: imageEditKB{},
 				modelService:   imageEditModels{embedding: &imageEditEmbedding{}},
 				retrieveEngine: imageEditRegistry{engine: engine},
 			}
