@@ -12,11 +12,11 @@ import (
 
 // artifactLibraryResponse is the body of ListArtifactLibrary.
 type artifactLibraryResponse struct {
-	Success  bool                         `json:"success"`
-	Data     []*types.ArtifactLibraryItem `json:"data"`
-	Total    int64                        `json:"total" extensions:"x-agent"`
-	Page     int                          `json:"page" extensions:"x-agent"`
-	PageSize int                          `json:"page_size" extensions:"x-agent"`
+	Success  bool  `json:"success"`
+	Data     any   `json:"data"`
+	Total    int64 `json:"total" extensions:"x-agent"`
+	Page     int   `json:"page" extensions:"x-agent"`
+	PageSize int   `json:"page_size" extensions:"x-agent"`
 }
 
 // ListArtifactLibrary godoc
@@ -28,7 +28,7 @@ type artifactLibraryResponse struct {
 // @Param        file_types  query  string  false  "逗号分隔的扩展名，如 .pdf,.pptx"  extensions(x-agent)
 // @Param        page        query  int     false  "页码"  minimum(1)  extensions(x-agent,x-agent-maximum=10000)
 // @Param        page_size   query  int     false  "每页数量（最大 100）"  minimum(1)  maximum(100)  extensions(x-agent,x-agent-maximum=20)
-// @Success      200  {object}  artifactLibraryResponse
+// @Success      200  {object}  artifactLibraryResponse{data=[]types.ArtifactLibraryItem}
 // @Security     Bearer
 // @Security     ApiKeyAuth
 // @x-agent      {"id":"artifact.list","risk":"read"}

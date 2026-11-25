@@ -90,9 +90,8 @@ class PrepareAnyDocTest(unittest.TestCase):
         objcopy.write_text('#!/bin/sh\n'
                            'printf "%s\\n" "$@" >> "$STUB_STRIP_LOG"\n'
                            f'if [ {strip_exit} -ne 0 ]; then exit {strip_exit}; fi\n'
-                           '[ "$1" = --remove-section=.llvmbc ] || exit 91\n'
-                           '[ "$2" = --remove-section=.llvmcmd ] || exit 92\n'
-                           'printf native-machine-code > "$3"\n')
+                           '[ "$1" = "--remove-section=.llvm*" ] || exit 91\n'
+                           'printf native-machine-code > "$2"\n')
         objcopy.chmod(0o755)
         return subprocess.run(['bash', str(self.script)], env={
             **os.environ, 'CARGO_HOME': str(self.root / 'cargo'),
@@ -108,7 +107,7 @@ class PrepareAnyDocTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((self.crate / 'lib/linux_amd64_gnu/libanydoc_go.a').read_text(),
                              'native-machine-code')
-        self.assertEqual((self.root / 'strip.log').read_text().count('--remove-section=.llvmbc'), 2)
+        self.assertEqual((self.root / 'strip.log').read_text().count('--remove-section=.llvm*'), 2)
         self.assertEqual((self.crate / 'target/x86_64-unknown-linux-gnu/release/libanydoc_go.a').read_text(),
                          'native-with-bitcode')
 

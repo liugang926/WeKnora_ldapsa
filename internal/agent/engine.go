@@ -109,6 +109,7 @@ type AgentEngine struct {
 	// at the same two boundaries as steer. Nil disables them.
 	backgroundRun   BackgroundRun
 	workspaceLayout sandbox.WorkspaceLayout
+	desktopEnabled  bool
 	// suspendable lets a user prompt end the run so it can be resumed later;
 	// suspendRequest is saved with the run for that (see EnableSuspension).
 	suspendable    bool
@@ -220,6 +221,15 @@ func (e *AgentEngine) SetWorkspaceLayout(layout sandbox.WorkspaceLayout) {
 	e.workspaceLayout = layout
 }
 
+// SetDesktopEnabled tells the system prompt that the session's sandbox has a
+// graphical desktop the user can watch.
+func (e *AgentEngine) SetDesktopEnabled(enabled bool) {
+	if e == nil {
+		return
+	}
+	e.desktopEnabled = enabled
+}
+
 func (e *AgentEngine) systemPromptOptions(ctx context.Context) *BuildSystemPromptOptions {
 	e.renderedSkillsMetadataLineage = nil
 	opts := &BuildSystemPromptOptions{
@@ -229,6 +239,7 @@ func (e *AgentEngine) systemPromptOptions(ctx context.Context) *BuildSystemPromp
 		MemoryPrompt:     e.memoryPrompt,
 		ProtocolPrompt:   e.modelContext.ProtocolPrompt(),
 		WorkspaceLayout:  e.workspaceLayout,
+		DesktopEnabled:   e.desktopEnabled,
 	}
 	if e.skillsManager != nil && e.skillsManager.IsEnabled() {
 		metadata := e.skillsManager.GetAllMetadata()

@@ -122,12 +122,18 @@ func (e *AgentEngine) Resume(
 		}
 		return nil
 	}
+	appendBackground := func(step types.AgentStep) {
+		for _, injection := range step.BackgroundInjections {
+			messages = append(messages, chat.Message{Role: "user", Content: injection.Content})
+		}
+	}
 	for i, step := range state.RoundSteps {
 		e.replayCollaborationDeliveries(&messages, i, true)
 		if err := appendUsers(step); err != nil {
 			return nil, err
 		}
 		e.replayCollaborationDeliveries(&messages, i, false)
+		appendBackground(step)
 		messages = e.appendToolResults(messages, step)
 		messages = e.appendToolImages(ctx, messages, step)
 	}
@@ -136,6 +142,7 @@ func (e *AgentEngine) Resume(
 		return nil, err
 	}
 	e.replayCollaborationDeliveries(&messages, len(state.RoundSteps), false)
+	appendBackground(p.Step)
 	if err := e.accountMessages(ctx, messages); err != nil {
 		return nil, err
 	}

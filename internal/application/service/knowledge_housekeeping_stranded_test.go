@@ -106,7 +106,7 @@ func TestHousekeepingFailsRowsHeldByWikiPastHoldLimit(t *testing.T) {
 		kbID := "kb-" + id
 		require.NoError(t, db.Exec(
 			`INSERT INTO knowledges (id, tenant_id, knowledge_base_id, parse_status, updated_at)
-			 VALUES (?, 7, ?, ?, ?)`, id, kbID, types.ParseStatusFinalizing, updatedAt,
+			 VALUES (?, 7, ?, ?, ?)`, id, kbID, types.ParseStatusFinalizing, updatedAt.UTC(),
 		).Error)
 		insertWikiPendingOp(t, db, kbID, id)
 	}

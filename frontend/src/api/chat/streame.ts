@@ -269,6 +269,12 @@ export function useStream() {
             }
           }
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          // A reopened turn already knows its persisted message ID. Arm
+          // recovery before the first replay event can be interrupted.
+          if (params.method === 'GET' && params.url === '/api/v1/sessions/continue-stream') {
+            receivedAssistantId = String(params.query || '');
+            armIdle();
+          }
           console.log(`[TTFB] response:headers request_id=${requestID} elapsed_ms=${(performance.now() - sentAt).toFixed(1)}`);
           if (myGeneration === streamGeneration) isLoading.value = false;
         },
@@ -360,8 +366,10 @@ export function useStream() {
           });
           if (myGeneration !== streamGeneration || streamAbort.signal.aborted) return;
           if (err instanceof MissingHistoryEvents) continue;
-          streamMethod = 'GET';
-          url = `${apiUrl}/api/v1/sessions/continue-stream/${encodeURIComponent(params.session_id)}?message_id=${encodeURIComponent(receivedAssistantId)}`;
+          if (streamMethod !== 'GET') {
+            streamMethod = 'GET';
+            url = `${apiUrl}/api/v1/sessions/continue-stream/${encodeURIComponent(params.session_id)}?message_id=${encodeURIComponent(receivedAssistantId)}`;
+          }
         }
       }
     } catch (err) {

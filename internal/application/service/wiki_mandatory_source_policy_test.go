@@ -66,6 +66,7 @@ func TestWikiIDScopeBeforeBodyAndOrdinaryUsable(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&types.WikiPage{}, &types.WikiPageRevision{}, &types.WikiFolder{}))
+	seedWikiTestKnowledgeBase(t, db, "kb", 1)
 	repo := repository.NewWikiPageRepository(db)
 	ctx := context.Background()
 	ordinary := NewWikiPageService(repo, nil, wikiOrdinaryTestPolicy{}, nil, nil, nil)
@@ -107,6 +108,7 @@ func TestWikiMetadataCannotRelabelProtectedOwner(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&types.WikiPage{}))
+	seedWikiTestKnowledgeBase(t, db, "protected", 1)
 	repo := repository.NewWikiPageRepository(db)
 	ctx := context.Background()
 	require.NoError(

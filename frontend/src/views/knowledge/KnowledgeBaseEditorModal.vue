@@ -81,6 +81,12 @@
               </p>
             </div>
 
+            <div v-if="!isFAQ && formData.indexingStrategy.wikiEnabled" class="form-item">
+              <label class="form-label" for="wiki-auto-generate">{{ $t('knowledgeEditor.wiki.autoGenerateLabel') }}</label>
+              <p class="form-tip">{{ $t('knowledgeEditor.wiki.autoGenerateTip') }}</p>
+              <t-switch id="wiki-auto-generate" v-model="formData.wikiConfig.autoGenerate" />
+            </div>
+
             <!-- Wiki 提取粒度 (仅当 Wiki 启用时显示) -->
             <div v-if="!isFAQ && formData.indexingStrategy.wikiEnabled" class="form-item">
               <label class="form-label">{{ $t('knowledgeEditor.wiki.extractionGranularityLabel') }}</label>
@@ -113,11 +119,14 @@
                   :maxlength="4000"
                   :autosize="{ minRows: 3, maxRows: 8 }"
                 />
-                <AssistantActionButton class="wiki-instructions-action"
-                  :label="$t(formData.wikiConfig.contentInstructions.trim() ? 'assistant.actions.refineRules' : 'assistant.actions.writePrompt')"
-                  :query="$t(formData.wikiConfig.contentInstructions.trim() ? 'assistant.prompts.refineWikiRules' : 'assistant.prompts.writeWikiRules', { field: $t('knowledgeEditor.wiki.contentInstructionsLabel') })"
-                  :selection="{ field: $t('knowledgeEditor.wiki.contentInstructionsLabel'), text: formData.wikiConfig.contentInstructions }"
-                  :disabled="saving || loading" />
+                <div class="wiki-instructions-footer">
+                  <AssistantActionButton class="wiki-instructions-action"
+                    :label="$t(formData.wikiConfig.contentInstructions.trim() ? 'assistant.actions.refineRules' : 'assistant.actions.writePrompt')"
+                    :query="$t(formData.wikiConfig.contentInstructions.trim() ? 'assistant.prompts.refineWikiRules' : 'assistant.prompts.writeWikiRules', { field: $t('knowledgeEditor.wiki.contentInstructionsLabel') })"
+                    :selection="{ field: $t('knowledgeEditor.wiki.contentInstructionsLabel'), text: formData.wikiConfig.contentInstructions }"
+                    :disabled="saving || loading" />
+                  <span class="wiki-instructions-counter">{{ formData.wikiConfig.contentInstructions.length }}/4000</span>
+                </div>
               </div>
             </div>
 
@@ -131,11 +140,14 @@
                   :maxlength="4000"
                   :autosize="{ minRows: 3, maxRows: 8 }"
                 />
-                <AssistantActionButton class="wiki-instructions-action"
-                  :label="$t(formData.wikiConfig.extractionInstructions.trim() ? 'assistant.actions.refineRules' : 'assistant.actions.writePrompt')"
-                  :query="$t(formData.wikiConfig.extractionInstructions.trim() ? 'assistant.prompts.refineWikiRules' : 'assistant.prompts.writeWikiRules', { field: $t('knowledgeEditor.wiki.extractionInstructionsLabel') })"
-                  :selection="{ field: $t('knowledgeEditor.wiki.extractionInstructionsLabel'), text: formData.wikiConfig.extractionInstructions }"
-                  :disabled="saving || loading" />
+                <div class="wiki-instructions-footer">
+                  <AssistantActionButton class="wiki-instructions-action"
+                    :label="$t(formData.wikiConfig.extractionInstructions.trim() ? 'assistant.actions.refineRules' : 'assistant.actions.writePrompt')"
+                    :query="$t(formData.wikiConfig.extractionInstructions.trim() ? 'assistant.prompts.refineWikiRules' : 'assistant.prompts.writeWikiRules', { field: $t('knowledgeEditor.wiki.extractionInstructionsLabel') })"
+                    :selection="{ field: $t('knowledgeEditor.wiki.extractionInstructionsLabel'), text: formData.wikiConfig.extractionInstructions }"
+                    :disabled="saving || loading" />
+                  <span class="wiki-instructions-counter">{{ formData.wikiConfig.extractionInstructions.length }}/4000</span>
+                </div>
               </div>
             </div>
 
@@ -1053,6 +1065,7 @@ const initFormData = (type: 'document' | 'faq' = 'document') => {
       customInstructions: ''
     },
     questionGenerationConfig: {
+      modelId: '',
       enabled: true,
       questionCount: 3,
       customInstructions: ''
@@ -1069,6 +1082,7 @@ const initFormData = (type: 'document' | 'faq' = 'document') => {
       customInstructions: ''
     },
     wikiConfig: {
+      autoGenerate: true,
       synthesisModelId: '',
       maxPagesPerIngest: 0,
       extractionGranularity: 'standard' as 'focused' | 'standard' | 'exhaustive',
@@ -1226,6 +1240,7 @@ const loadKBData = async (
         customInstructions: kb.extract_config?.custom_instructions || ''
       },
       questionGenerationConfig: {
+        modelId: kb.question_generation_config?.model_id || '',
         enabled: kb.question_generation_config?.enabled || false,
         questionCount: kb.question_generation_config?.question_count || 3,
         customInstructions: kb.question_generation_config?.custom_instructions || ''
@@ -1244,6 +1259,7 @@ const loadKBData = async (
         customInstructions: kb.profile_config?.custom_instructions || ''
       },
       wikiConfig: {
+        autoGenerate: kb.wiki_config?.auto_generate ?? true,
         synthesisModelId: kb.wiki_config?.synthesis_model_id || '',
         maxPagesPerIngest: kb.wiki_config?.max_pages_per_ingest || 0,
         extractionGranularity: (
@@ -1677,12 +1693,14 @@ const buildSubmitData = () => {
   // 添加问题生成配置
   if (formData.value.questionGenerationConfig?.enabled) {
     data.question_generation_config = {
+      model_id: formData.value.questionGenerationConfig?.modelId || '',
       enabled: true,
       question_count: formData.value.questionGenerationConfig.questionCount || 3,
       custom_instructions: formData.value.questionGenerationConfig.customInstructions || ''
     }
   } else {
     data.question_generation_config = {
+      model_id: formData.value.questionGenerationConfig?.modelId || '',
       enabled: false,
       question_count: 3,
       custom_instructions: formData.value.questionGenerationConfig?.customInstructions || ''
@@ -1713,6 +1731,7 @@ const buildSubmitData = () => {
   // wiki_config only holds wiki-specific tunables.
   if (formData.value.type !== 'faq') {
     data.wiki_config = {
+      auto_generate: formData.value.wikiConfig?.autoGenerate ?? true,
       synthesis_model_id: formData.value.modelConfig?.wikiSynthesisModelId || '',
       max_pages_per_ingest: formData.value.wikiConfig?.maxPagesPerIngest || 0,
       extraction_granularity: formData.value.wikiConfig?.extractionGranularity || 'standard',
@@ -1819,6 +1838,7 @@ const doSubmit = async () => {
       }
       if (formData.value.wikiConfig && formData.value.type !== 'faq') {
         updateConfig.wiki_config = {
+          auto_generate: formData.value.wikiConfig.autoGenerate ?? true,
           synthesis_model_id: formData.value.modelConfig?.wikiSynthesisModelId || '',
           max_pages_per_ingest: formData.value.wikiConfig.maxPagesPerIngest || 0,
           extraction_granularity: formData.value.wikiConfig.extractionGranularity || 'standard',
@@ -1885,6 +1905,7 @@ const doSubmit = async () => {
           customInstructions: data.extract_config?.custom_instructions || ''
         },
         questionGeneration: {
+          modelId: data.question_generation_config?.model_id || '',
           enabled: data.question_generation_config?.enabled || false,
           questionCount: data.question_generation_config?.question_count || 3,
           customInstructions: data.question_generation_config?.custom_instructions || ''
@@ -2049,17 +2070,27 @@ watch(() => chatResources.allModels, (list) => {
 </script>
 
 <style scoped lang="less">
+// Wiki 生成要求 / 提取重点：按钮与字数计数放在输入框下方一行（左按钮右计数），
+// 不再悬浮在框内，避免 .t-textarea__info_wrapper（字数统计条）撑高容器导致按钮压边框。
+// 隐藏 TDesign 内置计数条（输入截断限制 maxlength 仍生效），自建 footer 展示计数。
 .wiki-instructions-input {
-  position: relative;
-
-  .wiki-instructions-action {
-    position: absolute;
-    left: 8px;
-    bottom: 8px;
+  :deep(.t-textarea__info_wrapper) {
+    display: none;
   }
 
-  :deep(.t-textarea__inner) {
-    padding-bottom: 44px;
+  .wiki-instructions-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 24px;
+    margin-top: 2px;
+  }
+
+  .wiki-instructions-counter {
+    font-size: var(--app-text-xs);
+    line-height: 1;
+    color: var(--td-text-color-placeholder);
+    user-select: none;
   }
 }
 

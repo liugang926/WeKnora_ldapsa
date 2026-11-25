@@ -396,6 +396,7 @@ func serveActualHTTPTail(
 		nil,
 		nil, // Host project directories.
 		nil, // Background work.
+		nil, // Host approval modes.
 	)
 	h.ResourceURLResolver = stubRequestResolver
 	gin.SetMode(gin.TestMode)

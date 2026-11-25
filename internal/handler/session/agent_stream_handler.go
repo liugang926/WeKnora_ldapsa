@@ -462,6 +462,7 @@ func (h *AgentStreamHandler) resolveRememberedToolApproval(data event.ToolApprov
 		h.toolApprovals[i].TimedOut = data.TimedOut
 		h.toolApprovals[i].Canceled = data.Canceled
 		h.toolApprovals[i].Scope = data.Scope
+		h.toolApprovals[i].RiskLevel = data.RiskLevel
 		return
 	}
 }
@@ -480,6 +481,12 @@ func hostApprovalSnapshot(host *event.HostApprovalPayload) *types.HostApprovalSn
 		FirstAttemptRan: host.FirstAttemptRan,
 		AllowSession:    host.AllowSession,
 		SessionRules:    append([]string(nil), host.SessionRules...),
+		Reviewer:        host.Reviewer,
+		RiskLevel:       host.RiskLevel,
+		Tool:            host.Tool,
+		FilePath:        host.FilePath,
+		WriteMode:       host.WriteMode,
+		WriteBytes:      host.WriteBytes,
 	}
 }
 
@@ -851,6 +858,12 @@ func (h *AgentStreamHandler) handleError(ctx context.Context, evt event.Event) e
 		return types.ErrSourceLineageUnknown
 	}
 
+	return h.publishFailureControl(false)
+}
+
+// publishFailureControl only emits code-owned constants. A failed final database
+// write ends this run even when no completion frame can be persisted.
+func (h *AgentStreamHandler) publishFailureControl(persistence bool) error {
 	// The engine and the request handler can both report the same failure.
 	h.errorMu.Lock()
 	defer h.errorMu.Unlock()
@@ -860,14 +873,20 @@ func (h *AgentStreamHandler) handleError(ctx context.Context, evt event.Event) e
 	// Provider errors and stage metadata can contain source text or secrets.
 	// This code-origin control neither authenticates the failed assistant nor
 	// certifies a source lineage, and is bound to this handler's exact run.
-	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
+	frame := interfaces.StreamEvent{
 		ID:        h.requestID,
 		Type:      types.ResponseTypeError,
 		Content:   quickAnswerFailureContent,
 		Done:      true,
 		Timestamp: time.Now(),
 		Data:      map[string]interface{}{"error_code": "generation_failed"},
-	}); err != nil {
+	}
+	if persistence {
+		frame.Content = "Failed to save assistant message"
+		frame.Data["stage"] = "message_persistence"
+		frame.SourceLineage, _ = types.NewCompleteSourceLineage()
+	}
+	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, frame); err != nil {
 		logger.GetLogger(h.ctx).Error("Append error event to stream failed", "error", err)
 		return err
 	}

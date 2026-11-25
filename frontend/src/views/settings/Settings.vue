@@ -135,6 +135,10 @@
           <EnvVarSettings />
         </div>
 
+        <div v-if="currentSection === 'credentialvault'" class="section">
+          <CredentialVaultSettings />
+        </div>
+
         <!-- 向量数据库引擎 -->
         <div v-if="currentSection === 'vectorstore'" class="section">
           <VectorStoreSettings />
@@ -244,6 +248,7 @@ import WebSearchSettings from './WebSearchSettings.vue'
 import ChatHistorySettings from './ChatHistorySettings.vue'
 import MemorySettings from './MemorySettings.vue'
 import EnvVarSettings from './EnvVarSettings.vue'
+import CredentialVaultSettings from './CredentialVaultSettings.vue'
 import MemoryWorkspaceSettings from './MemoryWorkspaceSettings.vue'
 import DefaultSettings from './DefaultSettings.vue'
 import AssistantSettings from './AssistantSettings.vue'
@@ -414,6 +419,7 @@ const navItems = computed(() => {
     { key: 'mymemory', icon: 'bookmark', label: t('memorySettings.title') },
     { key: 'assistant', icon: 'assistant', label: t('assistantSettings.title') },
     { key: 'envvars', icon: 'key', label: envNavLabel() },
+    { key: 'credentialvault', icon: 'lock-on', label: t('credentialVault.title') },
     { key: 'tenant', icon: 'user-circle', label: t('settings.tenantInfo') },
     { key: 'members', icon: 'usergroup', label: t('tenantMember.title') },
     ...integrationItems,
@@ -438,7 +444,7 @@ const navGroups = computed<NavGroup[]>(() => {
     {
       key: 'account',
       label: t('settings.navGroups.account'),
-      items: pickItems(['general', 'userprofile', 'assistant', 'mymemory', 'envvars']),
+      items: pickItems(['general', 'userprofile', 'assistant', 'mymemory', 'envvars', 'credentialvault']),
     },
     {
       key: 'workspace',

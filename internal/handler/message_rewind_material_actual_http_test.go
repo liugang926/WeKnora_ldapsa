@@ -156,6 +156,7 @@ func serveActualRewindHTTP(
 		nil,
 		nil, // Host project directories.
 		nil, // Background work.
+		nil, // Host approval modes.
 	)
 	gin.SetMode(gin.TestMode)
 	router := gin.New()

@@ -329,6 +329,7 @@ func runNormalReferencesActualHTTP(t *testing.T, pg bool, modes ...string) {
 		nil,
 		nil, // No host project directories in this chat fixture.
 		nil, // No background activities.
+		nil, // No host approval modes.
 	)
 
 	gin.SetMode(gin.TestMode)

@@ -105,7 +105,7 @@ func (r *knowledgeRepository) SettleWikiPendingOp(
 				nested.db, nested.completionObserver = tx, nil
 				var err error
 				_, promoted, err = nested.FinalizeSubtask(
-					context.WithValue(ctx, wikiSettlementTransactionKey{}, tx), knowledgeID,
+					context.WithValue(ctx, wikiSettlementTransactionKey{}, tx), knowledgeID, attempt,
 				)
 				if err != nil {
 					return err

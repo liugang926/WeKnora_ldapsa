@@ -47,19 +47,19 @@ func TestSearchResultAssemblyOmitsUnverifiableNextcloudPublication(t *testing.T)
 				{ChunkID: "withdrawn-chunk", KnowledgeID: "withdrawn", Score: 0.99},
 				{ChunkID: "ordinary-chunk", KnowledgeID: "ordinary", Score: 0.98},
 			}
-			results, err := svc.processSearchResults(newSharedAccessContext(), hits, true)
+			results, err := svc.processSearchResults(newSharedAccessContext(), hits, len(hits), true)
 			require.NoError(t, err)
 			require.Len(t, results, 1)
 			require.Equal(t, "ordinary", results[0].KnowledgeID)
 			require.Equal(t, "ordinary secret", results[0].Content)
 
 			t.Setenv("WEKNORA_NEXTCLOUD_READ_AUTHORITY", "weknora")
-			results, err = svc.processSearchResults(newSharedAccessContext(), hits, true)
+			results, err = svc.processSearchResults(newSharedAccessContext(), hits, len(hits), true)
 			require.NoError(t, err)
 			require.Len(t, results, 2)
 			require.Equal(t, "withdrawn secret", results[0].Content)
 			otherTenant := types.WithCaller(newSharedAccessContext(), types.Caller{TenantID: 2, UserID: "other"})
-			results, err = svc.processSearchResults(otherTenant, hits, true)
+			results, err = svc.processSearchResults(otherTenant, hits, len(hits), true)
 			require.NoError(t, err)
 			require.Empty(t, results)
 		})

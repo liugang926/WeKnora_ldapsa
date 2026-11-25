@@ -47,6 +47,7 @@ func attachPostProcessOriginalInputs(
 	actual.IndexingStrategy = desired.IndexingStrategy
 	actual.QuestionGenerationConfig = desired.QuestionGenerationConfig
 	actual.ExtractConfig = desired.ExtractConfig
+	actual.WikiConfig = desired.WikiConfig
 	actual.AutoTagConfig = desired.AutoTagConfig
 	input := repository.WithIndependentKnowledgeInput(ctx)
 	if err == gorm.ErrRecordNotFound {

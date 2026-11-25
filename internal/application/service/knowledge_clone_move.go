@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
@@ -592,11 +593,9 @@ func (s *knowledgeService) ProcessKBClone(ctx context.Context, t *asynq.Task) er
 	// Get source and target knowledge bases
 	srcKB, dstKB, err := s.kbService.CopyKnowledgeBase(ctx, payload.SourceID, payload.TargetID)
 	if err != nil {
-		retry, maxRetry := 0, 0
-		retry, _ = asynq.GetRetryCount(ctx)
-		maxRetry, _ = asynq.GetMaxRetry(ctx)
+		retry, maxRetry := taskRetryState(ctx)
 		status := types.KBCloneStatusProcessing
-		if retry >= maxRetry {
+		if retry >= maxRetry || errors.Is(err, asynq.SkipRetry) {
 			status = types.KBCloneStatusFailed
 		}
 		_ = s.saveKBCloneProgress(
@@ -615,8 +614,7 @@ func (s *knowledgeService) ProcessKBClone(ctx context.Context, t *asynq.Task) er
 	}
 
 	// Check if this is the last retry
-	retryCount, _ := asynq.GetRetryCount(ctx)
-	maxRetry, _ := asynq.GetMaxRetry(ctx)
+	retryCount, maxRetry := taskRetryState(ctx)
 	isLastRetry := retryCount >= maxRetry
 
 	logger.Infof(ctx, "Processing KB clone task: %s, source: %s, target: %s, retry: %d/%d",
@@ -624,7 +622,7 @@ func (s *knowledgeService) ProcessKBClone(ctx context.Context, t *asynq.Task) er
 
 	// Helper function to handle errors - only mark as failed on last retry
 	handleError := func(progress *types.KBCloneProgress, err error, message string) {
-		if isLastRetry {
+		if isLastRetry || errors.Is(err, asynq.SkipRetry) {
 			progress.Status = types.KBCloneStatusFailed
 			progress.Error = err.Error()
 			progress.Message = message
@@ -1092,8 +1090,85 @@ func (s *knowledgeService) getOrCreateFAQKnowledge(ctx context.Context, kb *type
 	return knowledge, nil
 }
 
-// saveKBCloneProgress saves the KB clone progress to Redis
+type memProgressEntry[T any] struct {
+	value     T
+	expiresAt time.Time
+}
+
+func storeMemProgress[T any](store *sync.Map, taskID string, value T, ttl time.Duration, onlyIfAbsent bool) {
+	if taskID == "" {
+		return
+	}
+	now := time.Now()
+	entry := memProgressEntry[T]{value: value, expiresAt: now.Add(ttl)}
+	if !onlyIfAbsent {
+		store.Store(taskID, entry)
+		return
+	}
+	sweepExpiredMemProgress[T](store, now)
+	for {
+		actual, loaded := store.LoadOrStore(taskID, entry)
+		if !loaded {
+			return
+		}
+		existing, ok := actual.(memProgressEntry[T])
+		if ok && now.Before(existing.expiresAt) {
+			return
+		}
+		if store.CompareAndSwap(taskID, actual, entry) {
+			return
+		}
+	}
+}
+
+func loadMemProgress[T any](store *sync.Map, taskID string) (*T, bool) {
+	raw, ok := store.Load(taskID)
+	if !ok {
+		return nil, false
+	}
+	entry, ok := raw.(memProgressEntry[T])
+	if !ok {
+		return nil, false
+	}
+	if !time.Now().Before(entry.expiresAt) {
+		store.CompareAndDelete(taskID, raw)
+		return nil, false
+	}
+	cloned := entry.value
+	return &cloned, true
+}
+
+func sweepExpiredMemProgress[T any](store *sync.Map, now time.Time) {
+	store.Range(func(key, raw any) bool {
+		if entry, ok := raw.(memProgressEntry[T]); !ok || !now.Before(entry.expiresAt) {
+			store.CompareAndDelete(key, raw)
+		}
+		return true
+	})
+}
+
+// taskRetryState resolves (retried, maxRetry) across both Asynq workers and
+// Lite mode's SyncTaskExecutor (which injects TaskRetryMetadata). Outside any
+// task runner (e.g. direct test invocations), both return 0 so single-shot
+// calls remain terminal.
+func taskRetryState(ctx context.Context) (int, int) {
+	if retried, maxRetry, ok := types.TaskRetryMetadataFromContext(ctx); ok {
+		return retried, maxRetry
+	}
+	retry, _ := asynq.GetRetryCount(ctx)
+	maxRetry, _ := asynq.GetMaxRetry(ctx)
+	return retry, maxRetry
+}
+
+// saveKBCloneProgress saves the KB clone progress to Redis (or in-memory in Lite mode)
 func (s *knowledgeService) saveKBCloneProgress(ctx context.Context, progress *types.KBCloneProgress) error {
+	if progress == nil {
+		return errors.New("progress is nil")
+	}
+	if s.redisClient == nil {
+		storeMemProgress(&s.memKBCloneProgress, progress.TaskID, *progress, kbCloneProgressTTL, false)
+		return nil
+	}
 	key := getKBCloneProgressKey(progress.TaskID)
 	data, err := json.Marshal(progress)
 	if err != nil {
@@ -1102,8 +1177,15 @@ func (s *knowledgeService) saveKBCloneProgress(ctx context.Context, progress *ty
 	return s.redisClient.Set(ctx, key, data, kbCloneProgressTTL).Err()
 }
 
-// SaveKBCloneProgress saves the KB clone progress to Redis (public method for handler use)
+// SaveKBCloneProgress saves the KB clone progress without overwriting a worker that already started
 func (s *knowledgeService) SaveKBCloneProgress(ctx context.Context, progress *types.KBCloneProgress) error {
+	if progress == nil {
+		return errors.New("progress is nil")
+	}
+	if s.redisClient == nil {
+		storeMemProgress(&s.memKBCloneProgress, progress.TaskID, *progress, kbCloneProgressTTL, true)
+		return nil
+	}
 	data, err := json.Marshal(progress)
 	if err != nil {
 		return err
@@ -1113,6 +1195,12 @@ func (s *knowledgeService) SaveKBCloneProgress(ctx context.Context, progress *ty
 
 // GetKBCloneProgress retrieves the progress of a knowledge base clone task
 func (s *knowledgeService) GetKBCloneProgress(ctx context.Context, taskID string) (*types.KBCloneProgress, error) {
+	if s.redisClient == nil {
+		if progress, ok := loadMemProgress[types.KBCloneProgress](&s.memKBCloneProgress, taskID); ok {
+			return progress, nil
+		}
+		return nil, werrors.NewNotFoundError("KB clone task not found")
+	}
 	key := getKBCloneProgressKey(taskID)
 	data, err := s.redisClient.Get(ctx, key).Bytes()
 	if err != nil {
@@ -1139,6 +1227,13 @@ func getKnowledgeMoveProgressKey(taskID string) string {
 }
 
 func (s *knowledgeService) saveKnowledgeMoveProgress(ctx context.Context, progress *types.KnowledgeMoveProgress) error {
+	if progress == nil {
+		return errors.New("progress is nil")
+	}
+	if s.redisClient == nil {
+		storeMemProgress(&s.memKnowledgeMoveProgress, progress.TaskID, *progress, knowledgeMoveProgressTTL, false)
+		return nil
+	}
 	key := getKnowledgeMoveProgressKey(progress.TaskID)
 	data, err := json.Marshal(progress)
 	if err != nil {
@@ -1147,8 +1242,15 @@ func (s *knowledgeService) saveKnowledgeMoveProgress(ctx context.Context, progre
 	return s.redisClient.Set(ctx, key, data, knowledgeMoveProgressTTL).Err()
 }
 
-// SaveKnowledgeMoveProgress saves the knowledge move progress to Redis (public method for handler use)
+// SaveKnowledgeMoveProgress saves the knowledge move progress without overwriting a worker that already started
 func (s *knowledgeService) SaveKnowledgeMoveProgress(ctx context.Context, progress *types.KnowledgeMoveProgress) error {
+	if progress == nil {
+		return errors.New("progress is nil")
+	}
+	if s.redisClient == nil {
+		storeMemProgress(&s.memKnowledgeMoveProgress, progress.TaskID, *progress, knowledgeMoveProgressTTL, true)
+		return nil
+	}
 	data, err := json.Marshal(progress)
 	if err != nil {
 		return err
@@ -1158,6 +1260,12 @@ func (s *knowledgeService) SaveKnowledgeMoveProgress(ctx context.Context, progre
 
 // GetKnowledgeMoveProgress retrieves the progress of a knowledge move task
 func (s *knowledgeService) GetKnowledgeMoveProgress(ctx context.Context, taskID string) (*types.KnowledgeMoveProgress, error) {
+	if s.redisClient == nil {
+		if progress, ok := loadMemProgress[types.KnowledgeMoveProgress](&s.memKnowledgeMoveProgress, taskID); ok {
+			return progress, nil
+		}
+		return nil, werrors.NewNotFoundError("Knowledge move task not found")
+	}
 	key := getKnowledgeMoveProgressKey(taskID)
 	data, err := s.redisClient.Get(ctx, key).Bytes()
 	if err != nil {
@@ -1231,12 +1339,11 @@ func (s *knowledgeService) ProcessKnowledgeMove(ctx context.Context, t *asynq.Ta
 	ctx = context.WithValue(ctx, types.TenantInfoContextKey, tenant)
 	// No item is claimed and no failure callback can alter document state until
 	// every requested document and its children passed the same pair preflight.
-	retry, _ := asynq.GetRetryCount(ctx)
-	maxRetry, _ := asynq.GetMaxRetry(ctx)
+	retry, maxRetry := taskRetryState(ctx)
 	items, err := s.planKnowledgeMove(ctx, sourceKB, targetKB, payload.KnowledgeIDs, payload.Mode)
 	if err != nil {
 		status := types.KBCloneStatusProcessing
-		if retry >= maxRetry {
+		if retry >= maxRetry || errors.Is(err, asynq.SkipRetry) {
 			status = types.KBCloneStatusFailed
 		}
 		_ = s.saveKnowledgeMoveProgress(
@@ -1289,7 +1396,7 @@ func (s *knowledgeService) ProcessKnowledgeMove(ctx context.Context, t *asynq.Ta
 	for _, item := range items {
 		if err := s.moveOneKnowledge(ctx, item.ID, sourceKB, targetKB, payload.Mode); err != nil {
 			failures = errors.Join(failures, fmt.Errorf("knowledge %s: %w", item.ID, err))
-			if retry >= maxRetry {
+			if retry >= maxRetry || errors.Is(err, asynq.SkipRetry) {
 				s.markMoveItemFailed(ctx, item.ID, sourceKB, targetKB, payload.Mode, err)
 			}
 			progress.Failed++
@@ -1306,7 +1413,7 @@ func (s *knowledgeService) ProcessKnowledgeMove(ctx context.Context, t *asynq.Ta
 	}
 	if failures != nil {
 		progress.Error = failures.Error()
-		if retry >= maxRetry {
+		if retry >= maxRetry || errors.Is(failures, asynq.SkipRetry) {
 			progress.Status = types.KBCloneStatusFailed
 			outcome := types.AuditOutcomeFailed
 			if progress.Failed < progress.Total {
@@ -1377,7 +1484,7 @@ func (s *knowledgeService) moveOneKnowledge(
 			if state.Phase == "reparse_pending" {
 				return s.enqueueMovedKnowledge(ctx, knowledge, sourceKB, targetKB)
 			}
-			if mode == "reuse_vectors" && targetKB.IsWikiEnabled() {
+			if mode == "reuse_vectors" && targetKB.IsWikiAutoGenerateEnabled() {
 				_, err := EnqueueWikiIngest(ctx, s.task, s.taskPendingRepo, tenantID, targetKB.ID, knowledge.ID)
 				return err
 			}
@@ -1424,7 +1531,7 @@ func (s *knowledgeService) moveOneKnowledge(
 		// reparse re-ingests through KnowledgePostProcess once the new chunks
 		// land; reuse_vectors keeps the existing chunks and never re-enters that
 		// pipeline, so the target KB has to be told about the document here.
-		if targetKB.IsWikiEnabled() {
+		if targetKB.IsWikiAutoGenerateEnabled() {
 			_, err := EnqueueWikiIngest(ctx, s.task, s.taskPendingRepo, tenantID, targetKB.ID, knowledge.ID)
 			return err
 		}

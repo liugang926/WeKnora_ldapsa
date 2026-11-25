@@ -328,6 +328,7 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 				returnErr,
 				false,
 				isFinalAsynqAttempt(ctx),
+				p.Attempt,
 			))
 		}
 	}()
@@ -426,7 +427,7 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 				"dingtalk_graph_settlement",
 				outcomeErr,
 				false,
-				true)
+				true, p.Attempt)
 			if err != nil {
 				return err
 			}
@@ -480,6 +481,7 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 				nil,
 				false,
 				true,
+				p.Attempt,
 			)
 		}
 
@@ -543,7 +545,7 @@ func (s *ChunkExtractService) Handle(ctx context.Context, t *asynq.Task) (return
 		}
 		if err := finalizeSubtaskDetached(ctx, s.knowledgeRepo, p.KnowledgeID,
 			fmt.Sprintf("graph_chunk[%d]", p.ChunkIndex),
-			safeErr, false, isFinalAsynqAttempt(ctx)); err != nil {
+			safeErr, false, isFinalAsynqAttempt(ctx), p.Attempt); err != nil {
 			returnErr = errors.Join(returnErr, err)
 			if handleErr == nil {
 				handleErr = err
