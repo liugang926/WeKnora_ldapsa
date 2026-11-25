@@ -6,12 +6,9 @@ import (
 	"errors"
 	"testing"
 
-	apprepo "github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/hibiken/asynq"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 func TestProcessSyncRetriesFinalPersistenceFailure(t *testing.T) {
@@ -20,25 +17,15 @@ func TestProcessSyncRetriesFinalPersistenceFailure(t *testing.T) {
 			t.Run(map[bool]string{false: "batch", true: "stream"}[streaming]+"/"+stage, func(t *testing.T) {
 				ctx := context.Background()
 				h := newIngestAckHarness(t, streaming)
-				db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-				require.NoError(t, err)
-				sqlDB, err := db.DB()
-				require.NoError(t, err)
-				sqlDB.SetMaxOpenConns(1)
-				t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
-				require.NoError(t, db.AutoMigrate(&types.DataSource{}, &types.SyncLog{}))
-				sources := apprepo.NewDataSourceRepository(db)
-				logs := apprepo.NewSyncLogRepository(db)
-				require.NoError(t, sources.Create(ctx, h.ds))
-				require.NoError(t, logs.Create(ctx, h.syncLogRepo.logs[h.syncLogID]))
-				h.svc.dsRepo, h.svc.syncLogRepo = sources, logs
+				db := h.useSQLiteSyncState(t)
+				sources, logs := h.svc.dsRepo, h.svc.syncLogRepo
 				table, column := h.ds.TableName(), "last_sync_at"
 				if stage == "log" {
 					table, column = (&types.SyncLog{}).TableName(), "finished_at"
 				}
 				require.NoError(t, db.Exec("CREATE TRIGGER reject_completion BEFORE UPDATE ON "+table+
 					" WHEN NEW."+column+" IS NOT NULL BEGIN SELECT RAISE(ABORT, 'completion blocked'); END").Error)
-				err = h.svc.ProcessSync(ctx, h.task)
+				err := h.svc.ProcessSync(ctx, h.task)
 				require.ErrorContains(t, err, "completion blocked",
 					"a completed connector run is not an acknowledged task until its final state is persisted")
 				require.Len(t, h.sink.stored, 3)

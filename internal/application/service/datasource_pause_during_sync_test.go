@@ -5,12 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/datasource"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 type pauseDuringSyncConnector struct {
@@ -47,21 +44,11 @@ func TestProcessSyncPreservesPauseOrResumeDuringFetch(t *testing.T) {
 			t.Run(mode+"/"+action, func(t *testing.T) {
 				ctx := t.Context()
 				h := newIngestAckHarness(t, mode == "stream")
-				db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-				require.NoError(t, err)
-				sqlDB, err := db.DB()
-				require.NoError(t, err)
-				sqlDB.SetMaxOpenConns(1)
-				t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
-				require.NoError(t, db.AutoMigrate(&types.DataSource{}, &types.SyncLog{}))
-				sources := repository.NewDataSourceRepository(db)
-				logs := repository.NewSyncLogRepository(db)
 				if action == "resume" {
 					h.ds.Status = types.DataSourceStatusPaused
 				}
-				require.NoError(t, sources.Create(ctx, h.ds))
-				require.NoError(t, logs.Create(ctx, h.syncLogRepo.logs[h.syncLogID]))
-				h.svc.dsRepo, h.svc.syncLogRepo = sources, logs
+				h.useSQLiteSyncState(t)
+				sources, logs := h.svc.dsRepo, h.svc.syncLogRepo
 				h.svc.scheduler = datasource.NewScheduler(sources, logs, nil)
 				h.svc.connectorRegistry = datasource.NewConnectorRegistry()
 				beforeFetch := func() {
@@ -80,7 +67,7 @@ func TestProcessSyncPreservesPauseOrResumeDuringFetch(t *testing.T) {
 					connector = &pauseDuringStreamConnector{&ingestAckStream{h.connector}, beforeFetch}
 				}
 				require.NoError(t, h.svc.connectorRegistry.Register(connector))
-				err = h.svc.ProcessSync(ctx, h.task)
+				err := h.svc.ProcessSync(ctx, h.task)
 				if fetchErr != nil {
 					require.ErrorIs(t, err, fetchErr)
 				} else {

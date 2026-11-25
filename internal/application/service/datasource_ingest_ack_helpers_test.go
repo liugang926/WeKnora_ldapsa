@@ -8,10 +8,13 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/datasource"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/hibiken/asynq"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 type ingestAckConnector struct {
@@ -126,4 +129,25 @@ func newIngestAckHarness(t *testing.T, streaming bool) *ingestAckHarness {
 	})
 	require.NoError(t, err)
 	return &ingestAckHarness{h, c, sink, asynq.NewTask(types.TypeDataSourceSync, payload)}
+}
+
+func (h *ingestAckHarness) useSQLiteSyncState(t *testing.T) *gorm.DB {
+	t.Helper()
+	ctx := t.Context()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+	require.NoError(t, db.AutoMigrate(&types.KnowledgeBase{}, &types.DataSource{}, &types.SyncLog{}))
+
+	kb, err := h.svc.kbService.GetKnowledgeBaseByID(ctx, h.ds.KnowledgeBaseID)
+	require.NoError(t, err)
+	require.NoError(t, db.WithContext(ctx).Create(kb).Error)
+	h.svc.dsRepo = repository.NewDataSourceRepository(db)
+	h.svc.syncLogRepo = repository.NewSyncLogRepository(db)
+	require.NoError(t, h.svc.dsRepo.Create(ctx, h.ds))
+	require.NoError(t, h.svc.syncLogRepo.Create(ctx, h.syncLogRepo.logs[h.syncLogID]))
+	return db
 }
