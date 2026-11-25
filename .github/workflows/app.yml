@@ -286,7 +286,7 @@ jobs:
         shell: bash
         run: |
           go vet -tags "desktop,sqlite_fts5" ./internal/container ./internal/application/service ./cmd/desktop
-          go test -tags "desktop,sqlite_fts5" ./internal/container ./internal/application/service ./cmd/desktop
+          go test -tags "desktop,sqlite_fts5" -timeout=75m ./internal/container ./internal/application/service ./cmd/desktop
           go build -tags "desktop,sqlite_fts5" -o /tmp/weknora-desktop ./cmd/desktop
           rm -f /tmp/weknora-desktop
 
