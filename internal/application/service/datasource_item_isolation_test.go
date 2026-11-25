@@ -642,10 +642,8 @@ func TestProcessSync_RealKnowledgeServiceFeishuDrivePermanentRejections(t *testi
 	assert.Equal(t, 0, log2.ItemsTotal)
 }
 
-// Verifies that when a scheduled data source enters error state (only failing
-// items in scope), expanding scope via UpdateDataSource removes the cron job
-// while in error, and the subsequent recovering sync immediately restores the
-// cron entry in the live Scheduler — and keeps it alive across quiet rounds.
+// An error-state source retains its schedule so a later tick can retry after
+// backoff. A recovering sync can also restore a missing scheduler entry.
 func TestProcessSync_ErrorRecoveryRestoresCronAndQuietRoundKeepsSchedule(t *testing.T) {
 	const (
 		rootTok = "fld-sched-root"
@@ -725,12 +723,17 @@ func TestProcessSync_ErrorRecoveryRestoresCronAndQuietRoundKeepsSchedule(t *test
 	require.NoError(t, err)
 	assert.Equal(t, types.DataSourceStatusError, stored.Status)
 
-	// User expands scope via UpdateDataSource while ds is in error state:
-	// UpdateDataSource unregisters the cron entry because status != active.
+	// Editing the resource selection must keep the existing retry schedule.
 	setDataSourceResourceIDs(t, stored, []string{rootTok + ":" + dir1Tok, rootTok + ":" + dir2Tok})
-	_, err = svc.UpdateDataSource(ctx, stored)
+	stored, err = svc.UpdateDataSource(ctx, stored)
 	require.NoError(t, err)
-	assert.Equal(t, 0, f.scheduler.EntryCount())
+	assert.Equal(t, types.DataSourceStatusError, stored.Status)
+	assert.Equal(t, f.ds.SyncSchedule, stored.SyncSchedule)
+	require.Equal(t, 1, f.scheduler.EntryCount())
+
+	// Exercise recovery even when the in-memory entry was lost.
+	f.scheduler.Remove(f.ds.ID)
+	require.Zero(t, f.scheduler.EntryCount())
 
 	// Round 2: manual sync picks up dir2, transitions ds error -> active, and
 	// immediately re-registers the cron entry in the live Scheduler.
@@ -751,10 +754,15 @@ func TestProcessSync_ErrorRecoveryRestoresCronAndQuietRoundKeepsSchedule(t *test
 	assert.Equal(t, types.SyncLogStatusPartial, log3.Status)
 	assert.Equal(t, 1, log3.ItemsTotal)
 	assert.Equal(t, 1, log3.ItemsFailed)
+	assert.Zero(t, log3.ItemsCreated)
+	assert.Zero(t, log3.ItemsUpdated)
 	stored, err = f.dsRepo.FindByID(ctx, f.ds.ID)
 	require.NoError(t, err)
 	assert.Equal(t, types.DataSourceStatusActive, stored.Status)
 	assert.Equal(t, 1, f.scheduler.EntryCount())
+
+	require.NoError(t, svc.PauseDataSource(ctx, f.ds.ID))
+	assert.Zero(t, f.scheduler.EntryCount())
 }
 
 // Verifies Feishu Drive fetch-stage failures include the resolved folder path
