@@ -12,19 +12,29 @@ import (
 	"gorm.io/gorm"
 )
 
+func createImageRevisionDocument(t *testing.T, db *gorm.DB, chunk *types.Chunk) {
+	t.Helper()
+	require.NoError(t, db.Create(&types.Knowledge{
+		ID: chunk.KnowledgeID, TenantID: chunk.TenantID, KnowledgeBaseID: chunk.KnowledgeBaseID,
+	}).Error)
+}
+
 func TestSaveImageRevisionKeepsCopiesAndGalleryConsistent(t *testing.T) {
 	imageAssetBackends(t, func(t *testing.T, db *gorm.DB) {
-		require.NoError(t, db.AutoMigrate(&types.ChunkRevision{}))
+		require.NoError(t, db.AutoMigrate(&types.Knowledge{}, &types.ChunkRevision{}))
 		fx := newImageFixture(t, db)
 		original := fixtureImage{URL: "local://chart.png", Caption: "old caption", OCRText: "old OCR"}
 		parent := fx.add("text", 0, original)
+		createImageRevisionDocument(t, db, parent)
 		caption := fx.add("image_caption", 1, original)
 		ocr := fx.add("image_ocr", 2, original)
 		vector := fx.add("image_vector", 3, original)
 		other := fx.add("image_caption", 4, fixtureImage{URL: "local://other.png", Caption: "unrelated"})
 		otherDocument := fx.add("image_caption", 5, original)
+		otherDocument.KnowledgeID = uuid.NewString()
+		createImageRevisionDocument(t, db, otherDocument)
 		require.NoError(t, db.Model(&types.Chunk{}).Where("id = ?", otherDocument.ID).
-			UpdateColumn("knowledge_id", "other-document").Error)
+			UpdateColumn("knowledge_id", otherDocument.KnowledgeID).Error)
 		repo := NewChunkRepository(db)
 		ctx := context.Background()
 		// Both edits start from the old image snapshot. Saving the OCR next
@@ -67,6 +77,7 @@ func TestSaveImageRevisionKeepsCopiesAndGalleryConsistent(t *testing.T) {
 		require.NoError(t, db.Model(&types.Chunk{}).Where("id = ?", parent.ID).
 			Update("updated_at", time.Now().Add(time.Minute)).Error)
 		rows, _ := fx.list(types.ImageAssetQuery{})
+		require.Contains(t, rowURLs(t, rows), original.URL)
 		for _, row := range rows {
 			if row.URL == original.URL {
 				require.Equal(t, "corrected caption", row.Caption)
@@ -78,10 +89,12 @@ func TestSaveImageRevisionKeepsCopiesAndGalleryConsistent(t *testing.T) {
 
 func TestSaveImageRevisionRollsBackCopiesWhenSnapshotFails(t *testing.T) {
 	imageAssetBackends(t, func(t *testing.T, db *gorm.DB) {
-		require.NoError(t, db.AutoMigrate(&types.ChunkRevision{}))
+		require.NoError(t, db.AutoMigrate(&types.Knowledge{}, &types.ChunkRevision{}))
+		db.TranslateError = true
 		fx := newImageFixture(t, db)
 		image := fixtureImage{URL: "local://chart.png", Caption: "old", OCRText: "OCR"}
 		parent := fx.add("text", 0, image)
+		createImageRevisionDocument(t, db, parent)
 		caption := fx.add("image_caption", 1, image)
 		repo := NewChunkRepository(db)
 		snapshot := &types.ChunkRevision{
@@ -91,7 +104,7 @@ func TestSaveImageRevisionRollsBackCopiesWhenSnapshotFails(t *testing.T) {
 		require.NoError(t, db.Create(snapshot).Error)
 		caption.Content = "rejected edit"
 		caption.ContentRevision = 1
-		require.Error(t, repo.SaveChunkRevision(context.Background(), caption, snapshot, 0))
+		require.ErrorIs(t, repo.SaveChunkRevision(context.Background(), caption, snapshot, 0), gorm.ErrDuplicatedKey)
 		for _, id := range []string{parent.ID, caption.ID} {
 			stored, err := repo.GetChunkByID(context.Background(), 1, id)
 			require.NoError(t, err)
