@@ -251,7 +251,7 @@ func historyClearIndexFixture(t *testing.T, count int) (
 	)
 	ctx := agentPromptActualRequestContext(original, t)
 	_, assistant := produceActualMessagePair(ctx, t, svc, session)
-	_, clear, tenants, knowledge := historyClearTenantFixture(t, count, session.TenantID)
+	_, clearService, tenants, knowledge := historyClearTenantFixture(t, count, session.TenantID)
 	// Both generations are writable so a stale configuration cannot pass
 	// the test simply because its write target is absent.
 	for _, id := range []string{"history", "new-history"} {
@@ -267,7 +267,7 @@ func historyClearIndexFixture(t *testing.T, count int) (
 			), kb,
 		))
 	}
-	kbs := clear.kbService.(*historyClearKBService)
+	kbs := clearService.kbService.(*historyClearKBService)
 	kbs.KnowledgeBaseService = svc.kbService
 	writer.kbService = svc.kbService
 	knowledge.writer = writer
