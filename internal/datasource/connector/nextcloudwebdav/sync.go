@@ -255,7 +255,9 @@ func (r *syncRun) identity(e entry) types.FetchedItem {
 		ExternalID: externalID(r.cur.Scope, e.Path),
 		Title:      "Nextcloud" + e.Path, FileName: knowledgeFileName(e.Path), UpdatedAt: e.ModifiedAt,
 		SourceResourceID: "/", Metadata: map[string]string{
-			"channel": types.ChannelNextcloud, "source_type": types.ConnectorTypeNextcloudNativeWebDAV, "nextcloud_path": e.Path,
+			"channel":           types.ChannelNextcloud,
+			"source_type":       types.ConnectorTypeNextcloudNativeWebDAV,
+			"nextcloud_path":    e.Path,
 			"nextcloud_file_id": e.FileID, "nextcloud_etag": e.ETag, "nextcloud_size": strconv.FormatInt(e.Size, 10),
 		},
 	}

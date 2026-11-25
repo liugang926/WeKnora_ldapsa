@@ -104,7 +104,10 @@ func TestWikiIngestRetainsSourceAfterFinalizePersistenceFailure(t *testing.T) {
 			}
 			svc, db := newWikiLookupRecoveryService(t, "kb-1", rdb)
 			// A retract with no remaining pages still needs a durable index change.
-			b, err := json.Marshal(WikiPendingOp{Op: WikiOpRetract, DocTitle: "Removed document", Initiator: types.TaskInitiatorFromContext(svc.actor)})
+			b, err := json.Marshal(WikiPendingOp{
+				Op: WikiOpRetract, DocTitle: "Removed document",
+				Initiator: types.TaskInitiatorFromContext(svc.actor),
+			})
 			require.NoError(t, err)
 			source := &types.TaskPendingOp{
 				TenantID: 7, TaskType: wikiTaskType, Scope: wikiTaskScope, ScopeID: "kb-1",

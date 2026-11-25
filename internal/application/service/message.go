@@ -725,7 +725,10 @@ func (s *messageService) IndexMessageToKB(ctx context.Context, _ string, _ strin
 			},
 		)
 		if err == nil && result != nil && result.Knowledge != nil {
-			logger.Infof(ctx, "Message indexed to chat history KB: knowledge_id=%s, message_id=%s", result.Knowledge.ID, messageID)
+			logger.Infof(
+				ctx, "Message indexed to chat history KB: knowledge_id=%s, message_id=%s",
+				result.Knowledge.ID, messageID,
+			)
 		}
 		return err
 	})

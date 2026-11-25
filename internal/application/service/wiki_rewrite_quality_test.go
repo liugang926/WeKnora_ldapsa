@@ -38,6 +38,7 @@ func TestWikiRewriteQuality(t *testing.T) {
 		})
 	}
 }
+
 func TestWikiContinuationOverlap(t *testing.T) {
 	overlap := strings.Repeat("边界内容", 20)
 	if got := trimWikiContinuationOverlap("前文"+overlap, overlap+"新增事实"); got != "新增事实" {
@@ -50,10 +51,17 @@ func TestWikiContinuationOverlap(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
 func TestWikiRewriteRejectsLoopBeforeContinuation(t *testing.T) {
-	model := &scriptedTemplateChatModel{responses: []*types.ChatResponse{{Content: strings.Repeat(strings.Repeat("事实", 40)+"\n\n", 20), FinishReason: "length"}}}
+	model := &scriptedTemplateChatModel{responses: []*types.ChatResponse{{
+		Content:      strings.Repeat(strings.Repeat("事实", 40)+"\n\n", 20),
+		FinishReason: "length",
+	}}}
 	service := &wikiIngestService{}
-	_, err := service.generateWithTemplateResult(context.Background(), model, agent.WikiPageModifyUserPrompt, modifyTemplateData())
+	_, err := service.generateWithTemplateResult(
+		context.Background(),
+		model, agent.WikiPageModifyUserPrompt, modifyTemplateData(),
+	)
 	if err == nil || len(model.calls) != 1 {
 		t.Fatalf("error=%v calls=%d", err, len(model.calls))
 	}

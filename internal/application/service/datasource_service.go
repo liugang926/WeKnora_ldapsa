@@ -2565,7 +2565,8 @@ func (s *DataSourceService) processSyncStreaming(
 		if err := allFetchedItemsFailedError(result, handler.nonBlockingFailures); err != nil {
 			logger.Errorf(ctx, "streaming sync failed while processing fetched items: %v", err)
 			_ = s.updateSyncRunResult(
-				ctx, ds, syncLog, result, resultJSON, types.SyncLogStatusFailed, apperrors.PublicMessage(err), wasPaused,
+				ctx, ds, syncLog, result, resultJSON, types.SyncLogStatusFailed,
+				apperrors.PublicMessage(err), wasPaused,
 			)
 			return err
 		}

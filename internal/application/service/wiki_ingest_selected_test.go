@@ -35,7 +35,9 @@ func TestWikiIngestSelectedDocumentUsesExistingClaimsAndFollowUp(t *testing.T) {
 						return svc.knowledgeRepo.GetKnowledgeByIDOnly(ctx, id)
 					}
 				}
-				raw, err := json.Marshal(WikiIngestPayload{TenantID: 7, KnowledgeBaseID: "wiki-selected-kb", KnowledgeID: "selected"})
+				raw, err := json.Marshal(WikiIngestPayload{
+					TenantID: 7, KnowledgeBaseID: "wiki-selected-kb", KnowledgeID: "selected",
+				})
 				require.NoError(t, err)
 				require.NoError(t, svc.ProcessWikiIngest(ctx, asynq.NewTask(types.TypeWikiIngest, raw)))
 				var untouched types.TaskPendingOp
@@ -63,7 +65,10 @@ func TestWikiIngestSelectedDocumentUsesExistingClaimsAndFollowUp(t *testing.T) {
 				}
 				lookup.lookup = svc.knowledgeRepo.GetKnowledgeByIDOnly
 				require.NoError(t, svc.ProcessWikiIngest(context.Background(), ordinary))
-				count, err := svc.pendingRepo.PendingCount(context.Background(), wikiTaskType, wikiTaskScope, "wiki-selected-kb")
+				count, err := svc.pendingRepo.PendingCount(
+					context.Background(),
+					wikiTaskType, wikiTaskScope, "wiki-selected-kb",
+				)
 				require.NoError(t, err)
 				require.Zero(t, count)
 			})
@@ -95,7 +100,9 @@ func TestWikiIngestSelectedDocumentClearsKnowledgeIDOnCappedRetryAndStaleRecheck
 		defer release()
 	}
 
-	raw, err := json.Marshal(WikiIngestPayload{TenantID: 7, KnowledgeBaseID: "wiki-selected-kb", KnowledgeID: "selected"})
+	raw, err := json.Marshal(WikiIngestPayload{
+		TenantID: 7, KnowledgeBaseID: "wiki-selected-kb", KnowledgeID: "selected",
+	})
 	require.NoError(t, err)
 	require.NoError(t, svc.ProcessWikiIngest(context.Background(), asynq.NewTask(types.TypeWikiIngest, raw)))
 

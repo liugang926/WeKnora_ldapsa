@@ -681,10 +681,20 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 		(embeddingModel == nil || previousEmbeddingModelID != kb.EmbeddingModelID) &&
 		s.modelService != nil && retrieveEngine != nil {
 		if prevModel, modelErr := s.modelService.GetEmbeddingModel(ctx, previousEmbeddingModelID); modelErr != nil {
-			logger.Warnf(ctx, "Failed to resolve previous embedding model %s during index swap: %v", previousEmbeddingModelID, modelErr)
-		} else if prevModel != nil && (embeddingModel == nil || prevModel.GetDimensions() != embeddingModel.GetDimensions()) {
-			if delErr := retrieveEngine.DeleteByKnowledgeIDList(ctx, []string{knowledge.ID}, prevModel.GetDimensions(), knowledge.Type); delErr != nil {
-				logger.Warnf(ctx, "Failed to delete previous embedding model index data for %s: %v", knowledge.ID, delErr)
+			logger.Warnf(
+				ctx, "Failed to resolve previous embedding model %s during index swap: %v",
+				previousEmbeddingModelID, modelErr,
+			)
+		} else if prevModel != nil &&
+			(embeddingModel == nil || prevModel.GetDimensions() != embeddingModel.GetDimensions()) {
+			if delErr := retrieveEngine.DeleteByKnowledgeIDList(
+				ctx,
+				[]string{knowledge.ID}, prevModel.GetDimensions(), knowledge.Type,
+			); delErr != nil {
+				logger.Warnf(
+					ctx, "Failed to delete previous embedding model index data for %s: %v",
+					knowledge.ID, delErr,
+				)
 			}
 		}
 	}
@@ -890,7 +900,10 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 		"chunks_planned": len(insertChunks),
 	})
 	if err := s.chunkRepo.CreateChunks(ctx, insertChunks); err != nil {
-		s.failKnowledgeAfterSwapCleanup(ctx, tenantInfo, kb, knowledge, hadPreviousContent, previousStorageSize, err.Error())
+		s.failKnowledgeAfterSwapCleanup(
+			ctx, tenantInfo, kb, knowledge,
+			hadPreviousContent, previousStorageSize, err.Error(),
+		)
 		s.failStage(ctx, knowledge.ID, types.StageChunking,
 			werrors.ErrCodeChunkingFailed, "create chunks failed", err)
 		return nil
@@ -951,14 +964,20 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 			// Re-fetch tenant storage information
 			tenantInfo, err = s.tenantRepo.GetTenantByID(ctx, tenantInfo.ID)
 			if err != nil {
-				s.failKnowledgeAfterSwapCleanup(ctx, tenantInfo, kb, knowledge, hadPreviousContent, previousStorageSize, err.Error())
+				s.failKnowledgeAfterSwapCleanup(
+					ctx, tenantInfo, kb, knowledge,
+					hadPreviousContent, previousStorageSize, err.Error(),
+				)
 				s.deleteUnindexedChunks(ctx, knowledge)
 				return nil
 			}
 			// Discount the storage this document's own previous index already occupies.
 			effectiveUsed := max(int64(0), tenantInfo.StorageUsed-previousStorageSize)
 			if effectiveUsed+totalStorageSize > tenantInfo.StorageQuota {
-				s.failKnowledgeAfterSwapCleanup(ctx, tenantInfo, kb, knowledge, hadPreviousContent, previousStorageSize, "存储空间不足")
+				s.failKnowledgeAfterSwapCleanup(
+					ctx, tenantInfo, kb, knowledge,
+					hadPreviousContent, previousStorageSize, "存储空间不足",
+				)
 				s.deleteUnindexedChunks(ctx, knowledge)
 				return nil
 			}
@@ -1000,7 +1019,10 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 			// final attempt (or a caller without a retry loop) records failure.
 			willRetry := summaryTaskWillRetry(ctx)
 			if !willRetry {
-				s.failKnowledgeAfterSwapCleanup(ctx, tenantInfo, kb, knowledge, hadPreviousContent, previousStorageSize, err.Error())
+				s.failKnowledgeAfterSwapCleanup(
+					ctx, tenantInfo, kb, knowledge,
+					hadPreviousContent, previousStorageSize, err.Error(),
+				)
 			}
 
 			// delete failed chunks

@@ -144,7 +144,6 @@ func TestParseResponseCapsSuccessBody(t *testing.T) {
 		}
 
 		err := parseResponse(newTestResponse(http.StatusOK, strings.NewReader(`{"pad":"`+pad+`"}`)), &got)
-
 		if err != nil {
 			t.Fatalf("parseResponse() = %v, want nil", err)
 		}

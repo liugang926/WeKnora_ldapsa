@@ -166,7 +166,9 @@ func newWikiLookupRecoveryService(t *testing.T, kbID string, rdb *redis.Client) 
 	return newWikiLookupRecoveryServiceWithConfig(t, kbID, rdb, nil)
 }
 
-func newWikiLookupRecoveryServiceWithConfig(t *testing.T, kbID string, rdb *redis.Client, cfg *types.WikiConfig) (*wikiLookupRecoveryFixture, *gorm.DB) {
+func newWikiLookupRecoveryServiceWithConfig(
+	t *testing.T, kbID string, rdb *redis.Client, cfg *types.WikiConfig,
+) (*wikiLookupRecoveryFixture, *gorm.DB) {
 	t.Helper()
 	f := newEnrichmentTestFixture(t, false)
 	db := f.db

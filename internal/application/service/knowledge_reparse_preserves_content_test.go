@@ -100,7 +100,7 @@ func (e *deterministicTestEmbedder) BatchEmbed(_ context.Context, texts []string
 			h := fnv.New32a()
 			_, _ = h.Write([]byte(tok))
 			slot := int(h.Sum32()) % e.dims
-			vec[slot] += 1
+			vec[slot]++
 		}
 		out[i] = vec
 	}
@@ -497,7 +497,10 @@ func TestBatchReparseKeepsIndexedContentSearchableUntilWorkerSwapsIt(t *testing.
 	var queuedDoc types.Knowledge
 	require.NoError(t, h.db.First(&queuedDoc, "id = ?", indexedDoc.ID).Error)
 	require.Equal(t, types.ParseStatusPending, queuedDoc.ParseStatus)
-	require.Equal(t, "enabled", queuedDoc.EnableStatus, "Graph Search & QA listings require enable_status=enabled while queued")
+	require.Equal(
+		t, "enabled", queuedDoc.EnableStatus,
+		"Graph Search & QA listings require enable_status=enabled while queued",
+	)
 	require.Equal(t, "embed-4d", queuedDoc.EmbeddingModelID, "row must still name the live 4-dim vectors until swapped")
 	require.Equal(t, "v1 handbook summary", queuedDoc.Description)
 	require.Equal(t, indexedDoc.StorageSize, queuedDoc.StorageSize)
@@ -578,7 +581,10 @@ func TestReparseParseFailurePreservesPreviousSearchableContent(t *testing.T) {
 	require.Len(t, reparseTasks, 1)
 
 	// DocReader goes down while the task is queued and fails through final retry.
-	h.docReader.readErr = status.Error(codes.Unavailable, "connection error: dial tcp 127.0.0.1:50051: connect: connection refused")
+	h.docReader.readErr = status.Error(
+		codes.Unavailable,
+		"connection error: dial tcp 127.0.0.1:50051: connect: connection refused",
+	)
 	finalRetryCtx := types.WithTaskRetryMetadata(context.Background(), 3, 3)
 	_ = h.svc.ProcessDocument(finalRetryCtx, reparseTasks[0])
 
@@ -586,7 +592,10 @@ func TestReparseParseFailurePreservesPreviousSearchableContent(t *testing.T) {
 	require.NoError(t, h.db.First(&failedDoc, "id = ?", indexedDoc.ID).Error)
 	require.Equal(t, types.ParseStatusFailed, failedDoc.ParseStatus)
 	require.NotEmpty(t, failedDoc.ErrorMessage)
-	require.Equal(t, "enabled", failedDoc.EnableStatus, "previous content is still live, so enable_status stays enabled")
+	require.Equal(
+		t, "enabled", failedDoc.EnableStatus,
+		"previous content is still live, so enable_status stays enabled",
+	)
 	require.Equal(t, "spec summary", failedDoc.Description)
 	require.Equal(t, indexedDoc.StorageSize, failedDoc.StorageSize)
 

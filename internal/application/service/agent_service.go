@@ -1631,7 +1631,10 @@ func (s *agentService) registerTools(
 			toolToRegister = tools.NewDatabaseQueryTool(s.db, config.SearchTargets)
 		case tools.ToolWebSearch:
 			toolToRegister = tools.NewWebSearchTool(webClient, config.WebSearchMaxResults)
-			logger.Infof(ctx, "Registered web_search tool for session: %s, maxResults: %d, providerID: %s", sessionID, config.WebSearchMaxResults, config.WebSearchProviderID)
+			logger.Infof(
+				ctx, "Registered web_search tool for session: %s, maxResults: %d, providerID: %s",
+				sessionID, config.WebSearchMaxResults, config.WebSearchProviderID,
+			)
 
 		case tools.ToolWebFetch:
 			toolToRegister = tools.NewWebFetchTool(webClient)

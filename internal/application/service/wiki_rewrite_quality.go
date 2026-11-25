@@ -65,7 +65,9 @@ func validateWikiRewrite(content string, data map[string]string) error {
 				return fmt.Errorf("wiki rewrite quality: looping text within a paragraph")
 			}
 		}
-		for _, sentence := range strings.FieldsFunc(line, func(r rune) bool { return r == '。' || r == '！' || r == '？' }) {
+		for _, sentence := range strings.FieldsFunc(line, func(r rune) bool {
+			return r == '。' || r == '！' || r == '？'
+		}) {
 			sentence = strings.TrimSpace(sentence)
 			n := utf8.RuneCountInString(sentence)
 			if n >= 40 {
@@ -105,7 +107,10 @@ func validateWikiRewrite(content string, data map[string]string) error {
 		source += utf8.RuneCountInString(data[key])
 	}
 	if total > 16000 && total > 4*source {
-		return fmt.Errorf("wiki rewrite quality: abnormal growth (%d characters from %d source characters)", total, source)
+		return fmt.Errorf(
+			"wiki rewrite quality: abnormal growth (%d characters from %d source characters)",
+			total, source,
+		)
 	}
 	return nil
 }

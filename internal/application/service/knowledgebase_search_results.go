@@ -112,7 +112,8 @@ func (s *knowledgeBaseService) processSearchResultsAtRevisions(
 	allChunks = nil
 	for _, candidate := range candidates {
 		chunk := candidateMap[candidate.ChunkID]
-		if !s.isSearchableChunk(chunk) || chunk.KnowledgeID != candidate.KnowledgeID || chunkMap[candidate.ChunkID] != nil {
+		if !s.isSearchableChunk(chunk) || chunk.KnowledgeID != candidate.KnowledgeID ||
+			chunkMap[candidate.ChunkID] != nil {
 			continue
 		}
 		// A rerank score describes the scored revision. A changed chunk must

@@ -111,7 +111,10 @@ func backlinkBackends(t *testing.T, run func(*testing.T, backlinkHarness)) {
 				`).Error)
 			}
 			repo := repository.NewWikiPageRepository(db)
-			run(t, backlinkHarness{db: db, repo: repo, svc: NewWikiPageService(repo, nil, wikiOrdinaryTestPolicy{}, nil, nil, nil)})
+			run(t, backlinkHarness{
+				db: db, repo: repo,
+				svc: NewWikiPageService(repo, nil, wikiOrdinaryTestPolicy{}, nil, nil, nil),
+			})
 		})
 	}
 }

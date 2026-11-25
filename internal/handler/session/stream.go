@@ -313,7 +313,10 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 					streamCompletedNow = true
 				}
 
-				emitStreamEvent(ctx, c, safeStreamDiagnostic(evt, message.RequestID), message.RequestID, resourceRewriter)
+				emitStreamEvent(
+					ctx,
+					c, safeStreamDiagnostic(evt, message.RequestID), message.RequestID, resourceRewriter,
+				)
 				if isFinalPersistenceError(evt) {
 					return
 				}
@@ -820,7 +823,10 @@ func (h *Handler) handleAgentEventsForSSE(
 											return
 										}
 									}
-									emitStreamEvent(ctx, c, safeStreamDiagnostic(evt, requestID), requestID, resourceRewriter)
+									emitStreamEvent(
+										ctx,
+										c, safeStreamDiagnostic(evt, requestID), requestID, resourceRewriter,
+									)
 									// If we got the title, we can exit
 									if evt.Type == types.ResponseTypeSessionTitle {
 										log.Infof("Title event received: %s", evt.Content)
@@ -1217,7 +1223,10 @@ func safeStreamDiagnostic(evt interfaces.StreamEvent, requestID string) interfac
 	if evt.Type != types.ResponseTypeError {
 		return evt
 	}
-	safe := interfaces.StreamEvent{ID: requestID, Type: types.ResponseTypeError, Done: evt.Done, Content: quickAnswerFailureContent}
+	safe := interfaces.StreamEvent{
+		ID: requestID, Type: types.ResponseTypeError, Done: evt.Done,
+		Content: quickAnswerFailureContent,
+	}
 	if isFinalPersistenceError(evt) {
 		safe.Content = "Failed to save assistant message"
 		safe.Data = map[string]interface{}{"stage": "message_persistence", "error_code": "generation_failed"}

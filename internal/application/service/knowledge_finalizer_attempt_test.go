@@ -27,8 +27,10 @@ func (c supersedingGraphChat) Chat(
 func TestChunkExtractCompletionDoesNotDrainNewParseAttempt(t *testing.T) {
 	svc, store, db, _, ctx := knowledgeInputServiceFixture(t)
 	require.NoError(t, db.Exec(spanTrackerTestDDL).Error)
-	kb := &types.KnowledgeBase{ID: "graph-kb", TenantID: 7, Name: "attempt fixture", SummaryModelID: "graph-reply",
-		ExtractConfig: &types.ExtractConfig{Enabled: true}}
+	kb := &types.KnowledgeBase{
+		ID: "graph-kb", TenantID: 7, Name: "attempt fixture", SummaryModelID: "graph-reply",
+		ExtractConfig: &types.ExtractConfig{Enabled: true},
+	}
 	require.NoError(t, store.CreateKnowledgeBaseWithInput(apprepo.WithIndependentKnowledgeInput(ctx), kb))
 	_, proof := graphAdmittedInput(t, db, store, types.NameSpace{KnowledgeBase: kb.ID, Knowledge: "doc"})
 	require.NoError(t, db.Model(&types.Knowledge{}).Where("id = ?", "doc").Updates(map[string]interface{}{
@@ -36,7 +38,10 @@ func TestChunkExtractCompletionDoesNotDrainNewParseAttempt(t *testing.T) {
 	}).Error)
 	lineage, err := types.NewCompleteSourceLineage()
 	require.NoError(t, err)
-	template, err := types.BindGraphPromptTemplateOrigin(&types.PromptTemplateStructured{Description: "extract"}, lineage)
+	template, err := types.BindGraphPromptTemplateOrigin(
+		&types.PromptTemplateStructured{Description: "extract"},
+		lineage,
+	)
 	require.NoError(t, err)
 	tracker := NewSpanTracker(apprepo.NewKnowledgeSpanRepository(db), db)
 	_, first, err := tracker.OpenAttempt(ctx, "doc", "")
@@ -64,7 +69,8 @@ func TestChunkExtractCompletionDoesNotDrainNewParseAttempt(t *testing.T) {
 		knowledgeRepo: svc.repo, spanTracker: tracker,
 	}
 	payload, err := json.Marshal(types.ExtractChunkPayload{
-		TenantID: kb.TenantID, ChunkID: "doc-chunk", KnowledgeID: "doc", ModelID: kb.SummaryModelID, Attempt: first, OriginalInput: proof,
+		TenantID: kb.TenantID, ChunkID: "doc-chunk", KnowledgeID: "doc",
+		ModelID: kb.SummaryModelID, Attempt: first, OriginalInput: proof,
 	})
 	require.NoError(t, err)
 	require.NoError(t, extractor.Handle(ctx, asynq.NewTask(types.TypeChunkExtract, payload)))
