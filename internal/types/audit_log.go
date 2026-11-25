@@ -11,6 +11,17 @@ import (
 type AuditAction string
 
 const (
+	// AuditActionDirectoryConfigChanged records a connection configuration change.
+	AuditActionDirectoryConfigChanged AuditAction = "directory.config_changed"
+	// AuditActionDirectorySyncCompleted records a successful synchronization.
+	AuditActionDirectorySyncCompleted AuditAction = "directory.sync_completed"
+	// AuditActionDirectorySyncFailed records a failed synchronization.
+	AuditActionDirectorySyncFailed AuditAction = "directory.sync_failed"
+	// AuditActionDirectoryIdentityLinked records an explicit account link.
+	AuditActionDirectoryIdentityLinked AuditAction = "directory.identity_linked"
+	// AuditActionDirectoryIdentityUnlinked records a removed account link.
+	AuditActionDirectoryIdentityUnlinked AuditAction = "directory.identity_unlinked"
+
 	// AuditActionMemorySubjectsListed 记录管理员分页查看租户主体摘要，仅包含分页和数量。
 	AuditActionMemorySubjectsListed AuditAction = "memory.subjects_listed"
 	// AuditActionMemorySubjectInspected 记录管理员查看目标主体记忆列表，不包含正文。

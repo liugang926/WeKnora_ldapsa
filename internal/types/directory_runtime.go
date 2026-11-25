@@ -217,16 +217,3 @@ type DirectoryLoginRequest struct {
 type DirectoryIdentityLinkRequest struct {
 	UserID string `json:"user_id" binding:"required"`
 }
-
-const (
-	// AuditActionDirectoryConfigChanged records a connection configuration change.
-	AuditActionDirectoryConfigChanged AuditAction = "directory.config_changed"
-	// AuditActionDirectorySyncCompleted records a successful synchronization.
-	AuditActionDirectorySyncCompleted AuditAction = "directory.sync_completed"
-	// AuditActionDirectorySyncFailed records a failed synchronization.
-	AuditActionDirectorySyncFailed AuditAction = "directory.sync_failed"
-	// AuditActionDirectoryIdentityLinked records an explicit account link.
-	AuditActionDirectoryIdentityLinked AuditAction = "directory.identity_linked"
-	// AuditActionDirectoryIdentityUnlinked records a removed account link.
-	AuditActionDirectoryIdentityUnlinked AuditAction = "directory.identity_unlinked"
-)
