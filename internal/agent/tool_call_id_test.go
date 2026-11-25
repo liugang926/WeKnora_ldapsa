@@ -31,7 +31,11 @@ func TestToolCallIDsRemainDistinctThroughExecutionAndHistory(t *testing.T) {
 				engine.toolRegistry.RegisterTool(&orderedTestTool{
 					BaseTool: tools.NewBaseTool(toolName, "", json.RawMessage(`{"type":"object"}`)),
 					run: func(context.Context) *types.ToolResult {
-						return &types.ToolResult{Success: true, Output: toolName, SourceLineage: independentAgentInput()}
+						return &types.ToolResult{
+							Success:       true,
+							Output:        toolName,
+							SourceLineage: independentAgentInput(),
+						}
 					},
 				})
 				response.ToolCalls = append(response.ToolCalls, types.LLMToolCall{
