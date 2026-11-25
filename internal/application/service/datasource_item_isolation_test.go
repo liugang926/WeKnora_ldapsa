@@ -848,9 +848,9 @@ func (k *failingRealKnowledgeService) ReplaceKnowledgeFromDataSource(
 // the prior attachment row must be preserved via SubtreeKeep, the node cursor
 // must stay unadvanced, and recovery must converge cleanly on retry.
 func TestProcessSync_FeishuDocxAttachmentIngestFailurePreservesSubtreeAndRetries(t *testing.T) {
-	h, _, _, _ := datasourceReplacementFixture(t)
-	kb := &types.KnowledgeBase{ID: "kb-1", TenantID: 7}
-	h.svc.kbService = &processSyncKBService{kb: kb}
+	h, db, _, _ := datasourceReplacementFixtureForConnector(t, types.ConnectorTypeFeishuDrive)
+	h.svc.modelService = kbCleanupModelService{}
+	h.svc.retrieveEngine = parentChildRetrieveRegistry{engine: &parentChildRetrieveEngine{}}
 	h.svc.task = &replaceFileEnqueuer{events: &[]string{}}
 
 	const (
@@ -870,28 +870,37 @@ func TestProcessSync_FeishuDocxAttachmentIngestFailurePreservesSubtreeAndRetries
 	svc, ds, logRepo, _ := newFeishuSyncServiceHarness(
 		t, srv, types.ConnectorTypeFeishuDrive, []string{rootTok}, true,
 	)
-	ds.ID = "ds-1"
-	ds.TenantID = 7
-	ds.KnowledgeBaseID = "kb-1"
-	svc.dsRepo = newKBDeleteDSRepo(ds.KnowledgeBaseID, ds)
-	svc.kbService = &processSyncKBService{kb: kb}
-	svc.tenantRepo = &processSyncTenantRepo{tenant: &types.Tenant{ID: 7, StorageQuota: 10 * 1024 * 1024}}
+	ds.ID, ds.TenantID, ds.KnowledgeBaseID = h.source.ID, h.source.TenantID, h.source.KnowledgeBaseID
+	svc.dsRepo = repository.NewDataSourceRepository(db)
+	require.NoError(t, svc.dsRepo.Update(h.ctx, ds))
+	svc.kbService = h.svc.kbService
+	svc.tenantRepo = &processSyncTenantRepo{tenant: &types.Tenant{ID: ds.TenantID, StorageQuota: 10 * 1024 * 1024}}
 	ks := &failingRealKnowledgeService{
 		knowledgeService: h.svc,
 		failByExtID:      map[string]error{},
 	}
 	svc.knowledgeService = ks
+	runRound := func(id string) (*types.SyncLog, error) {
+		return runFeishuSyncTask(t, svc, ds, logRepo, types.DataSourceSyncPayload{
+			SyncLogID: id, Trigger: "manual", Initiator: types.TaskInitiatorFromContext(h.ctx),
+		})
+	}
+	storedCursor := func() core.FeishuDriveCursor {
+		stored, err := svc.dsRepo.FindByID(h.ctx, ds.ID)
+		require.NoError(t, err)
+		return decodeFeishuDriveCursor(t, stored)
+	}
 
 	// Round 1: both attachment and parent docx succeed in SQLite.
-	log1, err := runFeishuSyncRound(t, svc, ds, logRepo, "docx-att-1")
+	log1, err := runRound("docx-att-1")
 	require.NoError(t, err)
 	assert.Equal(t, types.SyncLogStatusSuccess, log1.Status)
 	assert.Equal(t, 2, log1.ItemsCreated)
 
-	origAtt, err := h.svc.repo.FindByDataSourceExternalID(context.Background(), 7, "kb-1", "ds-1", attExtID)
+	origAtt, err := h.svc.repo.FindByDataSourceExternalID(h.ctx, ds.TenantID, ds.KnowledgeBaseID, ds.ID, attExtID)
 	require.NoError(t, err)
 	require.NotNil(t, origAtt)
-	cur1 := decodeFeishuDriveCursor(t, ds)
+	cur1 := storedCursor()
 	priorEdit := cur1.FileTimes[rootTok][docTok]
 	require.NotEmpty(t, priorEdit)
 
@@ -904,35 +913,43 @@ func TestProcessSync_FeishuDocxAttachmentIngestFailurePreservesSubtreeAndRetries
 	srv.mu.Unlock()
 	ks.failByExtID[attExtID] = errors.New("transient attachment storage error")
 
-	log2, err := runFeishuSyncRound(t, svc, ds, logRepo, "docx-att-2")
+	log2, err := runRound("docx-att-2")
 	require.NoError(t, err)
 	assert.Equal(t, types.SyncLogStatusPartial, log2.Status)
 	assert.Equal(t, 1, log2.ItemsUpdated)
 	assert.Equal(t, 1, log2.ItemsFailed)
 
-	keptAtt, err := h.svc.repo.FindByDataSourceExternalID(context.Background(), 7, "kb-1", "ds-1", attExtID)
+	keptAtt, err := h.svc.repo.FindByDataSourceExternalID(h.ctx, ds.TenantID, ds.KnowledgeBaseID, ds.ID, attExtID)
 	require.NoError(t, err)
 	require.NotNil(t, keptAtt, "SubtreeKeep must preserve previously synced attachment when re-ingest fails")
 	assert.Equal(t, origAtt.ID, keptAtt.ID)
 
-	cur2 := decodeFeishuDriveCursor(t, ds)
+	cur2 := storedCursor()
 	assert.Equal(t, priorEdit, cur2.FileTimes[rootTok][docTok], "node cursor must not advance while attachment failed")
 
 	// Round 3: attachment recovers -> both items converge cleanly without
 	// duplicate errors, and the node cursor advances to the new edit time.
 	delete(ks.failByExtID, attExtID)
-	log3, err := runFeishuSyncRound(t, svc, ds, logRepo, "docx-att-3")
+	log3, err := runRound("docx-att-3")
 	require.NoError(t, err)
 	assert.Equal(t, types.SyncLogStatusSuccess, log3.Status)
 	assert.Equal(t, 2, log3.ItemsUpdated)
 	assert.Equal(t, 0, log3.ItemsFailed)
 
-	cur3 := decodeFeishuDriveCursor(t, ds)
+	cur3 := storedCursor()
 	assert.NotEqual(t, priorEdit, cur3.FileTimes[rootTok][docTok])
 
 	// Round 4: steady state -> 0 items fetched.
-	log4, err := runFeishuSyncRound(t, svc, ds, logRepo, "docx-att-4")
+	log4, err := runRound("docx-att-4")
 	require.NoError(t, err)
 	assert.Equal(t, types.SyncLogStatusSuccess, log4.Status)
 	assert.Equal(t, 0, log4.ItemsTotal)
+	for _, externalID := range []string{docTok, attExtID} {
+		var count int64
+		require.NoError(t, db.Model(&types.Knowledge{}).
+			Where("tenant_id = ? AND knowledge_base_id = ?", ds.TenantID, ds.KnowledgeBaseID).
+			Where("metadata->>'datasource_id' = ? AND metadata->>'external_id' = ?", ds.ID, externalID).
+			Count(&count).Error)
+		assert.EqualValues(t, 1, count, "expected exactly one live record for %s", externalID)
+	}
 }
