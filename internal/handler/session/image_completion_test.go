@@ -156,7 +156,9 @@ func TestSharedImageCompletionWaitsForPersistedReferences(t *testing.T) {
 						require.Zero(t, completed)
 						require.Equal(t, types.ResponseTypeError, last.Type)
 						require.True(t, last.Done)
-						require.Equal(t, map[string]interface{}{"error_code": "generation_failed"}, last.Data)
+						require.Equal(t, map[string]interface{}{
+							"error_code": "generation_failed", "stage": "message_persistence",
+						}, last.Data)
 						require.NotContains(t, last.Content, "database unavailable")
 						require.Nil(t, messages.saved)
 					} else {

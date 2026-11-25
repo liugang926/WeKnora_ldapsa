@@ -677,6 +677,7 @@ func newActualSteerHTTPHandler(
 		groups,
 		nil, // Host project directories.
 		nil, // Background work.
+		nil, // Host approval modes.
 	)
 	return h, observed, redis, raw
 }

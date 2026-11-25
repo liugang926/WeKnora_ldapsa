@@ -37,3 +37,23 @@ func TestConnectorRegistryIncludesSeafile(t *testing.T) {
 		t.Fatal("Seafile connector must implement datasource.FullStreamingConnector")
 	}
 }
+
+func TestConnectorRegistryIncludesNativeWebDAV(t *testing.T) {
+	registry, err := initConnectorRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, typ := range []string{types.ConnectorTypeNextcloud, types.ConnectorTypeNextcloudNativeWebDAV} {
+		registered, err := registry.Get(typ)
+		if err != nil || registered.Type() != typ {
+			t.Fatalf("registry.Get(%q) = %v, %v", typ, registered, err)
+		}
+	}
+	connector, err := registry.Get(types.ConnectorTypeNextcloudNativeWebDAV)
+	if err != nil {
+		t.Fatalf("Nextcloud connector is not registered: %v", err)
+	}
+	if _, ok := connector.(datasource.FullStreamingConnector); !ok {
+		t.Fatal("Nextcloud must support resumable full sync with deletion reconciliation")
+	}
+}

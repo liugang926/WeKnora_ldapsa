@@ -3,10 +3,12 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service/retriever"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -226,7 +228,7 @@ func validateMoveItem(ctx context.Context, k *types.Knowledge, source, target *t
 				(k.ParseStatus == types.ParseStatusProcessing || k.ParseStatus == types.ParseStatusFailed) {
 				return nil
 			}
-		case "reparse_pending", "done":
+		case "source_graph_pending", "reparse_pending", "done":
 			if k.KnowledgeBaseID == target.ID {
 				return nil
 			}
@@ -387,32 +389,40 @@ func (s *knowledgeService) acknowledgeMovedReparse(
 	knowledge *types.Knowledge,
 	source, target *types.KnowledgeBase,
 ) error {
-	// The processing worker can already have updated the row after enqueue.
-	// Reload before checkpointing; never overwrite its parse status or metadata.
-	current, err := s.repo.GetKnowledgeByID(ctx, knowledge.TenantID, knowledge.ID)
-	if err != nil {
-		return err
+	// The processing worker can already have updated the row after enqueue
+	// (especially under Lite mode's in-process SyncTaskExecutor). Reload and
+	// retry the CAS checkpoint if the worker concurrently advanced parse_status.
+	var lastErr error
+	for range 5 {
+		current, err := s.repo.GetKnowledgeByID(ctx, knowledge.TenantID, knowledge.ID)
+		if err != nil {
+			return err
+		}
+		if err := validateTransferKnowledge(current, target); err != nil {
+			return err
+		}
+		state, err := transferState(current)
+		if err != nil {
+			return err
+		}
+		if !matchesTransfer(ctx, state, source, target, access.KBTransferMove, knowledge.ID, "reparse") {
+			return access.ErrForbidden
+		}
+		if state.Phase == "done" {
+			return nil
+		}
+		before := *current
+		after := *current
+		state.Phase = "done"
+		if err := setTransferState(&after, *state); err != nil {
+			return err
+		}
+		lastErr = s.repo.UpdateKnowledgeForTransfer(ctx, &before, &after)
+		if lastErr == nil {
+			return nil
+		}
 	}
-	if err := validateTransferKnowledge(current, target); err != nil {
-		return err
-	}
-	state, err := transferState(current)
-	if err != nil {
-		return err
-	}
-	if !matchesTransfer(ctx, state, source, target, access.KBTransferMove, knowledge.ID, "reparse") {
-		return access.ErrForbidden
-	}
-	if state.Phase == "done" {
-		return nil
-	}
-	before := *current
-	after := *current
-	state.Phase = "done"
-	if err := setTransferState(&after, *state); err != nil {
-		return err
-	}
-	return s.repo.UpdateKnowledgeForTransfer(ctx, &before, &after)
+	return lastErr
 }
 
 func (s *knowledgeService) preflightFAQClone(
@@ -453,6 +463,8 @@ func (s *knowledgeService) preflightFAQClone(
 	return maps[0], maps[1], nil
 }
 
+const moveDeliveryFailure = "move reparse delivery: "
+
 func (s *knowledgeService) markMoveItemFailed(
 	ctx context.Context,
 	id string,
@@ -473,7 +485,8 @@ func (s *knowledgeService) markMoveItemFailed(
 	}
 	sourceFailed := row.KnowledgeBaseID == source.ID && state.Phase == "moving" &&
 		row.ParseStatus == types.ParseStatusProcessing
-	enqueueFailed := row.KnowledgeBaseID == target.ID && state.Phase == "reparse_pending" &&
+	confirmedUpload := mode == "reparse" && state.Phase == "done" && s.isMovedUpload(row)
+	enqueueFailed := row.KnowledgeBaseID == target.ID && (state.Phase == "reparse_pending" || confirmedUpload) &&
 		row.ParseStatus == types.ParseStatusPending
 	if !sourceFailed && !enqueueFailed {
 		return
@@ -481,6 +494,9 @@ func (s *knowledgeService) markMoveItemFailed(
 	before, after := *row, *row
 	after.ParseStatus = types.ParseStatusFailed
 	after.ErrorMessage = taskErr.Error()
+	if confirmedUpload {
+		after.ErrorMessage = moveDeliveryFailure + after.ErrorMessage
+	}
 	if err := s.repo.UpdateKnowledgeForTransfer(ctx, &before, &after); err != nil {
 		logger.Errorf(ctx, "Failed to record move failure for knowledge %s, task %s: %v (move error: %v)",
 			row.ID, state.TaskID, err, taskErr)
@@ -502,7 +518,40 @@ func validateProcessingKnowledge(knowledge *types.Knowledge, tenant uint64, kbID
 	if state != nil && state.Operation == access.KBTransferMove && state.Phase == "moving" {
 		return fmt.Errorf("knowledge is being moved: %w", asynq.SkipRetry)
 	}
+	// Under Lite mode's SyncTaskExecutor, the target reparse worker can load
+	// the row before acknowledgeMovedReparse commits phase="done". Normalize
+	// the in-memory copy so full-row UpdateKnowledge saves never roll phase
+	// back to "reparse_pending" and block future moves.
+	if state != nil && state.Operation == access.KBTransferMove &&
+		state.Phase == "reparse_pending" && state.TargetKB == kbID {
+		state.Phase = "done"
+		if err := setTransferState(knowledge, *state); err != nil {
+			return fmt.Errorf("acknowledge processing metadata: %v: %w", err, asynq.SkipRetry)
+		}
+	}
 	return nil
+}
+
+// The remote graph cannot be undeleted. Consume this checkpoint only after index and
+// ownership commit, and serialize deletion with any other move of the same document.
+func (s *knowledgeService) completeMovedSourceGraph(ctx context.Context, knowledge *types.Knowledge,
+	source, target *types.KnowledgeBase, state *knowledgeTransferState,
+) error {
+	if s.graphEngine == nil {
+		return errors.New("source graph cleanup unavailable")
+	}
+	if err := access.RequireKBTransfer(ctx, source, target, access.KBTransferMove); err != nil {
+		return err
+	}
+	before := *knowledge
+	state.Phase = "done"
+	if err := setTransferState(knowledge, *state); err != nil {
+		return err
+	}
+	return s.repo.CompleteMoveSourceGraph(ctx, &before, knowledge, func(moveCtx context.Context) error {
+		graph := repository.KnowledgeMoveGraph(moveCtx, s.graphEngine)
+		return graph.DelGraph(moveCtx, []types.NameSpace{{KnowledgeBase: source.ID, Knowledge: knowledge.ID}})
+	})
 }
 
 // Cleanup consumes the durable source references only after target ownership

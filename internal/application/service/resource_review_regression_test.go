@@ -343,3 +343,64 @@ func TestMoveStillVisitsVectorBackendWithoutDatabaseChunks(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "other", row.KnowledgeBaseID)
 }
+
+type failingRemoteMove struct {
+	orphanMoveEngine
+	moves      [][2]string
+	forwardErr error
+}
+
+func (e *failingRemoteMove) MoveKnowledgeIndices(
+	_ context.Context, from, to, _ string, _ []string, _ int, _ string,
+) error {
+	e.moves = append(e.moves, [2]string{from, to})
+	if from == "kb" {
+		return e.forwardErr
+	}
+	return nil
+}
+
+func TestMoveRetriesSourceGraphCleanupAfterOwnershipCommit(t *testing.T) {
+	t.Setenv("RETRIEVE_DRIVER", "postgres")
+	f := transferFixture(t, access.KBTransferMove)
+	engine := &failingRemoteMove{}
+	f.svc.retrieveEngine = parentChildRetrieveRegistry{engine: engine}
+	f.svc.modelService = parentChildModelService{embedder: parentChildEmbedder{}}
+	f.kbs.values["kb"].EmbeddingModelID = "model"
+	f.kbs.values["other"].EmbeddingModelID = "model"
+	require.NoError(t, f.db.Model(&types.Knowledge{}).Where("id=?", "doc").Update("embedding_model_id", "model").Error)
+	task := moveTask(t, []string{"doc"}, "reuse_vectors")
+	engine.forwardErr = errors.New("remote index unavailable")
+	require.ErrorIs(t, f.svc.ProcessKnowledgeMove(context.Background(), task), engine.forwardErr)
+	require.Equal(t, [][2]string{{"kb", "other"}, {"other", "kb"}}, engine.moves)
+	source, err := f.repo.GetKnowledgeByID(f.ctx, 7, "doc")
+	require.NoError(t, err)
+	require.Equal(t, "kb", source.KnowledgeBaseID)
+	require.Zero(t, f.graph.calls)
+	engine.moves = nil
+	engine.forwardErr = nil
+	f.graph.err = errors.New("graph not available")
+	require.ErrorIs(t, f.svc.ProcessKnowledgeMove(context.Background(), task), f.graph.err)
+	// Both owners are already committed. A graph retry must not send vectors back
+	// to the source or allow a second move to take over the unfinished cleanup.
+	require.Equal(t, [][2]string{{"kb", "other"}}, engine.moves)
+	target, err := f.repo.GetKnowledgeByID(f.ctx, 7, "doc")
+	require.NoError(t, err)
+	require.Equal(t, "other", target.KnowledgeBaseID)
+	pending, err := transferState(target)
+	require.NoError(t, err)
+	require.Equal(t, "source_graph_pending", pending.Phase)
+	progress, err := f.svc.GetKnowledgeMoveProgress(f.ctx, "transfer-task")
+	require.NoError(t, err)
+	require.Equal(t, types.KBCloneStatusFailed, progress.Status)
+	f.graph.err = nil
+	require.NoError(t, f.svc.ProcessKnowledgeMove(context.Background(), task))
+	dest, err := f.repo.GetKnowledgeByID(f.ctx, 7, "doc")
+	require.NoError(t, err)
+	require.Equal(t, "other", dest.KnowledgeBaseID)
+	finished, err := transferState(dest)
+	require.NoError(t, err)
+	require.Equal(t, "done", finished.Phase)
+	require.Equal(t, [][2]string{{"kb", "other"}}, engine.moves)
+	require.Equal(t, 2, f.graph.calls)
+}

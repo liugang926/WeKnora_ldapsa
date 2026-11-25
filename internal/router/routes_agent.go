@@ -318,6 +318,7 @@ func RegisterEmbedPublicRoutes(
 			embedHandler.GetEmbedChunk,
 		)
 		embed.POST("/sessions", embedHandler.CreateEmbedSession)
+		embed.DELETE("/sessions/:session_id", embedHandler.EmbedDeleteSession)
 		embed.POST("/knowledge-chat/:session_id", embedHandler.EmbedKnowledgeChat)
 		embed.POST("/agent-chat/:session_id", embedHandler.EmbedAgentChat)
 		embed.GET("/messages/:session_id/load", embedHandler.EmbedLoadMessages)

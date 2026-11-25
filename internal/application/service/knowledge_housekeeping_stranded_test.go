@@ -16,7 +16,7 @@ func insertKnowledgeWithSummary(t *testing.T, db *gorm.DB, id, status, summary s
 	t.Helper()
 	require.NoError(t, db.Exec(
 		`INSERT INTO knowledges (id, parse_status, summary_status, updated_at) VALUES (?, ?, ?, ?)`,
-		id, status, summary, updatedAt,
+		id, status, summary, updatedAt.UTC(),
 	).Error)
 }
 
@@ -45,8 +45,10 @@ func TestHousekeepingRecoverStalledFailsUnfinishedSummary(t *testing.T) {
 	insertKnowledgeWithSummary(t, db, "k-running", types.ParseStatusFinalizing, types.SummaryStatusProcessing, stale)
 	insertKnowledgeWithSummary(t, db, "k-done", types.ParseStatusFinalizing, types.SummaryStatusCompleted, stale)
 
+	insertKnowledgeWithSummary(t, db, "k-recent", types.ParseStatusCompleted, types.SummaryStatusProcessing, time.Now())
 	svc.runSweep(context.Background())
 
+	assert.Equal(t, types.SummaryStatusProcessing, readSummaryStatus(t, db, "k-recent"))
 	for id, want := range map[string]string{
 		"k-pending": types.SummaryStatusFailed,
 		"k-running": types.SummaryStatusFailed,
@@ -68,7 +70,7 @@ func TestHousekeepingRecoversStrandedPendingSummaries(t *testing.T) {
 		queued: map[string]bool{"k-queued": true},
 	})
 	stale := time.Now().Add(-2 * time.Hour)
-	cutoff := time.Now().Add(-time.Hour)
+	cutoff := time.Now().UTC().Add(-time.Hour)
 	for _, status := range []string{types.ParseStatusCompleted, types.ParseStatusFailed, types.ParseStatusCancelled} {
 		insertKnowledgeWithSummary(t, db, "k-"+status, status, types.SummaryStatusPending, stale)
 	}
@@ -106,7 +108,7 @@ func TestHousekeepingFailsRowsHeldByWikiPastHoldLimit(t *testing.T) {
 		kbID := "kb-" + id
 		require.NoError(t, db.Exec(
 			`INSERT INTO knowledges (id, tenant_id, knowledge_base_id, parse_status, updated_at)
-			 VALUES (?, 7, ?, ?, ?)`, id, kbID, types.ParseStatusFinalizing, updatedAt,
+			 VALUES (?, 7, ?, ?, ?)`, id, kbID, types.ParseStatusFinalizing, updatedAt.UTC(),
 		).Error)
 		insertWikiPendingOp(t, db, kbID, id)
 	}

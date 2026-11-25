@@ -21,23 +21,24 @@ const (
 // Channel constants identify through which channel a knowledge entry was ingested.
 // Aligned with Message.Channel values ("web", "api", "im") but allows finer granularity.
 const (
-	ChannelWeb              = "web"               // Web UI (default)
-	ChannelAPI              = "api"               // External API call
-	ChannelBrowserExtension = "browser_extension" // Browser extension / plugin
-	ChannelWechat           = "wechat"            // WeChat
-	ChannelWecom            = "wecom"             // WeCom (企业微信)
-	ChannelFeishu           = "feishu"            // Feishu / Lark
-	ChannelFeishuDrive      = "feishu_drive"      // Feishu Drive (云盘)
-	ChannelLarkDrive        = "lark_drive"        // Lark Drive (international)
-	ChannelDingtalk         = "dingtalk"          // DingTalk
-	ChannelSlack            = "slack"             // Slack
-	ChannelIM               = "im"                // Generic IM channel
-	ChannelNotion           = "notion"            // Notion
-	ChannelConfluence       = "confluence"        // Atlassian Confluence
-	ChannelYuque            = "yuque"             // Yuque (语雀)
-	ChannelRSS              = "rss"               // RSS / Atom feed
-	ChannelIMA              = "ima"               // Tencent IMA (ima.qq.com)
-	ChannelSeafile          = "seafile"           // Seafile
+	ChannelWeb              = "web"                              // Web UI (default)
+	ChannelAPI              = "api"                              // External API call
+	ChannelBrowserExtension = "browser_extension"                // Browser extension / plugin
+	ChannelWechat           = "wechat"                           // WeChat
+	ChannelWecom            = "wecom"                            // WeCom (企业微信)
+	ChannelFeishu           = "feishu"                           // Feishu / Lark
+	ChannelFeishuDrive      = "feishu_drive"                     // Feishu Drive (云盘)
+	ChannelLarkDrive        = "lark_drive"                       // Lark Drive (international)
+	ChannelDingtalk         = "dingtalk"                         // DingTalk
+	ChannelSlack            = "slack"                            // Slack
+	ChannelIM               = "im"                               // Generic IM channel
+	ChannelNotion           = "notion"                           // Notion
+	ChannelConfluence       = "confluence"                       // Atlassian Confluence
+	ChannelYuque            = "yuque"                            // Yuque (语雀)
+	ChannelRSS              = "rss"                              // RSS / Atom feed
+	ChannelIMA              = "ima"                              // Tencent IMA (ima.qq.com)
+	ChannelSeafile          = "seafile"                          // Seafile
+	ChannelNextcloud        = ConnectorTypeNextcloudNativeWebDAV // Nextcloud
 )
 
 // Knowledge parse status constants

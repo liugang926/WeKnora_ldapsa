@@ -21,7 +21,7 @@ type flakyFinalizeRepo struct {
 	successes int
 }
 
-func (r *flakyFinalizeRepo) FinalizeSubtask(context.Context, string) (int, bool, error) {
+func (r *flakyFinalizeRepo) FinalizeSubtask(context.Context, string, int) (int, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.calls++
@@ -37,7 +37,7 @@ func (r *flakyFinalizeRepo) FinalizeSubtask(context.Context, string) (int, bool,
 func TestFinalizeSubtaskDetachedRetriesTransientFailure(t *testing.T) {
 	repo := &flakyFinalizeRepo{failures: subtaskSlotReleaseAttempts - 1}
 
-	err := finalizeSubtaskDetached(context.Background(), repo, "k-1", "summary", nil, false, true)
+	err := finalizeSubtaskDetached(context.Background(), repo, "k-1", "summary", nil, false, true, 0)
 	require.NoError(t, err)
 
 	assert.Equal(t, subtaskSlotReleaseAttempts, repo.calls)
@@ -47,7 +47,7 @@ func TestFinalizeSubtaskDetachedRetriesTransientFailure(t *testing.T) {
 func TestReleaseSubtaskSlotGivesUpAfterBoundedRetries(t *testing.T) {
 	repo := &flakyFinalizeRepo{failures: subtaskSlotReleaseAttempts + 5}
 
-	err := releaseSubtaskSlot(context.Background(), repo, "k-1")
+	err := releaseSubtaskSlot(context.Background(), repo, "k-1", 0)
 
 	require.Error(t, err)
 	assert.Equal(t, subtaskSlotReleaseAttempts, repo.calls)
@@ -60,7 +60,7 @@ func TestReleaseSubtaskSlotIgnoresCallerCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	require.NoError(t, releaseSubtaskSlot(ctx, repo, "k-1"))
+	require.NoError(t, releaseSubtaskSlot(ctx, repo, "k-1", 0))
 	assert.Equal(t, 1, repo.successes)
 }
 
@@ -69,11 +69,11 @@ type shortfallReleaseRepo struct {
 	flaky flakyFinalizeRepo
 }
 
-func (r *shortfallReleaseRepo) FinalizeSubtask(ctx context.Context, id string) (int, bool, error) {
-	if _, _, err := r.flaky.FinalizeSubtask(ctx, id); err != nil {
+func (r *shortfallReleaseRepo) FinalizeSubtask(ctx context.Context, id string, attempt int) (int, bool, error) {
+	if _, _, err := r.flaky.FinalizeSubtask(ctx, id, attempt); err != nil {
 		return 0, false, err
 	}
-	return r.wikiEnqueueFailureKnowledgeRepo.FinalizeSubtask(ctx, id)
+	return r.wikiEnqueueFailureKnowledgeRepo.FinalizeSubtask(ctx, id, attempt)
 }
 
 // Post-process releases one slot per subtask it planned but could not

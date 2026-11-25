@@ -16,9 +16,13 @@ on:
       - "go.sum"
       - "Makefile"
       - "config/**"
+      - "docs/swagger.json"
+      - "docs/swagger.yaml"
+      - "docs/swag.overrides"
       - "migrations/**"
       - "skills/preloaded/**"
       - "testdata/**"
+      - "tests/**"
       - "website-docs/0*/**"
       - "website-docs/.vitepress/config.mts"
       - "docker/Dockerfile.app"
@@ -50,9 +54,13 @@ on:
       - "go.sum"
       - "Makefile"
       - "config/**"
+      - "docs/swagger.json"
+      - "docs/swagger.yaml"
+      - "docs/swag.overrides"
       - "migrations/**"
       - "skills/preloaded/**"
       - "testdata/**"
+      - "tests/**"
       - "website-docs/0*/**"
       - "website-docs/.vitepress/config.mts"
       - "docker/Dockerfile.app"
@@ -94,7 +102,21 @@ jobs:
     name: Format, vet, test, and build
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    services:
+    services: &app_integration_services
+      postgres:
+        image: paradedb/paradedb:v0.25.11-pg17@sha256:78d65750f0f88a56548526201bcab9910f83b90fe929cdbf979890f3f80b0f95
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: pg
+          POSTGRES_DB: weknora
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d weknora"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=15
+          --health-start-period=15s
       redis:
         image: redis:7.4.10-alpine
         ports:
@@ -158,12 +180,45 @@ jobs:
       - name: Verify bounded runtime package installation
         run: python3 -B scripts/test_install_runtime_packages.py
 
+      - &prepare_app_databases
+        name: Prepare PostgreSQL test databases
+        shell: bash
+        env:
+          PGPASSWORD: pg
+        run: |
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y postgresql-client
+          fi
+          for i in $(seq 1 30); do
+            if pg_isready -h 127.0.0.1 -p 5432 -U postgres -d weknora >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE DATABASE weknora_repository_test;
+          CREATE DATABASE weknora_memory_test;
+          CREATE DATABASE weknora_task_progress_test;
+          CREATE DATABASE weknora_retriever_test TEMPLATE template0;
+          SQL
+          psql -h 127.0.0.1 -p 5432 -U postgres -d weknora_retriever_test -v ON_ERROR_STOP=1 \
+            -c "DROP EXTENSION IF EXISTS pg_search CASCADE; DROP SCHEMA IF EXISTS paradedb, pgsearch CASCADE;"
+
       - name: Vet and test
         shell: bash
+        env: &app_integration_env
+          WEKNORA_AUTO_COMPLETION_TEST_REDIS_ADDR: 127.0.0.1:6379
+          WEKNORA_MIGRATION_TEST_POSTGRES_DSN: postgres://postgres:pg@127.0.0.1:5432/weknora?sslmode=disable
+          WEKNORA_REPOSITORY_TEST_POSTGRES_DSN: postgres://postgres:pg@127.0.0.1:5432/weknora_repository_test?sslmode=disable
+          WEKNORA_MEMORY_TEST_POSTGRES_DSN: host=127.0.0.1 port=5432 user=postgres password=pg dbname=weknora_memory_test sslmode=disable
+          WEKNORA_TEST_POSTGRES_DSN: host=127.0.0.1 port=5432 user=postgres password=pg dbname=weknora_task_progress_test sslmode=disable
+          WEKNORA_RETRIEVER_TEST_POSTGRES_DSN: postgres://postgres:pg@127.0.0.1:5432/weknora_retriever_test?sslmode=disable
+          WEKNORA_TEST_REDIS_ADDR: 127.0.0.1:6379
+          WEKNORA_REQUIRE_INTEGRATION: "1"
         run: |
           mapfile -t all_pkgs < <(go list ./... | grep -v '/docreader/')
-          mapfile -t pkgs < <(printf '%s\n' "${all_pkgs[@]}" | grep -v '^github.com/Tencent/WeKnora/internal/handler$')
-          go vet "${all_pkgs[@]}"
+          mapfile -t pkgs < <(printf '%s\n' "${all_pkgs[@]}" | grep -Ev '/internal/handler$|/tests/lite_smoke$')
+          go vet -tags sqlite_fts5 "${all_pkgs[@]}"
           # The handler suite uses process-wide Redis and stream state. Run it
           # first in its own process so no other package can leave state behind.
           handler_ok=true
@@ -194,12 +249,61 @@ jobs:
           PYHANDLER
           fi
           # Real source/lease fixtures are sequential work within a package.
-          # The service package carries the complete no-tag runtime matrix.
+          # Keep the complete default-build runtime matrix. Tagged suites run
+          # against real FTS5 in source-contracts and platform-checks.
           go test -p 1 -count=1 -timeout=75m "${pkgs[@]}"
+          go test ./internal/application/repository/retriever/sqlite \
+            -run '^TestSaveWorksWhenTheFTS5ModuleIsNotCompiledIn$'
           go test -tags desktop ./internal/container
 
       - name: Build server
-        run: go build ./cmd/server
+        run: |
+          go build ./cmd/server
+          go build -tags sqlite_fts5 -o /tmp/weknora-lite ./cmd/server
+
+  platform-checks:
+    name: Race, desktop and lite compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    services: *app_integration_services
+    env: *app_integration_env
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - *prepare_app_databases
+      - name: Test concurrent services
+        run: |
+          go test -race -tags sqlite_fts5 \
+            ./internal/stream/... \
+            ./internal/sandbox/... \
+            ./internal/agent/... \
+            ./internal/im/...
+
+      - name: Desktop and cross-platform sandbox checks
+        shell: bash
+        run: |
+          go vet -tags "desktop,sqlite_fts5" ./internal/container ./internal/application/service ./cmd/desktop
+          go test -tags "desktop,sqlite_fts5" -timeout=75m ./internal/container ./internal/application/service ./cmd/desktop
+          go build -tags "desktop,sqlite_fts5" -o /tmp/weknora-desktop ./cmd/desktop
+          rm -f /tmp/weknora-desktop
+
+          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go vet ./internal/localsandbox/...
+          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build ./internal/localsandbox/...
+          for pkg in $(GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go list ./internal/localsandbox/...); do
+            GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go test -c "$pkg" -o /dev/null
+          done
+
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go vet ./internal/localsandbox/...
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./internal/localsandbox/...
+          for pkg in $(GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go list ./internal/localsandbox/...); do
+            GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go test -c "$pkg" -o /dev/null
+          done
+
+      - name: Lite mode end-to-end smoke test
+        run: go test -v -race -tags sqlite_fts5 -count=1 ./tests/lite_smoke/...
 
   source-contracts:
     name: SQLite FTS5 source contracts

@@ -194,7 +194,7 @@ func TestKnowledgeInputManualActualEntryWorkerAndSearch(t *testing.T) {
 		[]*types.IndexWithScore{
 			{KnowledgeID: knowledge.ID, ChunkID: chunks[0].ID, Content: "forged stale index text", Score: 1},
 		},
-		true,
+		1, true,
 	)
 	require.NoError(t, err)
 	require.Len(t, result, 1)

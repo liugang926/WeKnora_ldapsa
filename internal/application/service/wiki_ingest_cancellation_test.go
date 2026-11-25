@@ -163,6 +163,13 @@ type wikiLookupRecoveryFixture struct {
 
 func newWikiLookupRecoveryService(t *testing.T, kbID string, rdb *redis.Client) (*wikiLookupRecoveryFixture, *gorm.DB) {
 	t.Helper()
+	return newWikiLookupRecoveryServiceWithConfig(t, kbID, rdb, nil)
+}
+
+func newWikiLookupRecoveryServiceWithConfig(
+	t *testing.T, kbID string, rdb *redis.Client, cfg *types.WikiConfig,
+) (*wikiLookupRecoveryFixture, *gorm.DB) {
+	t.Helper()
 	f := newEnrichmentTestFixture(t, false)
 	db := f.db
 	pool, err := db.DB()
@@ -177,7 +184,7 @@ func newWikiLookupRecoveryService(t *testing.T, kbID string, rdb *redis.Client) 
 	kb := &types.KnowledgeBase{
 		ID: kbID, TenantID: 7, CreatorID: principal.ID, Name: "Wiki lookup recovery",
 		Type: types.KnowledgeBaseTypeDocument, SummaryModelID: "summary", EmbeddingModelID: "embed",
-		IndexingStrategy: types.IndexingStrategy{WikiEnabled: true},
+		IndexingStrategy: types.IndexingStrategy{WikiEnabled: true}, WikiConfig: cfg,
 	}
 	input := apprepo.WithIndependentKnowledgeInput(actor)
 	input = apprepo.WithIndependentKnowledgeBaseNameInput(input, "", kb.Name)

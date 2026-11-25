@@ -96,6 +96,28 @@ func forwardFinalAnswer(
 					timeout = time.After(grace)
 					continue
 				}
+				// Adapters that don't flag UsagePending may still queue an EOF
+				// usage trailer. Consume an available terminal snapshot without
+				// delaying a provider that has already finished.
+				if usage == nil {
+					select {
+					case trailer, ok := <-source:
+						if ok && trailer.ResponseType == types.ResponseTypeError {
+							if chunk.Content != "" {
+								chunk.Done = false
+								if !send(chunk) {
+									return
+								}
+							}
+							send(trailer)
+							return
+						}
+						if ok && trailer.ResponseType == types.ResponseTypeAnswer {
+							usage = trailer.Usage
+						}
+					default:
+					}
+				}
 				chunk.Usage = usage
 				send(chunk)
 				return

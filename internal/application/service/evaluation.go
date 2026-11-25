@@ -553,24 +553,26 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 
 	// Create knowledge base from passages (sync: wait for indexing to complete before querying)
 	knowledge, err := e.knowledgeService.CreateKnowledgeFromPassageSync(inputCtx, knowledgeBaseID, passages, "")
+	// The KB already exists, and a failed synchronous call can still return its
+	// partially created knowledge. Register cleanup before checking the error.
+	defer func() {
+		if knowledge != nil {
+			logger.Infof(ctx, "Cleaning up resources - deleting knowledge: %s", knowledge.ID)
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer cancel()
+			if err := deleteReferencedKnowledge(cleanupCtx,
+				e.knowledgeService,
+				knowledgeBaseID,
+				[]string{knowledge.ID}); err != nil {
+				logger.Errorf(ctx, "Failed to delete knowledge: %v, knowledge ID: %s", err, knowledge.ID)
+			}
+		}
+	}()
 	if err != nil {
 		logger.Errorf(ctx, "Failed to create knowledge from passages: %v", err)
 		return err
 	}
 	logger.Infof(ctx, "Knowledge created and indexed successfully, ID: %s", knowledge.ID)
-
-	// Setup cleanup of temporary resources
-	defer func() {
-		logger.Infof(ctx, "Cleaning up resources - deleting knowledge: %s", knowledge.ID)
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
-		if err := deleteReferencedKnowledge(cleanupCtx,
-			e.knowledgeService,
-			knowledgeBaseID,
-			[]string{knowledge.ID}); err != nil {
-			logger.Errorf(ctx, "Failed to delete knowledge: %v, knowledge ID: %s", err, knowledge.ID)
-		}
-	}()
 
 	// Synchronous import waits for indexing, not asynchronous enrichment/finalization.
 	if err := waitForEvaluationKnowledge(

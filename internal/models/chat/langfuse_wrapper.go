@@ -95,8 +95,12 @@ func (l *langfuseChat) ChatStream(
 		var toolCalls []types.LLMToolCall
 		var finishReason string
 		var firstToken bool
+		var streamErr error
 
 		for resp := range ch {
+			if resp.ResponseType == types.ResponseTypeError {
+				streamErr = fmt.Errorf("%s", resp.Content)
+			}
 			if resp.ResponseType == types.ResponseTypeThinking && resp.Content != "" {
 				if !firstToken {
 					gen.MarkCompletionStart(time.Now())
@@ -130,7 +134,7 @@ func (l *langfuseChat) ChatStream(
 		output := buildLangfuseGenerationOutput(
 			string(contentBuf), string(reasoningBuf), finishReason, toolCalls,
 		)
-		gen.Finish(output, convertUsage(usage), nil)
+		gen.Finish(output, convertUsage(usage), streamErr)
 	}()
 	return wrapped, nil
 }

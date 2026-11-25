@@ -1,9 +1,11 @@
 package session
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,22 +21,27 @@ func TestLiveSSEProducerErrorClosesWithoutSuccessOrHeldSourceTail(t *testing.T) 
 		t.Run(map[bool]string{false: "producer_refusal", true: "source_revoked"}[revoke], func(t *testing.T) {
 			gin.SetMode(gin.TestMode)
 			service := &liveHistoryMessageService{}
+			streams := &stagedLiveStream{}
 			if revoke {
 				service.denyAt = 1
-			}
-			lineage, err := types.NewCompleteSourceLineage()
-			require.NoError(t, err)
-			streams := &stagedLiveStream{
-				events: []interfaces.StreamEvent{
-					{
-						SourceLineage: lineage,
-						ID:            "producer-error",
-						Type:          types.ResponseTypeError,
-						Content:       "private response body token=SECRET",
-						Done:          true,
-						Data:          map[string]interface{}{"error": "private response body"},
-					},
-				},
+				lineage, err := types.NewCompleteSourceLineage()
+				require.NoError(t, err)
+				streams.events = []interfaces.StreamEvent{{
+					SourceLineage: lineage, ID: "diagnostic", Type: types.ResponseTypeError, Done: true,
+					Content: "private response body token=SECRET",
+					Data:    map[string]interface{}{"error": "private response body"},
+				}}
+			} else {
+				ctx := context.Background()
+				recorder := &capturingStreamManager{}
+				producer := NewAgentStreamHandler(ctx, "session", "assistant", "request", 1, time.Now(),
+					&types.Message{}, recorder, nil, nil, nil, nil)
+				require.NoError(t, producer.handleError(ctx, event.Event{
+					Type: event.EventError, SessionID: "session", RequestID: "request",
+					Data: event.ErrorData{Error: "private response body token=SECRET"},
+				}))
+				require.Len(t, recorder.events, 1)
+				streams.events = recorder.events
 			}
 			h := &Handler{messageService: service, streamManager: streams}
 			r := gin.New()
@@ -66,12 +73,14 @@ func TestLiveSSEProducerErrorClosesWithoutSuccessOrHeldSourceTail(t *testing.T) 
 			require.Less(t, time.Since(started), time.Second)
 			text := string(body)
 			require.Contains(t, text, `"done":true`)
-			require.Contains(t, text, `"response_type":"error"`)
+			require.Equal(t, 1, strings.Count(text, `"response_type":"error"`))
 			require.NotContains(t, text, "SECRET")
 			require.NotContains(t, text, "private response body")
 			require.NotContains(t, text, "private held source")
 			require.NotContains(t, text, `"response_type":"complete"`)
-			if !revoke {
+			if revoke {
+				require.Positive(t, service.checks)
+			} else {
 				require.Contains(t, text, "generation_failed")
 			}
 		})

@@ -163,13 +163,19 @@ esac
 # resolver drift must fail the build rather than ship an unaudited tree.
 cargo build --release --locked --manifest-path "$crate_dir/Cargo.toml" --target "$target"
 
+# Newer rustc stable embeds LLVM bitcode sections (.llvmbc, .llvmcmd, ...) in
+# the staticlib. Go 1.26 refuses to link an archive that carries them — they
+# are only useful for cross-language LTO, which this cgo link does not use —
+# and it reports one section per run. Strip every .llvm* section before cgo
+# consumes the archive, so the build does not depend on which rustc `stable`
+# resolves to that day.
 dest="$crate_dir/lib/$lib_dir"
 mkdir -p "$dest"
 staged_archive=$(mktemp "$dest/.$lib_name.XXXXXX")
 trap 'rm -f "$staged_archive"' EXIT
 cp "$crate_dir/target/$target/release/$lib_name" "$staged_archive"
 case "$target" in
-  *-linux-*) "$objcopy" --remove-section=.llvmbc --remove-section=.llvmcmd "$staged_archive" ;;
+  *-linux-*) "$objcopy" --remove-section='.llvm*' "$staged_archive" ;;
 esac
 chmod 0644 "$staged_archive"
 mv "$staged_archive" "$dest/$lib_name"

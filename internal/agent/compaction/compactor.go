@@ -136,6 +136,9 @@ func (c *Compactor) Compact(
 	if c == nil {
 		return nil, ErrNothingToCompact
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	prep := Prepare(messages, c.settings, c.estimator)
 	if prep == nil {
 		return nil, ErrNothingToCompact
@@ -145,7 +148,14 @@ func (c *Compactor) Compact(
 	}
 
 	history, historyDegraded := c.summarizeHistory(ctx, prep)
+	// An interrupted turn must not advance the stored history checkpoint.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	summary, prefixDegraded := c.appendTurnPrefix(ctx, prep, history)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	summary += prep.fileOps.format()
 	compacted := Apply(messages, prep, summary)
 	if err := c.checkLineage(ctx, prep.SourceLineage); err != nil {
@@ -178,21 +188,21 @@ func (c *Compactor) summarizeHistory(ctx context.Context, p *Preparation) (strin
 	if p.PreviousSummary != "" {
 		instructions = updateSummarizationInstructions
 	}
+	budget := c.settings.summaryBudget()
 	text, err := c.summarize(
 		ctx,
 		p.MessagesToSummarize,
 		p.OmittedHistory,
 		p.PreviousSummary,
 		instructions,
-		c.settings.summaryBudget(),
+		budget,
 		p.HistorySourceLineage,
 	)
 	if err != nil {
-		// The previous summary is still the best record of everything
-		// before this span, so the archive is appended to it rather than
-		// replacing it.
-		return joinNonEmpty(p.PreviousSummary,
-			rawArchive(p.MessagesToSummarize, c.settings.summaryBudget(), c.estimator)), true
+		if ctx.Err() != nil {
+			return "", false
+		}
+		return c.fallbackSummary(p.PreviousSummary, p.MessagesToSummarize, budget), true
 	}
 	return text, false
 }
@@ -203,6 +213,7 @@ func (c *Compactor) appendTurnPrefix(ctx context.Context, p *Preparation, histor
 	if !p.IsSplitTurn || len(p.TurnPrefixMessages) == 0 {
 		return history, false
 	}
+	budget := c.settings.turnPrefixBudget()
 	degraded := false
 	prefix, err := c.summarize(
 		ctx,
@@ -210,12 +221,15 @@ func (c *Compactor) appendTurnPrefix(ctx context.Context, p *Preparation, histor
 		p.OmittedTurnPrefix,
 		"",
 		turnPrefixInstructions,
-		c.settings.turnPrefixBudget(),
+		budget,
 		lineageOf(independentSummaryInput(), p.TurnPrefixMessages),
 	)
 	if err != nil {
+		if ctx.Err() != nil {
+			return "", false
+		}
 		degraded = true
-		prefix = rawArchive(p.TurnPrefixMessages, c.settings.turnPrefixBudget(), c.estimator)
+		prefix = c.fallbackSummary("", p.TurnPrefixMessages, budget)
 	}
 	if history == "" {
 		history = "No prior history."

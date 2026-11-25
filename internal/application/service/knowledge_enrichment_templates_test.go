@@ -138,7 +138,7 @@ func runKnowledgeTrustedTemplates(t *testing.T, pg bool) {
 				f.guard,
 				repository.NewNextcloudContentLeaseStore(f.db),
 			)
-			_, _, e := f.s.repo.FinalizeSubtask(f.build, f.k.ID)
+			_, _, e := f.s.repo.FinalizeSubtask(f.build, f.k.ID, 0)
 			require.NoError(t, e)
 			switch mode {
 			case "new actual admin template":

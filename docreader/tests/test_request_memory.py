@@ -34,6 +34,27 @@ class RequestMemoryTest(unittest.TestCase):
         gc_collect.assert_called_once_with()
         trim.assert_called_once_with(0)
 
+    def test_submitted_rpc_arguments_are_released_before_trimming(self):
+        submitted = threading.Event()
+        references = []
+
+        class RPC:
+            def run(self, request):
+                references.extend((weakref.ref(self), weakref.ref(request)))
+                if not submitted.wait(timeout=5):
+                    raise TimeoutError("RPC was not submitted")
+                track_request_size(64 * 1024 * 1024)
+
+        def trim(_):
+            self.assertTrue(all(ref() is None for ref in references))
+
+        with patch("docreader.utils.request_memory._malloc_trim", side_effect=trim) as mocked_trim:
+            with RequestThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(RPC().run, RPC())
+                submitted.set()
+                future.result(timeout=5)
+        mocked_trim.assert_called_once_with(0)
+
     def test_failed_large_request_is_reclaimed(self):
         def rpc_task():
             track_request_size(64 * 1024 * 1024)

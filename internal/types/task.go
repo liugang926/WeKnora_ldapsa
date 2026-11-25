@@ -564,6 +564,9 @@ type ImageMultimodalPayload struct {
 	// v0.8 image jobs bind these switches into the producer receipt.
 	EnableOCR     bool `json:"enable_ocr"`
 	EnableCaption bool `json:"enable_caption"`
+	// CounterBatch identifies the fan-out that owns the pending image counter.
+	// Empty retains compatibility with tasks queued before batch fencing.
+	CounterBatch string `json:"counter_batch,omitempty"`
 	// ImagePipelineParams carries the tunables of the pipeline this task runs,
 	// resolved from the knowledge base at enqueue time. They are deliberately
 	// not payload fields of their own: two pipelines may each define a field

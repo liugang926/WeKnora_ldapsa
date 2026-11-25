@@ -3,10 +3,8 @@ package service
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
 
-	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
 )
@@ -44,12 +42,13 @@ func (r *optionalSummaryKnowledgeRepo) CompleteProcessingWithoutSubtasks(ctx con
 func TestKnowledgePostProcessOptionalSummary(t *testing.T) {
 	t.Setenv("NEO4J_ENABLE", "true")
 	for _, tt := range []struct {
-		name      string
-		summary   *bool
-		question  bool
-		graph     bool
-		wiki      bool
-		wantTasks []string
+		name         string
+		summary      *bool
+		question     bool
+		graph        bool
+		wiki         bool
+		autoGenerate *bool
+		wantTasks    []string
 	}{
 		{name: "legacy defaults generate summary", wantTasks: []string{types.TypeSummaryGeneration}},
 		{
@@ -76,6 +75,14 @@ func TestKnowledgePostProcessOptionalSummary(t *testing.T) {
 			wiki:      true,
 			wantTasks: []string{types.TypeWikiIngest},
 		},
+		{
+			name:         "manual-only Wiki preserves other enrichment",
+			summary:      processConfigBoolPtr(false),
+			question:     true,
+			wiki:         true,
+			autoGenerate: processConfigBoolPtr(false),
+			wantTasks:    []string{types.TypeQuestionGeneration},
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			knowledge := &types.Knowledge{
@@ -93,6 +100,7 @@ func TestKnowledgePostProcessOptionalSummary(t *testing.T) {
 				IndexingStrategy: types.IndexingStrategy{
 					VectorEnabled: true, GraphEnabled: tt.graph, WikiEnabled: tt.wiki,
 				},
+				WikiConfig:               &types.WikiConfig{AutoGenerate: tt.autoGenerate},
 				QuestionGenerationConfig: &types.QuestionGenerationConfig{Enabled: tt.question},
 				ExtractConfig:            &types.ExtractConfig{Enabled: tt.graph},
 			}
@@ -162,13 +170,7 @@ func TestKnowledgePostProcessWithoutSummaryCompletionFailure(t *testing.T) {
 			f := attachPostProcessOriginalInputs(t, svc, &repo.wikiEnqueueFailureKnowledgeRepo,
 				svc.kbService.(*wikiEnqueueFailureKBService).kb, svc.chunkRepo.(*wikiEnqueueFailureChunkRepo).chunks)
 			db := f.db
-			require.NoError(t, db.Exec(
-				"CREATE UNIQUE INDEX span_tuple ON knowledge_processing_spans(knowledge_id, attempt, span_id)",
-			).Error)
-			migration, err := os.ReadFile("../../../migrations/sqlite/000057_processing_span_original_inputs.up.sql")
-			require.NoError(t, err)
-			require.NoError(t, db.Exec(string(migration)).Error)
-			svc.spanTracker = NewSpanTracker(repository.NewKnowledgeSpanRepository(db), db)
+			svc.spanTracker = postProcessOriginalSpanTracker(t, db)
 			ctx := types.WithTaskRetryMetadata(f.build, 0, 3)
 			_, attempt, err := svc.spanTracker.OpenAttempt(ctx, knowledge.ID, "")
 			require.NoError(t, err)

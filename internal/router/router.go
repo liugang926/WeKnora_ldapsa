@@ -74,6 +74,7 @@ type RouterParams struct {
 	ModelCredentialsHandler            *handler.ModelCredentialsHandler
 	SandboxConfigHandler               *handler.SandboxConfigHandler
 	SandboxSkillHandler                *handler.SandboxSkillHandler
+	CredentialVaultHandler             *handler.CredentialVaultHandler
 	MeEnvVarHandler                    *handler.MeEnvVarHandler
 	EvaluationHandler                  *handler.EvaluationHandler
 	AuthHandler                        *handler.AuthHandler
@@ -492,6 +493,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterModelRoutes(v1, params.ModelHandler, params.ModelCredentialsHandler, rbacGuards)
 		RegisterSandboxConfigRoutes(v1, params.SandboxConfigHandler, params.SandboxSkillHandler, rbacGuards)
 		RegisterMyEnvVarRoutes(v1, params.MeEnvVarHandler)
+		RegisterMyCredentialVaultRoutes(v1, params.CredentialVaultHandler)
 		v1.GET("/me/browser", params.SessionHandler.BrowserSkillAccount)
 		v1.GET("/me/browser/extension", params.SessionHandler.BrowserSkillDownload)
 		v1.POST("/me/browser", params.SessionHandler.BrowserSkillAccount)

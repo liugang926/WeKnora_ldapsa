@@ -1309,7 +1309,7 @@ func TestStreamLLMIncompleteFinishIsAStreamError(t *testing.T) {
 func TestWebFetchUnknownReferenceIsAnItemError(t *testing.T) {
 	engine := newWorkspaceTestEngine(t, &mockChat{})
 	engine.toolRegistry = agenttools.NewToolRegistry()
-	engine.toolRegistry.RegisterTool(agenttools.NewWebFetchTool())
+	engine.toolRegistry.RegisterTool(agenttools.NewWebFetchTool(nil))
 	calls := []types.LLMToolCall{{
 		ID: "fetch",
 		Function: types.FunctionCall{

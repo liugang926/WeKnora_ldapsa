@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -202,11 +203,14 @@ func TestKnowledgeQARevokedSharedKBCannotSupplyOwnerModel(t *testing.T) {
 func TestSharedKBModelFallbackUsesOwner(t *testing.T) {
 	ctx, svc, models := sharedChatFixture()
 	bus := event.NewEventBus()
-	done := make(chan event.AgentFinalAnswerData, 1)
+	done := make(chan string, 1)
+	var delivered strings.Builder
 	bus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error {
 		data := evt.Data.(event.AgentFinalAnswerData)
+		// Events carry per-chunk content; accumulate until the closing Done.
+		delivered.WriteString(data.Content)
 		if data.Done {
-			done <- data
+			done <- delivered.String()
 		}
 		return nil
 	})
@@ -216,7 +220,7 @@ func TestSharedKBModelFallbackUsesOwner(t *testing.T) {
 	svc.handleModelFallback(ctx, cm)
 	select {
 	case answer := <-done:
-		require.Equal(t, "ok", answer.Content)
+		require.Equal(t, "ok", answer)
 	case <-time.After(3 * time.Second):
 		t.Fatal("fallback did not finish")
 	}

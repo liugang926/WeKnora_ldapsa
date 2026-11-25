@@ -395,7 +395,9 @@ import {
   requestDingTalkAuthCode,
   lookupDingTalkErrorKey,
 } from '@/utils/dingtalk'
+import { normalizeMainLocale, setI18nLanguage } from '@/i18n'
 import { useI18n } from 'vue-i18n'
+import { getApiBaseUrl } from '@/utils/api-base'
 
 // Import screenshot images
 import screenshot1 from '@/assets/img/screenshot-1.svg'
@@ -413,7 +415,7 @@ const { formatRole, roleIcon } = useRoleLabel()
 const modules = [Autoplay, EffectFade, Pagination]
 
 // Carousel slides data
-const slides = [
+const slides = computed(() => [
   {
     image: screenshot4,
     title: t('platform.carousel.agenticRagTitle'),
@@ -434,7 +436,7 @@ const slides = [
     title: t('platform.carousel.smartDocRetrievalTitle'),
     description: t('platform.carousel.smartDocRetrievalDesc')
   }
-]
+])
 
 // Form references
 const formRef = ref()
@@ -570,11 +572,18 @@ const toggleLanguageMenu = () => {
 }
 
 // Select language
-const selectLanguage = (lang: string) => {
-  locale.value = lang
-  localStorage.setItem('locale', lang)
+const selectLanguage = async (lang: string) => {
   showLanguageMenu.value = false
-  MessagePlugin.success(t('language.languageSaved'))
+  const requested = normalizeMainLocale(lang)
+  try {
+    const applied = await setI18nLanguage(requested)
+    if (applied === requested) {
+      MessagePlugin.success(t('language.languageSaved'))
+    }
+  } catch (err) {
+    console.error('[WeKnora] Failed to switch language:', err)
+    MessagePlugin.error(t('common.failed'))
+  }
 }
 
 // Close language menu when clicking outside
@@ -651,7 +660,7 @@ const persistLoginResponse = async (response: any, skipRedirect = false) => {
     ? (nextcloudTarget || '/platform/knowledge-bases') : '/onboarding/workspace')
 }
 
-const getBackendOIDCRedirectURI = () => `${window.location.origin}/api/v1/auth/oidc/callback`
+const getBackendOIDCRedirectURI = () => `${window.location.origin}${getApiBaseUrl()}/api/v1/auth/oidc/callback`
 
 const loadOIDCConfig = async () => {
   try {

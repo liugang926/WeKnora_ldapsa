@@ -101,7 +101,7 @@ func TestRAGChunkHydrationIgnoresCachedIndexTextAndAccountsBeforeResult(t *testi
 		[]*types.IndexWithScore{
 			{KnowledgeID: "doc", ChunkID: "chunk", Content: "old index text must not be restamped", Score: 1},
 		},
-		true,
+		1, true,
 	)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
@@ -131,7 +131,7 @@ func TestRAGChunkHydrationUnknownAndLateRevocationReturnNoProgressMaterial(t *te
 			rows, err := s.processSearchResults(
 				ctx,
 				[]*types.IndexWithScore{{KnowledgeID: "doc", ChunkID: "chunk", Content: "cached text", Score: 1}},
-				true,
+				1, true,
 			)
 			require.Error(t, err)
 			require.Nil(t, rows)

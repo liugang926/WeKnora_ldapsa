@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -104,10 +105,10 @@ func TestKnowledgeQAFallbackSilenceRepro(t *testing.T) {
 	}
 
 	bus := event.NewEventBus()
-	done := make(chan string, 1)
+	answers := make(chan event.AgentFinalAnswerData, 4)
 	bus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error {
-		if data, ok := evt.Data.(event.AgentFinalAnswerData); ok && data.Done {
-			done <- data.Content
+		if data, ok := evt.Data.(event.AgentFinalAnswerData); ok {
+			answers <- data
 		}
 		return nil
 	})
@@ -132,10 +133,19 @@ func TestKnowledgeQAFallbackSilenceRepro(t *testing.T) {
 	})
 	require.NoError(t, err, "empty retrieval must fail neither closed nor open")
 
-	select {
-	case content := <-done:
-		require.NotEmpty(t, content, "a marked fallback answer must reach the event bus")
-	case <-time.After(3 * time.Second):
-		t.Fatal("REPRODUCED: fallback emitted nothing — assistant would stay incomplete forever")
+	var content strings.Builder
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case answer := <-answers:
+			require.True(t, answer.IsFallback)
+			content.WriteString(answer.Content)
+			if answer.Done {
+				require.Equal(t, "fallback answer", content.String())
+				return
+			}
+		case <-deadline:
+			t.Fatal("the fallback stream did not complete")
+		}
 	}
 }

@@ -113,7 +113,7 @@ func (h *DingTalkAuthHandler) GetDingTalkConfig(c *gin.Context) {
 // @Tags         认证
 // @Produce      json
 // @Success      200  {object}  types.DingTalkAuthURLResponse
-// @Failure      404  {object}  errors.AppError  "钉钉登录未启用"
+// @Failure      404  {object}  apperrors.AppError  "钉钉登录未启用"
 // @Router       /auth/dingtalk/url [get]
 func (h *DingTalkAuthHandler) GetDingTalkAuthorizationURL(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -230,9 +230,9 @@ func encodeDingTalkCallbackPayload(resp *types.OIDCCallbackResponse) (string, er
 // @Produce      json
 // @Param        request  body  object  true  "{\"auth_code\":\"...\"}"
 // @Success      200      {object}  dto.AuthLoginResponse
-// @Failure      401      {object}  errors.AppError  "非企业成员/工号不匹配等"
-// @Failure      403      {object}  errors.AppError  "账号或目录身份被禁用"
-// @Failure      503      {object}  errors.AppError  "钉钉接口故障（fail-closed）"
+// @Failure      401      {object}  apperrors.AppError  "非企业成员/工号不匹配等"
+// @Failure      403      {object}  apperrors.AppError  "账号或目录身份被禁用"
+// @Failure      503      {object}  apperrors.AppError  "钉钉接口故障（fail-closed）"
 // @Router       /auth/dingtalk/inapp [post]
 func (h *DingTalkAuthHandler) DingTalkInAppLogin(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -313,7 +313,7 @@ func (h *DingTalkAuthHandler) RegisterAdminRoutes(group *gin.RouterGroup) {
 // @Tags         系统管理
 // @Produce      json
 // @Success      200  {object}  types.DingTalkAdminConfig
-// @Failure      503  {object}  errors.AppError  "配置加载失败"
+// @Failure      503  {object}  apperrors.AppError  "配置加载失败"
 // @Router       /system/admin/dingtalk/config [get]
 func (h *DingTalkAuthHandler) GetAdminConfig(c *gin.Context) {
 	result, err := h.userService.GetDingTalkAdminConfig(c.Request.Context())
@@ -332,8 +332,8 @@ func (h *DingTalkAuthHandler) GetAdminConfig(c *gin.Context) {
 // @Produce      json
 // @Param        request  body  types.DingTalkAdminConfigUpdate  true  "钉钉配置"
 // @Success      200      {object}  types.DingTalkAdminConfig
-// @Failure      400      {object}  errors.AppError  "启用但缺少 corp_id/app_key/secret"
-// @Failure      409      {object}  errors.AppError  "file 模式只读"
+// @Failure      400      {object}  apperrors.AppError  "启用但缺少 corp_id/app_key/secret"
+// @Failure      409      {object}  apperrors.AppError  "file 模式只读"
 // @Router       /system/admin/dingtalk/config [put]
 func (h *DingTalkAuthHandler) UpdateAdminConfig(c *gin.Context) {
 	var request types.DingTalkAdminConfigUpdate
@@ -358,7 +358,7 @@ func (h *DingTalkAuthHandler) UpdateAdminConfig(c *gin.Context) {
 // @Tags         系统管理
 // @Produce      json
 // @Success      200  {object}  types.DingTalkAdminConfig
-// @Failure      409  {object}  errors.AppError  "已被页面管理或 env 强制 file 模式"
+// @Failure      409  {object}  apperrors.AppError  "已被页面管理或 env 强制 file 模式"
 // @Router       /system/admin/dingtalk/adopt [post]
 func (h *DingTalkAuthHandler) AdoptAdminConfig(c *gin.Context) {
 	result, err := h.userService.AdoptDingTalkEnvConfig(c.Request.Context())
@@ -377,7 +377,7 @@ func (h *DingTalkAuthHandler) AdoptAdminConfig(c *gin.Context) {
 // @Produce      json
 // @Param        request  body  types.DingTalkAdminConfigUpdate  true  "候选配置"
 // @Success      200      {object}  types.DingTalkTestResult
-// @Failure      400      {object}  errors.AppError  "缺少 corp_id/app_key/secret"
+// @Failure      400      {object}  apperrors.AppError  "缺少 corp_id/app_key/secret"
 // @Router       /system/admin/dingtalk/test [post]
 func (h *DingTalkAuthHandler) TestAdminConnection(c *gin.Context) {
 	var request types.DingTalkAdminConfigUpdate

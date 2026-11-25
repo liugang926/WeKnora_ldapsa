@@ -16,12 +16,16 @@ import (
 
 type titleGenerationModel struct {
 	messages []chat.Message
+	content  string
 }
 
 func (m *titleGenerationModel) Chat(
 	_ context.Context, messages []chat.Message, _ *chat.ChatOptions,
 ) (*types.ChatResponse, error) {
 	m.messages = messages
+	if m.content != "" {
+		return &types.ChatResponse{Content: m.content}, nil
+	}
 	return &types.ChatResponse{Content: "海底电力电缆寿命与短路电流计算方法及其工程应用分析"}, nil
 }
 
@@ -138,4 +142,18 @@ func TestGenerateTitleAsyncUsesWorkspaceUtilityDefault(t *testing.T) {
 			assert.Equal(t, want, models.selectedID)
 		})
 	}
+}
+
+func TestGenerateTitlePersistsJSONTitleValue(t *testing.T) {
+	model := &titleGenerationModel{content: `{"title":"Agent search tools"}`}
+	svc, session, ctx := newTitleGenerationFixture(t, "")
+	svc.modelService = &titleGenerationModels{model: model}
+	messages := []types.Message{{Role: "user", Content: "Original question"}}
+	title, err := svc.GenerateTitle(ctx, session, messages, "qa-model")
+	require.NoError(t, err)
+	assert.Equal(t, "Agent search tools", title)
+	stored, err := svc.sessionRepo.Get(ctx, session.TenantID, session.UserID, session.ID)
+	require.NoError(t, err)
+	assert.Equal(t, title, stored.Title)
+	assert.Equal(t, title, session.Title)
 }

@@ -261,13 +261,23 @@ func (s *OriginalBodyRetentionStore) captureField(
 	key, col, raw string,
 	scope originalBodyScope,
 ) error {
+	return s.captureFieldWithPreviousScope(tx, d, key, col, raw, scope, nil)
+}
+
+func (s *OriginalBodyRetentionStore) captureFieldWithPreviousScope(
+	tx *gorm.DB, d originalBodyFieldDescriptor, key, col, raw string,
+	scope originalBodyScope, source *originalBodyScope,
+) error {
 	if e := s.checkJournalInTx(tx); e != nil {
 		return e
 	}
-	if raw == "" || raw == "null" {
+	if source == nil && (raw == "" || raw == "null") {
 		return nil
 	}
 	if _, ok := bodyReference(raw); ok {
+		if source != nil {
+			return ErrOriginalBodyUnavailable
+		}
 		var head originalBodyFieldHead
 		if e := bodyInternal(
 			tx,
@@ -297,8 +307,16 @@ func (s *OriginalBodyRetentionStore) captureField(
 	if e != nil {
 		return e
 	}
+	if source != nil {
+		if prior.SlotID == "" && (raw == "" || raw == "null") {
+			return nil
+		}
+		if err := validateMoveBodyHead(tx, d, key, col, prior, *source, raw); err != nil {
+			return err
+		}
+	}
 	if prior.SlotID != "" {
-		if prior.SourceIdentitySHA256 != identity {
+		if source == nil && prior.SourceIdentitySHA256 != identity {
 			return ErrOriginalBodyUnavailable
 		}
 		var old originalBodyPayload
@@ -316,7 +334,7 @@ func (s *OriginalBodyRetentionStore) captureField(
 		if e := s.checkExternalBody(old.ID); e != nil {
 			return e
 		}
-		if old.BodySHA256 == sha &&
+		if source == nil && old.BodySHA256 == sha &&
 			(d.Table != "knowledge_bases" ||
 				(prior.AdmissionID == scope.AdmissionID && prior.SourceLineage == scope.Lineage)) {
 			if d.Table == "knowledge_bases" && scope.AdmissionID != "" {

@@ -23,6 +23,7 @@ type moveWikiKnowledgeRepo struct {
 	interfaces.KnowledgeRepository
 	knowledge *types.Knowledge
 	commitErr error
+	chunks    *moveWikiChunkRepo
 }
 
 func (r *moveWikiKnowledgeRepo) GetKnowledgeByID(
@@ -130,7 +131,7 @@ func newMoveWikiService(t *testing.T) (
 	pendingRepo := &moveWikiPendingRepo{}
 	chunkRepo := &moveWikiChunkRepo{}
 	svc := &knowledgeService{
-		repo: &moveWikiKnowledgeRepo{knowledge: &types.Knowledge{
+		repo: &moveWikiKnowledgeRepo{chunks: chunkRepo, knowledge: &types.Knowledge{
 			ID:              "kn-1",
 			TenantID:        1,
 			Title:           "Doc",
@@ -184,6 +185,26 @@ func TestMoveOneKnowledgeReuseVectorsIngestsIntoTargetKB(t *testing.T) {
 	assert.Equal(t, "kn-1", dstOps[0].DedupKey)
 }
 
+func TestMoveOneKnowledgeManualOnlyTargetSkipsWikiIngest(t *testing.T) {
+	svc, wikiRepo, pendingRepo, chunkRepo := newMoveWikiService(t)
+	disabled := false
+	target := wikiEnabledKB("kb-dst")
+	target.WikiConfig = &types.WikiConfig{AutoGenerate: &disabled}
+
+	err := svc.moveOneKnowledge(moveWikiCtx(), "kn-1",
+		wikiEnabledKB("kb-src"), target, "reuse_vectors")
+
+	require.NoError(t, err)
+	assert.Equal(t, "kb-dst", chunkRepo.movedToKB)
+	assert.Equal(t, []string{"kb-src"}, wikiRepo.listedKBs,
+		"moving out of the source KB must still reconcile its Wiki references")
+	assert.Empty(t, opsFor(pendingRepo.ops, "kb-dst"),
+		"a manual-only target must not receive an automatic Wiki ingest")
+	srcOps := opsFor(pendingRepo.ops, "kb-src")
+	require.Len(t, srcOps, 1)
+	assert.Equal(t, WikiOpRetract, srcOps[0].Op)
+}
+
 func TestMoveOneKnowledgeSkipsWikiWorkForNonWikiKBs(t *testing.T) {
 	svc, wikiRepo, pendingRepo, _ := newMoveWikiService(t)
 
@@ -201,6 +222,27 @@ func TestMoveOneKnowledgeSkipsWikiWorkForNonWikiKBs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, wikiRepo.listedKBs)
 	assert.Empty(t, pendingRepo.ops)
+}
+
+func (r *moveWikiKnowledgeRepo) CheckMoveOriginals(context.Context, *types.Knowledge, string) error {
+	return nil
+}
+
+func (r *moveWikiKnowledgeRepo) CommitKnowledgeMove(
+	ctx context.Context, before, after *types.Knowledge, reuse bool, finish, _ func(context.Context) error,
+) error {
+	if reuse {
+		if err := r.chunks.MoveChunksByKnowledgeID(ctx, before.TenantID, before.ID, after.KnowledgeBaseID); err != nil {
+			return err
+		}
+	}
+	if err := r.UpdateKnowledgeForTransfer(ctx, before, after); err != nil {
+		return err
+	}
+	if finish != nil {
+		return finish(ctx)
+	}
+	return nil
 }
 
 func (r *moveWikiKnowledgeRepo) UpdateKnowledgeForTransfer(

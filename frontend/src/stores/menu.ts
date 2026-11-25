@@ -62,10 +62,15 @@ export const useMenuStore = defineStore('menuStore', () => {
   applyMenuTranslations()
 
   watch(
-    () => i18n.global.locale.value,
+    () => [
+      i18n.global.locale.value,
+      i18n.global.messages?.value?.[
+        i18n.global.locale.value as keyof typeof i18n.global.messages.value
+      ],
+    ],
     () => {
       applyMenuTranslations()
-    }
+    },
   )
 
   // 菜单可见性过滤（lite 模式 / 普通员工收敛 / 部署能力）的判定抽成了

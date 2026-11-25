@@ -27,17 +27,18 @@ class RequestThreadPoolExecutor(ThreadPoolExecutor):
     """Collect PDF wrapper cycles and trim idle arenas after large RPC tasks."""
 
     def submit(self, fn, /, *args, **kwargs):
-        return super().submit(self._run, fn, args, kwargs)
+        def run():
+            nonlocal fn, args, kwargs
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                # The executor retains this work item until run() returns. Drop
+                # its gRPC call/context references before collecting and trimming.
+                del fn, args, kwargs
+                if getattr(_request_memory, "reclaim", False):
+                    _request_memory.reclaim = False
+                    gc.collect()
+                    if _malloc_trim is not None:
+                        _malloc_trim(0)
 
-    @staticmethod
-    def _run(fn, args, kwargs):
-        try:
-            return fn(*args, **kwargs)
-        finally:
-            if getattr(_request_memory, "reclaim", False):
-                _request_memory.reclaim = False
-                # Inside the RPC handler, gRPC still owns the request argument.
-                # Here its worker has returned, so the input arena can be freed.
-                gc.collect()
-                if _malloc_trim is not None:
-                    _malloc_trim(0)
+        return super().submit(run)

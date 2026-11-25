@@ -92,7 +92,6 @@ export async function collectAllSessionMessages(
 function cleanMessageContent(content?: string): string {
   return String(content || '')
     .replace(KB_WEB_TAG_RE, '')
-    .replace(/[ \t]+\n/g, '\n')
     .trim()
 }
 

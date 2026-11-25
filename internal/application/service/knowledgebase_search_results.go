@@ -16,20 +16,41 @@ import (
 // processSearchResults handles the processing of search results, optimizing database queries.
 func (s *knowledgeBaseService) processSearchResults(ctx context.Context,
 	chunks []*types.IndexWithScore,
+	primaryLimit int,
 	skipEnrichment bool,
 ) ([]*types.SearchResult, error) {
-	if len(chunks) == 0 {
+	return s.processSearchResultsAtRevisions(ctx, chunks, primaryLimit, skipEnrichment, nil)
+}
+
+func (s *knowledgeBaseService) processSearchResultsAtRevisions(
+	ctx context.Context,
+	chunks []*types.IndexWithScore,
+	primaryLimit int,
+	skipEnrichment bool,
+	expectedRevisions map[string]int,
+) ([]*types.SearchResult, error) {
+	if len(chunks) == 0 || primaryLimit <= 0 {
 		return nil, nil
 	}
 
 	tenantID := types.MustTenantIDFromContext(ctx)
 
-	// Collect all knowledge and chunk IDs, track scores and match info
-	index := s.buildChunkIndex(chunks)
+	chunks = chunks[:min(len(chunks), maxRetrievalPoolSize)]
+	knowledgeIDs := make([]string, 0, len(chunks))
+	seenKnowledge := make(map[string]bool, len(chunks))
+	for _, chunk := range chunks {
+		if chunk == nil {
+			continue
+		}
+		if !seenKnowledge[chunk.KnowledgeID] {
+			knowledgeIDs = append(knowledgeIDs, chunk.KnowledgeID)
+			seenKnowledge[chunk.KnowledgeID] = true
+		}
+	}
 
 	// Batch fetch knowledge data (include shared KB so cross-tenant retrieval works)
-	logger.Infof(ctx, "Fetching knowledge data for %d IDs", len(index.knowledgeIDs))
-	knowledgeMap, err := s.fetchKnowledgeDataWithShared(ctx, tenantID, index.knowledgeIDs)
+	logger.Infof(ctx, "Fetching knowledge data for %d IDs", len(knowledgeIDs))
+	knowledgeMap, err := s.fetchKnowledgeDataWithShared(ctx, tenantID, knowledgeIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -48,23 +69,67 @@ func (s *knowledgeBaseService) processSearchResults(ctx context.Context,
 		}
 	}
 
+	// Cancellation preserves partial index data for a later retry. Exclude
+	// those hits before they can take a result slot or supply enrichment.
+	candidates := make([]*types.IndexWithScore, 0, len(chunks))
+	chunkIDs := make([]string, 0, len(chunks))
+	for _, chunk := range chunks {
+		if chunk == nil {
+			continue
+		}
+		knowledge := knowledgeMap[chunk.KnowledgeID]
+		if knowledge == nil || knowledge.ParseStatus == types.ParseStatusCancelled {
+			continue
+		}
+		candidates = append(candidates, chunk)
+		chunkIDs = append(chunkIDs, chunk.ChunkID)
+	}
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+
 	// Batch fetch chunks (include shared KB chunks)
-	logger.Infof(ctx, "Fetching chunk data for %d IDs", len(index.chunkIDs))
-	allChunks, lineages, err := s.hydrateRAGSearchChunks(ctx, ragPrimaryChunkScopes(chunks), knowledgeMap, nil)
+	logger.Infof(ctx, "Fetching chunk data for %d IDs", len(chunkIDs))
+	allChunks, lineages, err := s.hydrateRAGSearchChunks(ctx, ragPrimaryChunkScopes(candidates), knowledgeMap, nil)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"tenant_id": tenantID,
-			"chunk_ids": index.chunkIDs,
+			"chunk_ids": chunkIDs,
 		})
 		return nil, err
 	}
 	logger.Infof(ctx, "Chunk data fetched successfully, count: %d", len(allChunks))
 
-	// Build chunk map and collect enrichment IDs (parent, related, nearby)
-	chunkMap := make(map[string]*types.Chunk, len(allChunks))
+	// A stale index hit can refer to a removed, disabled, or unsynchronized
+	// chunk. Hydrate the bounded candidate pool before spending primary slots.
+	candidateMap := make(map[string]*types.Chunk, len(allChunks))
 	for _, chunk := range allChunks {
-		chunkMap[chunk.ID] = chunk
+		candidateMap[chunk.ID] = chunk
 	}
+	selected := make([]*types.IndexWithScore, 0, min(primaryLimit, len(candidates)))
+	selectedKnowledge := make(map[string]*types.Knowledge)
+	chunkMap := make(map[string]*types.Chunk)
+	allChunks = nil
+	for _, candidate := range candidates {
+		chunk := candidateMap[candidate.ChunkID]
+		if !s.isSearchableChunk(chunk) || chunk.KnowledgeID != candidate.KnowledgeID ||
+			chunkMap[candidate.ChunkID] != nil {
+			continue
+		}
+		// A rerank score describes the scored revision. A changed chunk must
+		// neither consume a primary slot nor seed context enrichment.
+		if expected, ok := expectedRevisions[chunk.ID]; ok && expected != chunk.ContentRevision {
+			continue
+		}
+		selected = append(selected, candidate)
+		selectedKnowledge[candidate.KnowledgeID] = knowledgeMap[candidate.KnowledgeID]
+		chunkMap[chunk.ID] = chunk
+		allChunks = append(allChunks, chunk)
+		if len(selected) == primaryLimit {
+			break
+		}
+	}
+	index := s.buildChunkIndex(selected)
 
 	if !skipEnrichment {
 		additionalChunkIDs := s.collectEnrichmentChunkIDs(ctx, allChunks, index)
@@ -111,7 +176,7 @@ func (s *knowledgeBaseService) processSearchResults(ctx context.Context,
 	}
 
 	// Build final search results
-	searchResults := s.assembleSearchResults(ctx, chunks, chunkMap, knowledgeMap, index, skipEnrichment)
+	searchResults := s.assembleSearchResults(ctx, selected, chunkMap, selectedKnowledge, index, skipEnrichment)
 	for _, result := range searchResults {
 		result.SourceLineage = lineages[result.ID]
 		if result.SourceLineage == nil {
@@ -208,7 +273,6 @@ func (l *searchImageChildren) ListChunksByParentIDsOnly(ctx context.Context, par
 
 // chunkIndex holds pre-computed lookup structures for processing search results.
 type chunkIndex struct {
-	knowledgeIDs    []string
 	chunkIDs        []string
 	scores          map[string]float64
 	vectorScores    map[string]float64
@@ -217,7 +281,7 @@ type chunkIndex struct {
 	processedIDs    map[string]bool // tracks all IDs (chunk + enrichment) to avoid duplicates
 }
 
-// buildChunkIndex collects knowledge/chunk IDs and builds score/matchType maps
+// buildChunkIndex collects chunk IDs and builds score/matchType maps
 // from the raw retrieval results.
 func (s *knowledgeBaseService) buildChunkIndex(chunks []*types.IndexWithScore) *chunkIndex {
 	idx := &chunkIndex{
@@ -228,12 +292,7 @@ func (s *knowledgeBaseService) buildChunkIndex(chunks []*types.IndexWithScore) *
 		processedIDs:    make(map[string]bool, len(chunks)*2),
 	}
 
-	processedKnowledgeIDs := make(map[string]bool)
 	for _, chunk := range chunks {
-		if !processedKnowledgeIDs[chunk.KnowledgeID] {
-			idx.knowledgeIDs = append(idx.knowledgeIDs, chunk.KnowledgeID)
-			processedKnowledgeIDs[chunk.KnowledgeID] = true
-		}
 		idx.chunkIDs = append(idx.chunkIDs, chunk.ChunkID)
 		idx.scores[chunk.ChunkID] = chunk.Score
 		idx.vectorScores[chunk.ChunkID] = chunk.VectorScore

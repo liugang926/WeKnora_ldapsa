@@ -440,7 +440,7 @@ func assertEnrichmentReadable(t *testing.T, f *enrichmentTestFixture, ids []stri
 	var k types.Knowledge
 	require.NoError(t, f.db.Where("id = ?", f.k.ID).Take(&k).Error)
 	if k.ParseStatus == types.ParseStatusFinalizing {
-		_, _, e := f.s.repo.FinalizeSubtask(f.build, k.ID)
+		_, _, e := f.s.repo.FinalizeSubtask(f.build, k.ID, 0)
 		require.NoError(t, e)
 		require.NoError(t, f.db.Where("id = ?", k.ID).Take(&k).Error)
 	}

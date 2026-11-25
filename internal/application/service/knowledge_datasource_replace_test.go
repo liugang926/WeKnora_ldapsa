@@ -122,6 +122,13 @@ func datasourceReplacementFixture(t *testing.T) (
 	*replacementSyncHarness, *gorm.DB, *datasourceReplacementChunks, *datasourceReplacementQueue,
 ) {
 	t.Helper()
+	return datasourceReplacementFixtureForConnector(t, conflictSkipConnectorType)
+}
+
+func datasourceReplacementFixtureForConnector(t *testing.T, connectorType string) (
+	*replacementSyncHarness, *gorm.DB, *datasourceReplacementChunks, *datasourceReplacementQueue,
+) {
+	t.Helper()
 	h := newReplaceFileHarness(t)
 	f := newEnrichmentTestFixture(t, false)
 	inputs, db := f.store, f.db
@@ -131,10 +138,10 @@ func datasourceReplacementFixture(t *testing.T) (
 	require.NotEmpty(t, types.TaskInitiatorFromContext(h.ctx).UserID)
 	h.svc.groupAccess = NewGroupAccessService(repository.NewGroupAccessRepository(db))
 	require.NoError(t, db.AutoMigrate(&types.DataSource{}))
-	cfg, err := (&types.DataSourceConfig{Type: conflictSkipConnectorType}).ToJSON()
+	cfg, err := (&types.DataSourceConfig{Type: connectorType}).ToJSON()
 	require.NoError(t, err)
 	ds := &types.DataSource{
-		ID: "ds-1", TenantID: 7, KnowledgeBaseID: "kb", Type: conflictSkipConnectorType,
+		ID: "ds-1", TenantID: 7, KnowledgeBaseID: "kb", Type: connectorType,
 		Config: cfg, SyncMode: types.SyncModeFull, Status: types.DataSourceStatusActive,
 	}
 	require.NoError(t, db.Create(ds).Error)
@@ -190,25 +197,34 @@ func TestDataSourceReplacementPreservesOldResourcesOnFailure(t *testing.T) {
 			}
 			log, runErr := h.sync(t, item)
 			switch stage {
-			case "validation":
+			case "validation", "json":
+				wantCode := "unsupported_file_type"
+				if stage == "json" {
+					wantCode = "invalid_json_content"
+					require.NoError(t, runErr)
+					require.Equal(t, types.SyncLogStatusPartial, log.Status)
+				}
 				var result types.SyncResult
 				require.NoError(t, json.Unmarshal(log.Result, &result))
 				require.Len(t, result.Errors, 1)
-				require.Equal(t, "unsupported_file_type", result.Errors[0].Code)
+				require.Equal(t, wantCode, result.Errors[0].Code)
 			case "storage":
 				require.ErrorIs(t, runErr, h.store.saveErr)
-			case "json", "insert":
+			case "insert":
 				var ingestErr *dataSourceIngestError
 				require.ErrorAs(t, runErr, &ingestErr)
-				if stage == "json" {
-					require.ErrorContains(t, ingestErr.Unwrap(), "JSON 文件内容无效")
-				} else {
-					require.ErrorContains(t, ingestErr.Unwrap(), "forced insert failure")
-				}
+				require.ErrorContains(t, ingestErr.Unwrap(), "forced insert failure")
 			}
 			require.Equal(t, 1, log.ItemsFailed, log.ErrorMessage)
-			old, err := h.svc.repo.GetKnowledgeByID(h.ctx, 7, h.original.ID)
+			require.Zero(t, log.ItemsCreated)
+			require.Zero(t, log.ItemsUpdated)
+			old, err := h.svc.repo.FindByDataSourceExternalID(
+				h.ctx, h.source.TenantID, h.source.KnowledgeBaseID, h.source.ID, item.ExternalID,
+			)
 			require.NoError(t, err)
+			require.NotNil(t, old)
+			require.Equal(t, h.original.ID, old.ID)
+			require.Equal(t, h.original.FileHash, old.FileHash)
 			require.Equal(t, h.original.FilePath, old.FilePath)
 			require.Equal(t, types.ParseStatusCompleted, old.ParseStatus)
 			require.Zero(t, chunks.deleted)

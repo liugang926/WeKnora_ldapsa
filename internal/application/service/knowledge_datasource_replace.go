@@ -6,9 +6,15 @@ import (
 	"fmt"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
+	werrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 )
+
+// errInvalidJSONContent marks a synchronous JSON validation rejection during
+// datasource replacement so sync treats it as a permanent per-item rejection
+// without changing the HTTP upload API's error code.
+var errInvalidJSONContent = errors.New("invalid JSON content")
 
 // knowledgeReplacement is local to a single creation pipeline; a successful
 // persist switches the live rows before that pipeline can enqueue a worker.
@@ -154,6 +160,10 @@ func (s *knowledgeService) ReplaceKnowledgeFromDataSource(ctx context.Context, k
 			return nil, fmt.Errorf("build file header: %w", buildErr)
 		}
 		if err := ValidateJSONUploadContent(item.FileName, file); err != nil {
+			var appErr *werrors.AppError
+			if errors.As(err, &appErr) {
+				return nil, fmt.Errorf("%w: %w", errInvalidJSONContent, appErr)
+			}
 			return nil, err
 		}
 		created, err = s.createKnowledgeFromFile(plan.ctx, previous.KnowledgeBaseID, file, metadata,

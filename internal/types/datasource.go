@@ -28,22 +28,23 @@ const (
 	ConnectorTypeFeishuDrive = "feishu_drive"
 	// ConnectorTypeLarkDrive is the Lark (international) Drive mode, the
 	// international counterpart of ConnectorTypeFeishuDrive.
-	ConnectorTypeLarkDrive   = "lark_drive"
-	ConnectorTypeNotion      = "notion"
-	ConnectorTypeConfluence  = "confluence"
-	ConnectorTypeYuque       = "yuque"
-	ConnectorTypeGitHub      = "github"
-	ConnectorTypeGoogleDrive = "google_drive"
-	ConnectorTypeOneDrive    = "onedrive"
-	ConnectorTypeDingTalk    = "dingtalk"
-	ConnectorTypeWebCrawler  = "web_crawler"
-	ConnectorTypeSlack       = "slack"
-	ConnectorTypeIMAP        = "imap"
-	ConnectorTypeRSS         = "rss"
-	ConnectorTypeGitLab      = "gitlab"
-	ConnectorTypeIMA         = "ima"
-	ConnectorTypeNextcloud   = "nextcloud"
-	ConnectorTypeSeafile     = "seafile"
+	ConnectorTypeLarkDrive             = "lark_drive"
+	ConnectorTypeNotion                = "notion"
+	ConnectorTypeConfluence            = "confluence"
+	ConnectorTypeYuque                 = "yuque"
+	ConnectorTypeGitHub                = "github"
+	ConnectorTypeGoogleDrive           = "google_drive"
+	ConnectorTypeOneDrive              = "onedrive"
+	ConnectorTypeDingTalk              = "dingtalk"
+	ConnectorTypeWebCrawler            = "web_crawler"
+	ConnectorTypeSlack                 = "slack"
+	ConnectorTypeIMAP                  = "imap"
+	ConnectorTypeRSS                   = "rss"
+	ConnectorTypeGitLab                = "gitlab"
+	ConnectorTypeIMA                   = "ima"
+	ConnectorTypeNextcloud             = "nextcloud"
+	ConnectorTypeSeafile               = "seafile"
+	ConnectorTypeNextcloudNativeWebDAV = "nextcloud_native_webdav"
 
 	// ConnectorTypeNextcloudWebDAV identifies the independently configured WebDAV extension.
 	ConnectorTypeNextcloudWebDAV = "nextcloud_webdav"
@@ -354,6 +355,11 @@ type FetchedItem struct {
 	// Populated only by the connector's actual signed content response. It is
 	// opaque outside that connector and never accepted from JSON or a queue.
 	OriginalArtifact any `json:"-"`
+	// RetryOnFailure requires streaming ingestion to reject recorded failures
+	// before a connector checkpoints this item. Existing connectors retain their
+	// best-effort handling unless they explicitly opt in.
+	RetryOnFailure bool `json:"retry_on_failure,omitempty"`
+
 	// Unique ID in the external system
 	ExternalID string `json:"external_id"`
 
@@ -484,8 +490,23 @@ type SyncResult struct {
 	// Per-item failure samples (capped), shown in the sync-log UI.
 	Errors []SyncItemError `json:"errors,omitempty"`
 
+	// Per-item source-deletion samples (capped), shown in the sync-log UI.
+	DeletedItems []SyncDeletedItem `json:"deleted_items,omitempty"`
+
 	// Updated cursor for next incremental sync
 	NextCursor *SyncCursor `json:"next_cursor,omitempty"`
+}
+
+// MetaKeySelectedResourceDeleted marks an IsDeleted FetchedItem emitted when a
+// directly selected resource in config.resource_ids has been deleted upstream.
+const MetaKeySelectedResourceDeleted = "selected_resource_deleted"
+
+// SyncDeletedItem records one document or selected resource deleted in the
+// external source system, surfaced in the sync-log drawer and resource picker.
+type SyncDeletedItem struct {
+	ExternalID       string `json:"external_id,omitempty"`
+	SourceResourceID string `json:"source_resource_id,omitempty"`
+	Title            string `json:"title,omitempty"`
 }
 
 // SyncItemError is one user-facing failure sample. It carries a stable i18n

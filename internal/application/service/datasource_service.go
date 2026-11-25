@@ -800,7 +800,7 @@ func (s *DataSourceService) recordPreStreamSyncFailure(ctx context.Context,
 		ds.Status = types.DataSourceStatusError
 	}
 	ds.ErrorMessage = message
-	_ = s.dsRepo.Update(ctx, ds)
+	_ = s.dsRepo.UpdateSyncState(ctx, ds)
 }
 
 type (
@@ -837,6 +837,21 @@ func nextcloudSyncRetryMetadata(ctx context.Context) (retried, maxRetry int) {
 		return n, maxAttempts
 	}
 	return 0, 0 // Missing worker metadata cannot authorize a retry.
+}
+
+// syncCompletionPersisted reports whether the data-source completion write for
+// this round finished. updateSyncRunResult writes the terminal log first, so the
+// log alone cannot prove completion. LastSyncAt must belong to this round, and
+// a pending resync marker still requires the post-completion cleanup write.
+func syncCompletionPersisted(ds *types.DataSource, syncLog *types.SyncLog) bool {
+	if ds.LastSyncAt == nil || ds.LastSyncAt.Before(syncLog.StartedAt) {
+		return false
+	}
+	config, err := ds.ParseConfig()
+	if err != nil {
+		return false
+	}
+	return !resyncRequired(config)
 }
 
 // ProcessSync handles the actual sync operation (called by asynq task)
@@ -901,15 +916,45 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 
 	logger.Infof(ctx, "processing data source sync: ds=%s syncLog=%s", payload.DataSourceID, payload.SyncLogID)
 
+	// Get sync log. It is loaded before the data source so that a redelivery of
+	// an already finished round is recognised even when the data source has been
+	// deleted in the meantime, instead of having its log rewritten to canceled.
+	syncLog, err := s.syncLogRepo.FindByID(ctx, payload.SyncLogID)
+	if errors.Is(err, datasource.ErrSyncLogNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read sync log: %w", err)
+	}
+
+	if syncLog == nil {
+		return fmt.Errorf("read sync log: missing row")
+	}
+
+	// Canceled rounds were stopped on purpose and have no completion write to
+	// verify. Keep recognizing them before the data-source lookup so deletion
+	// cannot rewrite the log.
+	if syncLog.Status == types.SyncLogStatusCanceled {
+		logger.Infof(ctx, "sync log already finished, skipping replay: ds=%s syncLog=%s status=%s",
+			payload.DataSourceID, payload.SyncLogID, syncLog.Status)
+		return nil
+	}
+
 	// Get data source
 	ds, err := s.GetDataSource(ctx, payload.DataSourceID)
-	if err != nil {
-		logger.Warnf(
-			ctx,
-			"data source not found (likely deleted), cancelling sync: ds=%s err=%v",
-			payload.DataSourceID,
-			err,
-		)
+	sourceMissing := errors.Is(err, datasource.ErrDataSourceNotFound)
+	if err != nil && !sourceMissing {
+		return fmt.Errorf("read data source for sync: %w", err)
+	}
+	terminalResult := syncLog.Status == types.SyncLogStatusSuccess || syncLog.Status == types.SyncLogStatusPartial
+	if sourceMissing {
+		if terminalResult {
+			// The source is gone, so there is no completion write left to repair.
+			// Preserve the finished log rather than rewriting it as canceled.
+			logger.Infof(ctx, "sync log already finished, skipping replay: ds=%s syncLog=%s status=%s",
+				payload.DataSourceID, payload.SyncLogID, syncLog.Status)
+			return nil
+		}
 		if s.sourceInputs != nil {
 			dingTalk, identifyErr := s.sourceInputs.IsDingTalkSourceTask(ctx, payload.TenantID, payload.DataSourceID)
 			if identifyErr != nil {
@@ -919,25 +964,23 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 				return fmt.Errorf("%w: DingTalk source unavailable before run claim", asynq.SkipRetry)
 			}
 		}
-		if syncLog, slErr := s.syncLogRepo.FindByID(ctx, payload.SyncLogID); slErr == nil && syncLog != nil {
-			if syncLog.TenantID != payload.TenantID || syncLog.DataSourceID != payload.DataSourceID {
-				return fmt.Errorf("%w: source task sync-log binding changed", asynq.SkipRetry)
-			}
-			syncLog.Status = types.SyncLogStatusCanceled
-			syncLog.FinishedAt = timePtr(time.Now().UTC())
-			syncLog.ErrorMessage = "data source has been deleted"
-			_ = s.syncLogRepo.Update(ctx, syncLog)
+		if syncLog.TenantID != payload.TenantID || syncLog.DataSourceID != payload.DataSourceID {
+			return fmt.Errorf("%w: source task sync-log binding changed", asynq.SkipRetry)
 		}
-		return nil
+		logger.Warnf(ctx, "data source not found, cancelling sync: ds=%s", payload.DataSourceID)
+		return s.cancelSyncLog(ctx, syncLog, "data source has been deleted")
 	}
 
-	// Get sync log
 	if ds == nil || ds.TenantID != payload.TenantID {
 		return fmt.Errorf("data source task tenant binding changed: %w", asynq.SkipRetry)
 	}
-	syncLog, err := s.syncLogRepo.FindByID(ctx, payload.SyncLogID)
-	if err != nil {
-		logger.Errorf(ctx, "failed to get sync log: %v", err)
+
+	// A terminal log without its source completion must fall through so an
+	// asynq retry can finish the writes. failed and running also fall through:
+	// failed resumes from its cursor, and running is the attempt to recover.
+	if terminalResult && syncCompletionPersisted(ds, syncLog) {
+		logger.Infof(ctx, "sync log already finished, skipping replay: ds=%s syncLog=%s status=%s",
+			payload.DataSourceID, payload.SyncLogID, syncLog.Status)
 		return nil
 	}
 	if ds.Type == types.ConnectorTypeNextcloud && ds.SyncEnabled != nil && !*ds.SyncEnabled {
@@ -1056,13 +1099,12 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 			)
 			return fmt.Errorf("read Nextcloud configuration projection: %w", kbErr)
 		}
-		logger.Warnf(ctx, "knowledge base not found (likely deleted), cancelling sync: kb=%s ds=%s err=%v",
-			ds.KnowledgeBaseID, payload.DataSourceID, kbErr)
-		syncLog.Status = types.SyncLogStatusCanceled
-		syncLog.FinishedAt = timePtr(time.Now().UTC())
-		syncLog.ErrorMessage = "knowledge base has been deleted"
-		_ = s.syncLogRepo.Update(ctx, syncLog)
-		return nil
+		if !errors.Is(kbErr, apprepo.ErrKnowledgeBaseNotFound) {
+			return fmt.Errorf("read knowledge base for sync: %w", kbErr)
+		}
+		logger.Warnf(ctx, "knowledge base not found, cancelling sync: kb=%s ds=%s",
+			ds.KnowledgeBaseID, payload.DataSourceID)
+		return s.cancelSyncLog(ctx, syncLog, "knowledge base has been deleted")
 	}
 
 	if ds.Type == types.ConnectorTypeDingTalk &&
@@ -1326,7 +1368,11 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) (
 				"; %d deletion failure(s) will only retry on the next full sync", result.DeletionFailed)
 		}
 	}
-	s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON, syncStatus, syncErrorMessage, wasPaused)
+	if err := s.updateSyncRunResult(
+		ctx, ds, syncLog, result, resultJSON, syncStatus, syncErrorMessage, wasPaused,
+	); err != nil {
+		return err
+	}
 
 	logger.Infof(ctx, "data source sync completed: ds=%s created=%d updated=%d deleted=%d",
 		payload.DataSourceID, syncLog.ItemsCreated, syncLog.ItemsUpdated, syncLog.ItemsDeleted)
@@ -1648,6 +1694,119 @@ func recordSyncError(result *types.SyncResult, item types.SyncItemError) {
 	}
 }
 
+// recordSyncDeletedItem appends a source-deleted item sample to
+// result.DeletedItems (capped at maxSyncResultErrors and deduplicated),
+// resolving a human-readable title from the item, KB row, or prior sync result.
+func recordSyncDeletedItem(
+	result *types.SyncResult, ds *types.DataSource,
+	existing *types.Knowledge, item *types.FetchedItem,
+) {
+	if result == nil || item == nil || len(result.DeletedItems) >= maxSyncResultErrors {
+		return
+	}
+	for _, d := range result.DeletedItems {
+		if d.ExternalID == item.ExternalID && d.SourceResourceID == item.SourceResourceID {
+			return
+		}
+	}
+	result.DeletedItems = append(result.DeletedItems, types.SyncDeletedItem{
+		ExternalID:       item.ExternalID,
+		SourceResourceID: item.SourceResourceID,
+		Title:            resolveDeletedItemTitle(ds, existing, item),
+	})
+}
+
+func resolveDeletedItemTitle(
+	ds *types.DataSource, existing *types.Knowledge, item *types.FetchedItem,
+) string {
+	if t := strings.TrimSpace(item.Title); t != "" {
+		return t
+	}
+	if existing != nil {
+		if t := strings.TrimSpace(existing.Title); t != "" {
+			return t
+		}
+		if t := strings.TrimSpace(existing.FileName); t != "" {
+			return t
+		}
+	}
+	if ds != nil && len(ds.LastSyncResult) > 0 {
+		var prev types.SyncResult
+		if err := json.Unmarshal(ds.LastSyncResult, &prev); err == nil {
+			if item.ExternalID != "" {
+				for _, d := range prev.DeletedItems {
+					if d.Title != "" && d.ExternalID == item.ExternalID {
+						return d.Title
+					}
+				}
+			}
+			if item.SourceResourceID != "" {
+				matchedTitle := ""
+				ambiguous := false
+				for _, d := range prev.DeletedItems {
+					if d.Title == "" || d.SourceResourceID != item.SourceResourceID {
+						continue
+					}
+					if matchedTitle == "" {
+						matchedTitle = d.Title
+					} else if matchedTitle != d.Title {
+						ambiguous = true
+						break
+					}
+				}
+				if matchedTitle != "" && !ambiguous {
+					return matchedTitle
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// syncErrorItemLabel formats a user-facing item label for sync error samples.
+// When FileName carries a folder path (e.g. Feishu Drive/Wiki path-qualified
+// names) and Title is a bare name, combine them so operators can immediately
+// locate the failing file.
+func syncErrorItemLabel(item *types.FetchedItem) string {
+	if item == nil {
+		return ""
+	}
+	title := strings.TrimSpace(item.Title)
+	fileName := strings.TrimSpace(item.FileName)
+	if fileName != "" {
+		folder, base := types.SplitKnowledgeRelativePath(fileName)
+		if folder != "" {
+			if title == "" {
+				if base != "" {
+					return folder + "/" + base
+				}
+				return fileName
+			}
+			if !strings.Contains(title, "/") {
+				return folder + "/" + title
+			}
+		}
+	}
+	if title != "" {
+		return title
+	}
+	return fileName
+}
+
+// isGlobalIngestAbortError reports whether an ingestion error reflects a
+// workspace/context-level failure that affects all remaining items and must
+// abort streaming immediately rather than isolating per item.
+func isGlobalIngestAbortError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var quotaErr *types.StorageQuotaExceededError
+	return errors.As(err, &quotaErr)
+}
+
 // fetchFailureSyncError maps a connector error item into a structured, user-
 // facing sample. Connectors that classify their errors (Feishu) provide a stable
 // i18n code + params via metadata so the frontend localises it to the viewer's
@@ -1655,7 +1814,7 @@ func recordSyncError(result *types.SyncResult, item types.SyncItemError) {
 // without codes keep the raw text as a Message fallback. Best practice per
 // Airbyte/Fivetran/Onyx: humanised, actionable, localised UI; raw detail in logs.
 func fetchFailureSyncError(item *types.FetchedItem, rawMsg string) types.SyncItemError {
-	e := types.SyncItemError{Title: item.Title}
+	e := types.SyncItemError{Title: syncErrorItemLabel(item)}
 	if code := item.Metadata["error_reason_code"]; code != "" {
 		e.Code = code
 		if v := item.Metadata["error_reason_code_value"]; v != "" {
@@ -1679,10 +1838,20 @@ func (s *DataSourceService) applyFetchedItem(
 	tagIDs []string, result *types.SyncResult,
 ) (nonBlockingFailure bool, ingestErr error) {
 	if item.IsDeleted {
+		selectedDeleted := item.Metadata[types.MetaKeySelectedResourceDeleted] == "true"
 		if !ds.SyncDeletions && ds.Type != types.ConnectorTypeNextcloud {
-			// Other connectors may disable sync deletion. Nextcloud must
-			// withdraw a confirmed deletion regardless of that option.
-			return
+			if selectedDeleted {
+				var existing *types.Knowledge
+				if s.knowledgeService != nil && s.knowledgeService.GetRepository() != nil && item.ExternalID != "" {
+					existing, _ = s.knowledgeService.GetRepository().FindByDataSourceExternalID(
+						ctx, ds.TenantID, ds.KnowledgeBaseID, ds.ID, item.ExternalID,
+					)
+				}
+				result.Skipped++
+				recordSyncDeletedItem(result, ds, existing, item)
+			}
+			// Sync deletion disabled: neither count nor delete.
+			return false, nil
 		}
 		if item.ExternalID == "" {
 			logger.Warnf(ctx, "skipping deletion for item %q: empty external_id", item.Title)
@@ -1743,7 +1912,11 @@ func (s *DataSourceService) applyFetchedItem(
 		if existing == nil {
 			// Deletion is idempotent: the source item may already have been
 			// removed manually or by an earlier sync.
+			s.sweepStaleSubtree(ctx, ds, item)
 			result.Skipped++
+			if selectedDeleted {
+				recordSyncDeletedItem(result, ds, nil, item)
+			}
 			return false, nil
 		}
 		if deleteErr := s.knowledgeService.DeleteKnowledge(ctx, existing.ID); deleteErr != nil {
@@ -1773,7 +1946,9 @@ func (s *DataSourceService) applyFetchedItem(
 			})
 			return false, nil
 		}
+		s.sweepStaleSubtree(ctx, ds, item)
 		result.Deleted++
+		recordSyncDeletedItem(result, ds, existing, item)
 		return false, nil
 	}
 
@@ -1793,7 +1968,10 @@ func (s *DataSourceService) applyFetchedItem(
 
 	isUpdate, err := s.ingestItem(ctx, ds, item, tagIDs)
 	if err != nil {
+		itemLabel := syncErrorItemLabel(item)
 		var dupErr *types.DuplicateKnowledgeError
+		var appErr *apperrors.AppError
+		var quotaErr *types.StorageQuotaExceededError
 		switch {
 		case errors.Is(err, apprepo.ErrNextcloudCandidateRetryNotDue),
 			errors.Is(err, apprepo.ErrNextcloudCandidateRetryManual):
@@ -1806,14 +1984,62 @@ func (s *DataSourceService) applyFetchedItem(
 		case errors.Is(err, ErrInvalidFileType):
 			result.Failed++
 			recordSyncError(result, types.SyncItemError{
-				Title: item.Title, Code: "unsupported_file_type", Message: "Unsupported file type",
+				Title: itemLabel, Code: "unsupported_file_type", Message: "Unsupported file type",
 			})
 			return false, err
+		case errors.Is(err, ErrInvalidURL):
+			result.Failed++
+			recordSyncError(result, types.SyncItemError{
+				Title: itemLabel, Code: "invalid_url", Message: "Invalid or unsafe URL",
+			})
+			return true, nil
+		case errors.Is(err, errInvalidJSONContent):
+			result.Failed++
+			recordSyncError(result, types.SyncItemError{
+				Title:   itemLabel,
+				Code:    "invalid_json_content",
+				Message: "Invalid or empty JSON file content",
+			})
+			return true, nil
+		case errors.As(err, &appErr) && appErr.Code == apperrors.ErrImportPrerequisiteMissing:
+			// A missing VLM/ASR prerequisite can never succeed on replay:
+			// the file waits for the operator to configure a model.
+			// Classify it as a permanent rejection — visible in the sync
+			// log, stream keeps going, cursor advances past it — so one
+			// image cannot abort the round and force every later sync to
+			// re-fetch the same items again (Tencent/WeKnora#4712).
+			result.Failed++
+			recordSyncError(result, types.SyncItemError{
+				Title:   itemLabel,
+				Code:    "prerequisite_not_configured",
+				Message: appErr.Message,
+			})
+			return true, nil
+		case errors.As(err, &appErr) && appErr.Code == apperrors.ErrValidation:
+			// Filename or folder-path validation errors cannot succeed until
+			// the source item is renamed; keep them visible without blocking
+			// unrelated files or newly added directories.
+			result.Failed++
+			recordSyncError(result, types.SyncItemError{
+				Title:   itemLabel,
+				Code:    "invalid_item_name",
+				Message: "File name or folder path contains invalid characters",
+			})
+			return true, nil
+		case errors.As(err, &quotaErr):
+			logger.Warnf(ctx, "failed to ingest item %q (external_id=%s): %v", item.Title, item.ExternalID, err)
+			result.Failed++
+			recordSyncError(result, types.SyncItemError{
+				Title:   itemLabel,
+				Code:    "storage_quota_exceeded",
+				Message: "Storage quota exceeded",
+			})
+			return false, &dataSourceIngestError{cause: err}
 		default:
 			logger.Warnf(ctx, "failed to ingest item %q (external_id=%s): %v", item.Title, item.ExternalID, err)
 			result.Failed++
 			recordSyncError(result, types.SyncItemError{
-				Title:   item.Title,
+				Title:   itemLabel,
 				Code:    "ingest_failed",
 				Message: "Ingest failed; see server logs",
 			})
@@ -1900,6 +2126,12 @@ func (s *DataSourceService) clearResyncMarker(ctx context.Context, ds *types.Dat
 	}
 }
 
+// maxConsecutiveIsolatedIngestFailures caps how many consecutive unexpected
+// item ingest failures an isolating streaming connector may skip before the
+// sync aborts as a systemic storage/DB outage instead of burning remote API
+// budget across the remaining tree.
+const maxConsecutiveIsolatedIngestFailures = 10
+
 // streamSyncHandler adapts a streaming fetch to the knowledge-base ingest path.
 // Emit ingests each item as it arrives (bounding memory) and Checkpoint persists
 // the connector cursor plus live progress counts at page boundaries.
@@ -1908,7 +2140,15 @@ type streamSyncHandler struct {
 	ingestErr error
 	// Count separately from the capped error samples; unsupported and oversized
 	// files must not disable future syncs, including runs with both failure types.
-	nonBlockingFailures       int
+	nonBlockingFailures int
+	// isolateItemFailures is true when the connector tracks per-item cursors
+	// independently and honors datasource.ErrItemIngestFailed by leaving only
+	// the failed item unadvanced instead of aborting the whole round.
+	isolateItemFailures       bool
+	consecutiveIngestFailures int
+	// unchangedItems counts in-scope items skipped by the connector's cursor
+	// fast-path as already up to date during this run.
+	unchangedItems            int
 	svc                       *DataSourceService
 	ds                        *types.DataSource
 	tagIDs                    []string
@@ -2053,8 +2293,16 @@ func (h *streamSyncHandler) validateNextcloudCursor(cursor *types.SyncCursor) er
 	return nil
 }
 
-// Emit ingests one streamed item. Unexpected ingestion errors abort the stream
-// before the connector can checkpoint past the failed item.
+var _ datasource.UnchangedItemRecorder = (*streamSyncHandler)(nil)
+
+// RecordUnchanged marks one in-scope item as verified unchanged via cursor.
+func (h *streamSyncHandler) RecordUnchanged() {
+	h.unchangedItems++
+}
+
+// Emit ingests one streamed item. Unexpected ingestion errors either isolate
+// the single item (for ItemFailureIsolatingConnector, up to the consecutive
+// failure cap) or abort the stream before the connector can checkpoint past it.
 func (h *streamSyncHandler) Emit(ctx context.Context, item types.FetchedItem) error {
 	if h.ingestErr != nil {
 		return h.ingestErr
@@ -2092,6 +2340,8 @@ func (h *streamSyncHandler) Emit(ctx context.Context, item types.FetchedItem) er
 	}
 	beforeFailed := h.result.Failed
 	h.result.Total++
+	createdBefore := h.result.Created
+	updatedBefore := h.result.Updated
 	ingestCtx := bindFetchedConnectorItem(withKBActivitySuppressed(ctx), h.connector, h.ds, &item)
 	if h.ds.Type == types.ConnectorTypeNextcloud && h.payload.Trigger == "nextcloud_candidate_retry" {
 		ingestCtx = apprepo.WithNextcloudCandidateRetryClaim(ingestCtx, nextcloudCandidateRetryClaim(h.payload))
@@ -2104,9 +2354,25 @@ func (h *streamSyncHandler) Emit(ctx context.Context, item types.FetchedItem) er
 		), fmt.Sprintf("Nextcloud item %s could not be processed", item.ExternalID))
 		return h.ingestErr
 	}
+	if item.RetryOnFailure && h.result.Failed > beforeFailed {
+		h.ingestErr = fmt.Errorf("streamed item %q was not accepted; retry synchronization", item.ExternalID)
+		return h.ingestErr
+	}
 	if nonBlocking || errors.Is(err, ErrInvalidFileType) {
 		h.nonBlockingFailures++
 		return nil
+	}
+	if err == nil {
+		if h.result.Created > createdBefore || h.result.Updated > updatedBefore {
+			h.consecutiveIngestFailures = 0
+		}
+		return nil
+	}
+	if h.isolateItemFailures && !isGlobalIngestAbortError(err) {
+		h.consecutiveIngestFailures++
+		if h.consecutiveIngestFailures < maxConsecutiveIsolatedIngestFailures {
+			return fmt.Errorf("%w: %w", datasource.ErrItemIngestFailed, err)
+		}
 	}
 	h.ingestErr = err
 	return h.ingestErr
@@ -2215,10 +2481,15 @@ func (s *DataSourceService) processSyncStreaming(
 		return err
 	}
 
+	isolateItemFailures := false
+	if iso, ok := sc.(datasource.ItemFailureIsolatingConnector); ok && iso.IsolatesItemIngestFailures() {
+		isolateItemFailures = true
+	}
 	result := &types.SyncResult{}
 	handler := &streamSyncHandler{
 		svc: s, ds: ds, connector: sc, tagIDs: autoTagIDs, result: result,
 		syncLog: syncLog, payload: payload,
+		isolateItemFailures: isolateItemFailures,
 	}
 
 	fullBaseline := startCursor
@@ -2242,9 +2513,13 @@ func (s *DataSourceService) processSyncStreaming(
 		}
 		return fetchErr
 	}
+	abortErrMsg := ""
 	if handler.ingestErr != nil {
 		// Do not publish a final cursor even if the connector ignored an Emit error.
 		fetchErr = handler.ingestErr
+		abortErrMsg = apperrors.PublicMessage(handler.ingestErr)
+	} else if fetchErr != nil {
+		abortErrMsg = fmt.Sprintf("Fetch failed: %v", apperrors.PublicMessage(fetchErr))
 	}
 	if fetchErr != nil {
 		// Progress so far is already checkpointed onto ds.LastSyncCursor; leave
@@ -2255,7 +2530,7 @@ func (s *DataSourceService) processSyncStreaming(
 		}
 		resultJSON, _ := result.ToJSON()
 		s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON,
-			types.SyncLogStatusFailed, fmt.Sprintf("Fetch failed: %v", apperrors.PublicMessage(fetchErr)), wasPaused)
+			types.SyncLogStatusFailed, abortErrMsg, wasPaused)
 		return fetchErr
 	}
 	if ds.Type == types.ConnectorTypeNextcloud {
@@ -2281,12 +2556,20 @@ func (s *DataSourceService) processSyncStreaming(
 	}
 
 	resultJSON, _ := result.ToJSON()
-	if err := allFetchedItemsFailedError(result, handler.nonBlockingFailures); err != nil {
-		logger.Errorf(ctx, "streaming sync failed while processing fetched items: %v", err)
-		s.updateSyncRunResult(
-			ctx, ds, syncLog, result, resultJSON, types.SyncLogStatusFailed, apperrors.PublicMessage(err), wasPaused,
-		)
-		return err
+	// When the stream completed without aborting and at least one in-scope item
+	// was already verified up to date via the cursor fast-path, a lingering
+	// per-item failure is a partial sync rather than a total outage. Keeping
+	// ds.Status active preserves scheduled incremental syncs so new/edited
+	// documents keep syncing and the failed item retries on future ticks.
+	if handler.unchangedItems == 0 {
+		if err := allFetchedItemsFailedError(result, handler.nonBlockingFailures); err != nil {
+			logger.Errorf(ctx, "streaming sync failed while processing fetched items: %v", err)
+			_ = s.updateSyncRunResult(
+				ctx, ds, syncLog, result, resultJSON, types.SyncLogStatusFailed,
+				apperrors.PublicMessage(err), wasPaused,
+			)
+			return err
+		}
 	}
 
 	if err := storeCompletedStreamCursor(ds, payload, nextCursor); err != nil {
@@ -2314,7 +2597,9 @@ func (s *DataSourceService) processSyncStreaming(
 			)
 		}
 	}
-	s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON, status, errMsg, wasPaused)
+	if err := s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON, status, errMsg, wasPaused); err != nil {
+		return err
+	}
 	// The upgraded full pass succeeded (success or partial — per-document
 	// failures are a normal retryable condition): retire the marker so it
 	// never fires again. Failed runs returned earlier and keep it.
@@ -2346,6 +2631,52 @@ func storeCompletedStreamCursor(ds *types.DataSource, payload types.DataSourceSy
 	return nil
 }
 
+// cancelSyncLog persists the canceled terminal state for a sync whose data
+// source or knowledge base was deleted. The caller must return its error:
+// an Asynq retry is the only path that can write the state after a transient
+// failure, and acknowledging with the log still "running" leaves the round
+// stuck until the next sync.
+func (s *DataSourceService) cancelSyncLog(
+	ctx context.Context, syncLog *types.SyncLog, message string,
+) error {
+	syncLog.Status = types.SyncLogStatusCanceled
+	syncLog.FinishedAt = timePtr(time.Now().UTC())
+	syncLog.ErrorMessage = message
+	if err := s.syncLogRepo.Update(ctx, syncLog); err != nil {
+		return fmt.Errorf("record canceled sync log: %w", err)
+	}
+	return nil
+}
+
+func mergeDeletedItems(cur, prev []types.SyncDeletedItem) []types.SyncDeletedItem {
+	if len(prev) == 0 {
+		return cur
+	}
+	out := make([]types.SyncDeletedItem, 0, min(len(cur)+len(prev), maxSyncResultErrors))
+	for _, d := range cur {
+		if len(out) >= maxSyncResultErrors {
+			return out
+		}
+		out = append(out, d)
+	}
+	for _, p := range prev {
+		if len(out) >= maxSyncResultErrors {
+			break
+		}
+		seen := false
+		for _, existing := range out {
+			if existing.ExternalID == p.ExternalID && existing.SourceResourceID == p.SourceResourceID {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func (s *DataSourceService) updateSyncRunResult(
 	ctx context.Context,
 	ds *types.DataSource,
@@ -2355,7 +2686,7 @@ func (s *DataSourceService) updateSyncRunResult(
 	status string,
 	errorMessage string,
 	wasPaused bool,
-) {
+) error {
 	syncLog.ItemsTotal = result.Total
 	syncLog.ItemsCreated = result.Created
 	syncLog.ItemsUpdated = result.Updated
@@ -2369,17 +2700,16 @@ func (s *DataSourceService) updateSyncRunResult(
 	if ds.Type == types.ConnectorTypeNextcloud && isNextcloudCandidateRetryRun(ctx) {
 		// A transient failure of one failed file is a retry-job outcome, not a
 		// failure of the active source. The log releases admission for backoff.
-		if err := s.syncLogRepo.UpdateResult(ctx, syncLog); err != nil {
-			logger.Errorf(ctx, "failed to update Nextcloud candidate retry log: %v", err)
-		}
-		return
+		return s.syncLogRepo.UpdateResult(ctx, syncLog)
 	}
 	// For Nextcloud, the running log owns the source admission slot. Keep it
 	// running until its cursor/state is durable; otherwise another producer
 	// could start from the old cursor and race this final write.
+	var logErr error
 	if ds.Type != types.ConnectorTypeNextcloud {
-		if err := s.syncLogRepo.UpdateResult(ctx, syncLog); err != nil {
-			logger.Errorf(ctx, "failed to update sync log: %v", err)
+		logErr = s.syncLogRepo.UpdateResult(ctx, syncLog)
+		if logErr != nil {
+			logger.Errorf(ctx, "failed to update sync log: %v", logErr)
 		}
 	}
 
@@ -2394,7 +2724,20 @@ func (s *DataSourceService) updateSyncRunResult(
 		ds.Status = types.DataSourceStatusActive
 	}
 	ds.ErrorMessage = errorMessage
-	ds.LastSyncResult = resultJSON
+	dsResultJSON := resultJSON
+	if status == types.SyncLogStatusFailed && result != nil {
+		if prev, err := ds.ParseSyncResult(); err == nil && prev != nil && len(prev.DeletedItems) > 0 {
+			mergedItems := mergeDeletedItems(result.DeletedItems, prev.DeletedItems)
+			if len(mergedItems) > len(result.DeletedItems) {
+				merged := *result
+				merged.DeletedItems = mergedItems
+				if b, merr := merged.ToJSON(); merr == nil {
+					dsResultJSON = b
+				}
+			}
+		}
+	}
+	ds.LastSyncResult = dsResultJSON
 	var stateErr error
 	if ds.Type == types.ConnectorTypeNextcloud && isNextcloudRetryableEventFailure(ctx) {
 		// A pause or deletion may commit after this worker loaded ds. This
@@ -2418,13 +2761,22 @@ func (s *DataSourceService) updateSyncRunResult(
 		if ds.Type == types.ConnectorTypeNextcloud {
 			// The log stays running for manual review. Releasing admission
 			// would allow a second scan to start with stale deletion evidence.
-			return
+			return stateErr
 		}
 	}
 	if ds.Type == types.ConnectorTypeNextcloud {
-		if err := s.syncLogRepo.UpdateResult(ctx, syncLog); err != nil {
-			logger.Errorf(ctx, "failed to update Nextcloud sync log: %v", err)
+		logErr = s.syncLogRepo.UpdateResult(ctx, syncLog)
+	} else if stateErr == nil && s.scheduler != nil && expectedStatus == types.DataSourceStatusError &&
+		ds.Status == types.DataSourceStatusActive {
+		// Re-read persisted status so a concurrent PauseDataSource is never undone.
+		if fresh, ferr := s.dsRepo.FindByID(ctx, ds.ID); ferr == nil && fresh != nil {
+			if serr := s.scheduler.AddOrUpdate(fresh); serr != nil {
+				logger.Warnf(ctx, "failed to restore cron schedule after sync recovery for ds=%s: %v", ds.ID, serr)
+			}
 		}
+	}
+	if err := errors.Join(logErr, stateErr); err != nil {
+		return fmt.Errorf("persist sync result: %w", err)
 	}
 	action := types.AuditActionDataSourceSyncCompleted
 	outcome := types.AuditOutcomeSuccess
@@ -2443,6 +2795,7 @@ func (s *DataSourceService) updateSyncRunResult(
 			"total": result.Total, "created": result.Created, "updated": result.Updated,
 			"deleted": result.Deleted, "skipped": result.Skipped, "failed": result.Failed,
 		})
+	return nil
 }
 
 func allFetchedItemsFailedError(result *types.SyncResult, nonBlockingFailures int) error {
@@ -2607,6 +2960,15 @@ func (s *DataSourceService) ingestItem(
 	item *types.FetchedItem,
 	tagIDs []string,
 ) (bool, error) {
+	if len(item.Content) == 0 && item.URL != "" && isFileURL(item.URL, item.FileName, "") {
+		fileName := item.FileName
+		if fileName == "" {
+			fileName = extractFileNameFromURL(item.URL)
+		}
+		if IsVideoType(getFileType(fileName)) || !isValidFileType(fileName) {
+			return false, ErrInvalidFileType
+		}
+	}
 	// Channel decides the knowledge "source" label shown in the UI. Prefer the
 	// connector-supplied metadata["channel"] (e.g. Feishu Drive sets it to
 	// "feishu" so Drive docs share the wiki's "飞书" label instead of showing

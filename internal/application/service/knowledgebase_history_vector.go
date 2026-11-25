@@ -306,7 +306,7 @@ func (s *knowledgeBaseService) HydrateHistoryVectorCandidates(
 	if err := bridge.Checkpoint(ctx); err != nil {
 		return nil, err
 	}
-	results, err := s.processSearchResults(ctx, indices, true)
+	results, err := s.processSearchResults(ctx, indices, len(indices), true)
 	if checkErr := bridge.Checkpoint(ctx); checkErr != nil {
 		return nil, checkErr
 	}

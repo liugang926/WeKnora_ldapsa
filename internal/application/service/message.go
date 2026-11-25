@@ -14,6 +14,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"github.com/redis/go-redis/v9"
 )
 
 // messageService implements the MessageService interface for managing messaging operations
@@ -31,6 +32,14 @@ type messageService struct {
 	modelService       interfaces.ModelService         // Service for model operations (rerank model)
 	suggestionRepo     interfaces.MessageSuggestionRepository
 	historyGuard       *access.NextcloudHistoryGuard
+	historyRedis       *redis.Client
+}
+
+// ConfigureChatHistoryRedis serializes history index changes across server replicas.
+func ConfigureChatHistoryRedis(messages interfaces.MessageService, client *redis.Client) {
+	if s, ok := messages.(*messageService); ok {
+		s.historyRedis = client
+	}
 }
 
 // NewMessageService creates a new message service instance with the required repositories
@@ -357,6 +366,20 @@ func (s *messageService) GetRecentMessagesBySession(ctx context.Context,
 	return s.clarifyReadArtifactVersions(ctx, sessionID, messages), nil
 }
 
+// GetRecentUserMessages returns a session's latest user messages, oldest first.
+func (s *messageService) GetRecentUserMessages(
+	ctx context.Context, sessionID string, limit int,
+) ([]*types.Message, error) {
+	tenantID, ok := sessionTenantIDForLookup(ctx)
+	if !ok {
+		return nil, errors.New("workspace ID not found in context")
+	}
+	if _, err := loadSessionForRead(ctx, s.sessionRepo, tenantID, sessionUserIDForLookup(ctx), sessionID); err != nil {
+		return nil, err
+	}
+	return s.messageRepo.GetRecentUserMessages(ctx, sessionID, limit)
+}
+
 // GetMessagesBySessionBeforeTime retrieves messages sent before a specific time
 func (s *messageService) GetMessagesBySessionBeforeTime(ctx context.Context,
 	sessionID string, beforeTime time.Time, limit int,
@@ -654,71 +677,64 @@ func (s *messageService) IndexMessageToKB(ctx context.Context, _ string, _ strin
 		return
 	}
 
-	tenant, ok := types.TenantInfoFromContext(ctx)
-	if !ok || tenant.ID != tenantID {
-		if s.tenantService == nil {
-			return
+	// A turn may carry the configuration from before an administrator disabled
+	// or cleared indexing. Re-read it under the same lock as those mutations.
+	indexCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	err = s.withChatHistoryLock(indexCtx, tenantID, func(ctx context.Context) error {
+		if s.tenantService != nil {
+			tenant, err := s.chatHistoryTenant(ctx, tenantID)
+			if err != nil {
+				return err
+			}
+			ctx = context.WithValue(ctx, types.TenantInfoContextKey, tenant)
 		}
-		tenant, err = s.tenantService.GetTenantByID(ctx, tenantID)
-		if err != nil || tenant == nil || tenant.ID != tenantID {
-			return
+		cfg := s.getChatHistoryConfig(ctx)
+		if cfg == nil {
+			logger.Infof(ctx, "Skipping message index for message %s: %s", messageID, describeChatHistorySkip(ctx))
+			return nil
 		}
-		ctx = context.WithValue(ctx, types.TenantInfoContextKey, tenant)
-	}
-	cfg := s.getChatHistoryConfig(ctx)
-	if cfg == nil {
-		// Say why, otherwise an operator who enabled indexing in the UI sees
-		// "indexed messages: 0" with nothing in the logs to explain it: the
-		// stats endpoint only checks Enabled, while indexing additionally
-		// requires an embedding model and an auto-created KB.
-		logger.Infof(ctx, "Skipping message index for message %s: %s",
-			messageID, describeChatHistorySkip(ctx))
-		return
-	}
-
-	writer, capable := s.knowService.(interfaces.CommittedHistoryKnowledgeInputWriter)
-	if !capable || s.kbService == nil || s.sourceLineageGuard == nil {
-		return
-	}
-	kb, err := s.kbService.GetKnowledgeBaseByIDOnly(ctx, cfg.KnowledgeBaseID)
-	if err != nil || kb == nil || kb.ID != cfg.KnowledgeBaseID || kb.TenantID != tenantID {
-		return
-	}
-	caller := types.CallerFromContext(ctx)
-	// The configured history KB belongs to the session tenant. A shared Agent
-	// execution tenant/read grant cannot mint a history mutation for its owner.
-	if caller.TenantID != tenantID {
-		return
-	}
-	grant, err := access.ResolveKB(ctx, access.KBRequest{Caller: caller}, kb, types.OrgRoleEditor, nil, nil)
-	if err != nil {
-		return
-	}
-	empty, _ := types.NewCompleteSourceLineage()
-	if err := s.sourceLineageGuard.Check(ctx, empty, access.LineageReadScope{Targets: types.SearchTargets{
-		{Type: types.SearchTargetTypeKnowledgeBase, TenantID: kb.TenantID, KnowledgeBaseID: kb.ID},
-	}}); err != nil {
-		return
-	}
-	result, err := writer.CreateCommittedHistoryKnowledgeInput(
-		grant.Context(ctx),
-		types.CommittedHistoryKnowledgeInputRequest{
-			TenantID: tenantID, KnowledgeBaseID: kb.ID, SessionID: sessionID, AssistantMessageID: messageID,
-		},
-	)
+		writer, capable := s.knowService.(interfaces.CommittedHistoryKnowledgeInputWriter)
+		if !capable || s.kbService == nil || s.sourceLineageGuard == nil {
+			return nil
+		}
+		kb, err := s.kbService.GetKnowledgeBaseByIDOnly(ctx, cfg.KnowledgeBaseID)
+		if err != nil || kb == nil || kb.ID != cfg.KnowledgeBaseID || kb.TenantID != tenantID {
+			return nil
+		}
+		caller := types.CallerFromContext(ctx)
+		// The configured history KB belongs to the session tenant. A shared Agent
+		// execution tenant/read grant cannot mint a history mutation for its owner.
+		if caller.TenantID != tenantID {
+			return nil
+		}
+		grant, err := access.ResolveKB(ctx, access.KBRequest{Caller: caller}, kb, types.OrgRoleEditor, nil, nil)
+		if err != nil {
+			return err
+		}
+		empty, _ := types.NewCompleteSourceLineage()
+		if err := s.sourceLineageGuard.Check(ctx, empty, access.LineageReadScope{Targets: types.SearchTargets{
+			{Type: types.SearchTargetTypeKnowledgeBase, TenantID: kb.TenantID, KnowledgeBaseID: kb.ID},
+		}}); err != nil {
+			return nil
+		}
+		result, err := writer.CreateCommittedHistoryKnowledgeInput(
+			grant.Context(ctx),
+			types.CommittedHistoryKnowledgeInputRequest{
+				TenantID: tenantID, KnowledgeBaseID: kb.ID, SessionID: sessionID, AssistantMessageID: messageID,
+			},
+		)
+		if err == nil && result != nil && result.Knowledge != nil {
+			logger.Infof(
+				ctx, "Message indexed to chat history KB: knowledge_id=%s, message_id=%s",
+				result.Knowledge.ID, messageID,
+			)
+		}
+		return err
+	})
 	if err != nil {
 		logger.Warnf(ctx, "Failed to index message to chat history KB: %v", err)
-		return
 	}
-	if result == nil || result.Knowledge == nil {
-		return
-	}
-	logger.Infof(
-		ctx,
-		"Message indexed to chat history KB: knowledge_id=%s, message_id=%s",
-		result.Knowledge.ID,
-		messageID,
-	)
 }
 
 // describeChatHistorySkip reports which chat-history precondition is missing,
@@ -786,11 +802,11 @@ func (s *messageService) GetChatHistoryKBStats(ctx context.Context) (*types.Chat
 
 	stats := &types.ChatHistoryKBStats{}
 	cfg := tenant.ChatHistoryConfig
-	if cfg == nil || !cfg.Enabled {
+	if cfg == nil {
 		return stats, nil
 	}
 
-	stats.Enabled = true
+	stats.Enabled = cfg.Enabled
 	stats.EmbeddingModelID = cfg.EmbeddingModelID
 	stats.KnowledgeBaseID = cfg.KnowledgeBaseID
 
@@ -798,18 +814,22 @@ func (s *messageService) GetChatHistoryKBStats(ctx context.Context) (*types.Chat
 		return stats, nil
 	}
 
-	// Fetch KB info and fill counts (KnowledgeCount is gorm:"-", needs FillKnowledgeBaseCounts)
+	// Count directly: FillKnowledgeBaseCounts is a best-effort UI helper and
+	// intentionally swallows database errors, which must not unlock this model.
 	kb, err := s.kbService.GetKnowledgeBaseByID(ctx, cfg.KnowledgeBaseID)
 	if err != nil {
-		logger.Warnf(ctx, "Failed to get chat history KB %s: %v", cfg.KnowledgeBaseID, err)
-		return stats, nil
+		return nil, fmt.Errorf("get chat history knowledge base: %w", err)
 	}
-	if err := s.kbService.FillKnowledgeBaseCounts(ctx, kb); err != nil {
-		logger.Warnf(ctx, "Failed to fill chat history KB counts %s: %v", cfg.KnowledgeBaseID, err)
+	if kb == nil || kb.TenantID != tenantID {
+		return nil, errors.New("chat history knowledge base does not belong to workspace")
+	}
+	count, err := s.knowService.GetRepository().CountAllKnowledgeByKnowledgeBaseID(ctx, tenantID, kb.ID)
+	if err != nil {
+		return nil, fmt.Errorf("count chat history indexes: %w", err)
 	}
 	stats.KnowledgeBaseName = kb.Name
-	stats.IndexedMessageCount = kb.KnowledgeCount
-	stats.HasIndexedMessages = kb.KnowledgeCount > 0
+	stats.IndexedMessageCount = count
+	stats.HasIndexedMessages = count > 0
 
 	return stats, nil
 }

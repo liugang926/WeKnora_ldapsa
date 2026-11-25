@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
@@ -47,6 +48,7 @@ func attachPostProcessOriginalInputs(
 	actual.IndexingStrategy = desired.IndexingStrategy
 	actual.QuestionGenerationConfig = desired.QuestionGenerationConfig
 	actual.ExtractConfig = desired.ExtractConfig
+	actual.WikiConfig = desired.WikiConfig
 	actual.AutoTagConfig = desired.AutoTagConfig
 	input := repository.WithIndependentKnowledgeInput(ctx)
 	if err == gorm.ErrRecordNotFound {
@@ -102,6 +104,17 @@ func attachPostProcessOriginalInputs(
 func postProcessOriginalTask(t *testing.T, f *enrichmentTestFixture) *asynq.Task {
 	t.Helper()
 	return postProcessOriginalTaskForAttempt(t, f, 0)
+}
+
+func postProcessOriginalSpanTracker(t *testing.T, db *gorm.DB) SpanTracker {
+	t.Helper()
+	require.NoError(t, db.Exec(
+		"CREATE UNIQUE INDEX span_tuple ON knowledge_processing_spans(knowledge_id, attempt, span_id)",
+	).Error)
+	migration, err := os.ReadFile("../../../migrations/sqlite/000057_processing_span_original_inputs.up.sql")
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(string(migration)).Error)
+	return NewSpanTracker(repository.NewKnowledgeSpanRepository(db), db)
 }
 
 func postProcessOriginalTaskForAttempt(t *testing.T, f *enrichmentTestFixture, attempt int) *asynq.Task {

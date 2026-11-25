@@ -239,7 +239,10 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 				return
 			}
 		}
-		emitStreamEvent(ctx, c, evt, message.RequestID, resourceRewriter)
+		emitStreamEvent(ctx, c, safeStreamDiagnostic(evt, message.RequestID), message.RequestID, resourceRewriter)
+		if isFinalPersistenceError(evt) {
+			return
+		}
 	}
 
 	// If stream is already completed, send final event and return
@@ -300,7 +303,7 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 						return
 					}
 				}
-				if evt.Type == types.ResponseTypeError && evt.Done {
+				if needsStaticGenerationFailure(evt) {
 					emitSafeTerminalGenerationError(c, message.RequestID)
 					return
 				}
@@ -310,7 +313,13 @@ func (h *Handler) ContinueStream(c *gin.Context) {
 					streamCompletedNow = true
 				}
 
-				emitStreamEvent(ctx, c, evt, message.RequestID, resourceRewriter)
+				emitStreamEvent(
+					ctx,
+					c, safeStreamDiagnostic(evt, message.RequestID), message.RequestID, resourceRewriter,
+				)
+				if isFinalPersistenceError(evt) {
+					return
+				}
 			}
 
 			// Update offset
@@ -625,7 +634,7 @@ func (h *Handler) handleAgentEventsForSSE(
 			// the entire pending batch and holdback tail before any source or
 			// original-material check; refusal cannot suppress this static close.
 			for _, evt := range events {
-				if evt.Type == types.ResponseTypeError && evt.Done {
+				if needsStaticGenerationFailure(evt) {
 					emitSafeTerminalGenerationError(c, requestID)
 					return
 				}
@@ -754,7 +763,7 @@ func (h *Handler) handleAgentEventsForSSE(
 					phase.RawControl = evt.Type == types.ResponseTypeAgentQuery ||
 						evt.Type == types.ResponseType(event.EventStop)
 				}
-				emitStreamEvent(ctx, c, evt, requestID, resourceRewriter)
+				emitStreamEvent(ctx, c, safeStreamDiagnostic(evt, requestID), requestID, resourceRewriter)
 				if writer, ok := c.Writer.(*nativeSavedReplayWriter); ok && writer.denied != nil {
 					phase, _ := ctx.Value(liveMaterialWritePhaseKey{}).(*liveMaterialWritePhase)
 					if phase.userStopped() {
@@ -762,6 +771,9 @@ func (h *Handler) handleAgentEventsForSSE(
 						return
 					}
 					emitSafeTerminalGenerationError(c, requestID)
+					return
+				}
+				if isFinalPersistenceError(evt) {
 					return
 				}
 			}
@@ -811,7 +823,10 @@ func (h *Handler) handleAgentEventsForSSE(
 											return
 										}
 									}
-									emitStreamEvent(ctx, c, evt, requestID, resourceRewriter)
+									emitStreamEvent(
+										ctx,
+										c, safeStreamDiagnostic(evt, requestID), requestID, resourceRewriter,
+									)
 									// If we got the title, we can exit
 									if evt.Type == types.ResponseTypeSessionTitle {
 										log.Infof("Title event received: %s", evt.Content)
@@ -1200,4 +1215,40 @@ func writeTerminalControl(c *gin.Context, control *types.StreamResponse) {
 	}
 	c.SSEvent("message", control)
 	c.Writer.Flush()
+}
+
+// Diagnostics may contain credentials or document fragments even when the
+// affected source itself is authorized. Only server-owned literals go to SSE.
+func safeStreamDiagnostic(evt interfaces.StreamEvent, requestID string) interfaces.StreamEvent {
+	if evt.Type != types.ResponseTypeError {
+		return evt
+	}
+	safe := interfaces.StreamEvent{
+		ID: requestID, Type: types.ResponseTypeError, Done: evt.Done,
+		Content: quickAnswerFailureContent,
+	}
+	if isFinalPersistenceError(evt) {
+		safe.Content = "Failed to save assistant message"
+		safe.Data = map[string]interface{}{"stage": "message_persistence", "error_code": "generation_failed"}
+	} else if needsStaticGenerationFailure(evt) {
+		safe.Data = map[string]interface{}{"error_code": "generation_failed"}
+	}
+	return safe
+}
+
+// A producer-declared failed turn, or an error with no publishable source,
+// closes through a fixed literal. Other admitted errors may precede recovery.
+func needsStaticGenerationFailure(evt interfaces.StreamEvent) bool {
+	if evt.Type != types.ResponseTypeError || !evt.Done {
+		return false
+	}
+	return evt.SourceLineage.RequireComplete() != nil ||
+		evt.Data["error_code"] == "generation_failed" && !isFinalPersistenceError(evt)
+}
+
+// Only a failed final write guarantees that no persisted completion can follow.
+// Other agent errors may still be followed by final output, artifacts and usage.
+func isFinalPersistenceError(evt interfaces.StreamEvent) bool {
+	return evt.Type == types.ResponseTypeError && evt.Done &&
+		evt.Data["stage"] == "message_persistence"
 }

@@ -46,9 +46,11 @@ func (r *wikiEnqueueFailureKnowledgeRepo) SetFinalizing(
 	return true, nil
 }
 
-func (r *wikiEnqueueFailureKnowledgeRepo) FinalizeSubtask(ctx context.Context, id string) (int, bool, error) {
+func (r *wikiEnqueueFailureKnowledgeRepo) FinalizeSubtask(
+	ctx context.Context, id string, attempt int,
+) (int, bool, error) {
 	if r.KnowledgeRepository != nil {
-		remaining, completed, err := r.KnowledgeRepository.FinalizeSubtask(ctx, id)
+		remaining, completed, err := r.KnowledgeRepository.FinalizeSubtask(ctx, id, attempt)
 		if err == nil && completed {
 			r.knowledge.ParseStatus = types.ParseStatusCompleted
 		}
