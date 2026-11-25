@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/alicebob/miniredis/v2"
@@ -130,6 +131,7 @@ func (r *historyClearKnowledgeRepo) GetKnowledgeBatch(
 
 type historyClearKnowledgeService struct {
 	interfaces.KnowledgeService
+	writer      interfaces.CommittedHistoryKnowledgeInputWriter
 	repo        *historyClearKnowledgeRepo
 	batches     []int
 	failBatchAt int
@@ -174,18 +176,21 @@ func (s *historyClearKnowledgeService) DeleteKnowledgeList(ctx context.Context, 
 	return nil
 }
 
-func (s *historyClearKnowledgeService) CreateKnowledgeFromPassage(
-	ctx context.Context, kbID string, _ []string, _ string,
-) (*types.Knowledge, error) {
+func (s *historyClearKnowledgeService) CreateCommittedHistoryKnowledgeInput(
+	ctx context.Context, request types.CommittedHistoryKnowledgeInputRequest,
+) (*types.CommittedHistoryKnowledgeInput, error) {
 	if s.createGate != nil {
 		s.createGate()
 	}
+	result, err := s.writer.CreateCommittedHistoryKnowledgeInput(ctx, request)
+	if err != nil {
+		return nil, err
+	}
 	s.repo.mu.Lock()
 	defer s.repo.mu.Unlock()
-	s.createdKB = kbID
-	row := &types.Knowledge{ID: "new-index", TenantID: types.MustTenantIDFromContext(ctx), KnowledgeBaseID: kbID}
-	s.repo.rows[row.ID] = row
-	return row, nil
+	s.createdKB = result.Knowledge.KnowledgeBaseID
+	s.repo.rows[result.Knowledge.ID] = result.Knowledge
+	return result, nil
 }
 
 type historyClearMessageRepo struct {
@@ -202,30 +207,72 @@ func historyClearFixture(t *testing.T, count int) (
 	context.Context, *messageService, *historyClearTenantService, *historyClearKnowledgeService,
 ) {
 	t.Helper()
-	tenant := &types.Tenant{ID: 1, Name: "must not be overwritten", ChatHistoryConfig: &types.ChatHistoryConfig{
+	return historyClearTenantFixture(t, count, 1)
+}
+
+func historyClearTenantFixture(t *testing.T, count int, tenantID uint64) (
+	context.Context, *messageService, *historyClearTenantService, *historyClearKnowledgeService,
+) {
+	t.Helper()
+	tenant := &types.Tenant{ID: tenantID, Name: "must not be overwritten", ChatHistoryConfig: &types.ChatHistoryConfig{
 		Enabled: true, EmbeddingModelID: "embedding", KnowledgeBaseID: "history",
 	}}
 	tenants := &historyClearTenantService{tenant: tenant}
 	repo := &historyClearKnowledgeRepo{rows: map[string]*types.Knowledge{
-		"other-kb":     {ID: "other-kb", TenantID: 1, KnowledgeBaseID: "normal-kb"},
+		"other-kb":     {ID: "other-kb", TenantID: tenantID, KnowledgeBaseID: "normal-kb"},
 		"other-tenant": {ID: "other-tenant", TenantID: 2, KnowledgeBaseID: "history"},
 	}}
 	for i := range count {
 		id := fmt.Sprintf("index-%d", i)
-		repo.rows[id] = &types.Knowledge{ID: id, TenantID: 1, KnowledgeBaseID: "history"}
+		repo.rows[id] = &types.Knowledge{ID: id, TenantID: tenantID, KnowledgeBaseID: "history"}
 	}
 	knowledge := &historyClearKnowledgeService{repo: repo}
 	s := &messageService{
 		tenantService: tenants,
 		kbService: &historyClearKBService{
-			kb: &types.KnowledgeBase{ID: "history", TenantID: 1, IsTemporary: true, Name: "__chat_history__"},
+			kb: &types.KnowledgeBase{ID: "history", TenantID: tenantID, IsTemporary: true, Name: "__chat_history__"},
 		},
 		knowService: knowledge,
 		messageRepo: &historyClearMessageRepo{},
 	}
-	ctx := context.WithValue(t.Context(), types.TenantIDContextKey, uint64(1))
+	ctx := context.WithValue(t.Context(), types.TenantIDContextKey, tenantID)
 	ctx = context.WithValue(ctx, types.TenantInfoContextKey, tenant)
 	return ctx, s, tenants, knowledge
+}
+
+// Use saved messages and the real atomic history writer. Clearing and
+// indexing then contend on the same lease as two application replicas.
+func historyClearIndexFixture(t *testing.T, count int) (
+	context.Context, *messageService, *historyClearTenantService, *historyClearKnowledgeService, *types.Message,
+) {
+	t.Helper()
+	svc, writer, store, _, original, session, _ := messageBodyIntegrationFixture(
+		t, false, agentPromptDisplayFixtureSchema(t),
+	)
+	ctx := agentPromptActualRequestContext(original, t)
+	_, assistant := produceActualMessagePair(ctx, t, svc, session)
+	_, clear, tenants, knowledge := historyClearTenantFixture(t, count, session.TenantID)
+	// Both generations are writable so a stale configuration cannot pass
+	// the test simply because its write target is absent.
+	for _, id := range []string{"history", "new-history"} {
+		kb := &types.KnowledgeBase{
+			ID: id, Name: "__chat_history__", TenantID: session.TenantID, IsTemporary: true,
+			Type: types.KnowledgeBaseTypeDocument, EmbeddingModelID: "embedding",
+			ChunkingConfig:   types.ChunkingConfig{ChunkSize: 512},
+			IndexingStrategy: types.IndexingStrategy{VectorEnabled: true},
+		}
+		require.NoError(t, store.CreateKnowledgeBaseWithInput(
+			repository.WithIndependentKnowledgeBaseNameInput(
+				repository.WithIndependentKnowledgeInput(ctx), "", kb.Name,
+			), kb,
+		))
+	}
+	kbs := clear.kbService.(*historyClearKBService)
+	kbs.KnowledgeBaseService = svc.kbService
+	writer.kbService = svc.kbService
+	knowledge.writer = writer
+	svc.tenantService, svc.kbService, svc.knowService = tenants, kbs, knowledge
+	return context.WithValue(ctx, types.TenantInfoContextKey, tenants.tenant), svc, tenants, knowledge, assistant
 }
 
 func TestChatHistoryStatsKeepIndexedCountWhenDisabled(t *testing.T) {
@@ -399,24 +446,24 @@ func TestChatHistoryModelChangeRequiresClearEvenWhenDisabled(t *testing.T) {
 }
 
 func TestChatHistoryClearPreventsStaleTurnsFromRecreatingIndexes(t *testing.T) {
-	ctx, s, _, knowledge := historyClearFixture(t, 2)
+	ctx, s, _, knowledge, assistant := historyClearIndexFixture(t, 2)
 	// Snapshot the tenant as an already-running chat request would do.
-	before, err := s.tenantService.GetTenantByID(ctx, 1)
+	before, err := s.tenantService.GetTenantByID(ctx, types.MustTenantIDFromContext(ctx))
 	require.NoError(t, err)
 	stale := context.WithValue(ctx, types.TenantInfoContextKey, before)
 	_, err = s.ClearChatHistoryIndex(ctx)
 	require.NoError(t, err)
-	s.IndexMessageToKB(stale, "question", "answer", "message", "session")
+	s.IndexMessageToKB(stale, "", "", assistant.ID, assistant.SessionID)
 	require.Empty(t, knowledge.createdKB)
 
 	_, err = s.UpdateChatHistoryConfig(ctx, &types.ChatHistoryConfig{Enabled: true, EmbeddingModelID: "embedding"})
 	require.NoError(t, err)
-	s.IndexMessageToKB(stale, "question", "answer", "message", "session")
+	s.IndexMessageToKB(stale, "", "", assistant.ID, assistant.SessionID)
 	require.Equal(t, "new-history", knowledge.createdKB, "even the same model must not reuse the cleared generation")
 }
 
 func TestChatHistoryClearWaitsForIndexingAcrossReplicas(t *testing.T) {
-	ctx, s, tenants, knowledge := historyClearFixture(t, 0)
+	ctx, s, tenants, knowledge, assistant := historyClearIndexFixture(t, 0)
 	server := miniredis.RunT(t)
 	first := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	second := redis.NewClient(&redis.Options{Addr: server.Addr()})
@@ -432,7 +479,7 @@ func TestChatHistoryClearWaitsForIndexingAcrossReplicas(t *testing.T) {
 	knowledge.createGate = func() { close(entered); <-release }
 	go func() {
 		defer close(done)
-		s.IndexMessageToKB(ctx, "question", "answer", "message", "session")
+		s.IndexMessageToKB(ctx, "", "", assistant.ID, assistant.SessionID)
 	}()
 	select {
 	case <-entered:
