@@ -343,3 +343,41 @@ func TestMoveStillVisitsVectorBackendWithoutDatabaseChunks(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "other", row.KnowledgeBaseID)
 }
+
+type failingRemoteMove struct {
+	orphanMoveEngine
+	moves [][2]string
+}
+
+func (e *failingRemoteMove) MoveKnowledgeIndices(
+	_ context.Context, from, to, _ string, _ []string, _ int, _ string,
+) error {
+	e.moves = append(e.moves, [2]string{from, to})
+	return nil
+}
+
+func TestMoveRestoresRemoteIndexWhenGraphRejects(t *testing.T) {
+	t.Setenv("RETRIEVE_DRIVER", "postgres")
+	f := transferFixture(t, access.KBTransferMove)
+	engine := &failingRemoteMove{}
+	f.svc.retrieveEngine = parentChildRetrieveRegistry{engine: engine}
+	f.svc.modelService = parentChildModelService{embedder: parentChildEmbedder{}}
+	f.kbs.values["kb"].EmbeddingModelID = "model"
+	f.kbs.values["other"].EmbeddingModelID = "model"
+	require.NoError(t, f.db.Model(&types.Knowledge{}).Where("id=?", "doc").Update("embedding_model_id", "model").Error)
+	f.graph.err = errors.New("graph not available")
+	task := moveTask(t, []string{"doc"}, "reuse_vectors")
+	require.ErrorIs(t, f.svc.ProcessKnowledgeMove(context.Background(), task), f.graph.err)
+	require.Equal(t, [][2]string{{"kb", "other"}, {"other", "kb"}}, engine.moves)
+	source, err := f.repo.GetKnowledgeByID(f.ctx, 7, "doc")
+	require.NoError(t, err)
+	require.Equal(t, "kb", source.KnowledgeBaseID)
+	progress, err := f.svc.GetKnowledgeMoveProgress(f.ctx, "transfer-task")
+	require.NoError(t, err)
+	require.Equal(t, types.KBCloneStatusFailed, progress.Status)
+	f.graph.err = nil
+	require.NoError(t, f.svc.ProcessKnowledgeMove(context.Background(), task))
+	dest, err := f.repo.GetKnowledgeByID(f.ctx, 7, "doc")
+	require.NoError(t, err)
+	require.Equal(t, "other", dest.KnowledgeBaseID)
+}

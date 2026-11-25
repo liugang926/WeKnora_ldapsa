@@ -123,6 +123,15 @@ func (r *transferFaultRepo) DeleteKnowledgeTagRelations(ctx context.Context, id 
 	return r.KnowledgeRepository.DeleteKnowledgeTagRelations(ctx, id)
 }
 
+func (r *transferFaultRepo) CommitKnowledgeMove(
+	ctx context.Context, before, after *types.Knowledge, reuse bool, finish func(context.Context) error,
+) error {
+	if before.ID == r.failID {
+		return errors.New("temporary tag cleanup failure")
+	}
+	return r.KnowledgeRepository.CommitKnowledgeMove(ctx, before, after, reuse, finish)
+}
+
 func (r *transferFaultRepo) UpdateKnowledgeForTransfer(ctx context.Context, before, after *types.Knowledge) error {
 	r.claims++
 	return r.KnowledgeRepository.UpdateKnowledgeForTransfer(ctx, before, after)

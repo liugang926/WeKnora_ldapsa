@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service/retriever"
 	werrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -1570,6 +1571,7 @@ func (s *knowledgeService) moveKnowledgeReuseVectors(
 	for _, chunk := range oldChunks {
 		chunkIDs = append(chunkIDs, chunk.ID)
 	}
+	var moveIndices func(context.Context, string, string) error
 	if knowledge.EmbeddingModelID != "" {
 		engine, err := retriever.CreateRetrieveEngineForKB(
 			ctx,
@@ -1585,40 +1587,37 @@ func (s *knowledgeService) moveKnowledgeReuseVectors(
 		if err != nil {
 			return err
 		}
-		// Move index metadata in place. Copy + delete by the unchanged document ID
-		// would also delete the just-created target indices.
-		if err := engine.MoveKnowledgeIndices(ctx,
-			sourceKB.ID,
-			targetKB.ID,
-			knowledge.ID,
-			chunkIDs,
-			model.GetDimensions(),
-			sourceKB.Type); err != nil {
-			return err
+		dimension := model.GetDimensions()
+		moveIndices = func(moveCtx context.Context, from, to string) error {
+			return engine.MoveKnowledgeIndices(moveCtx, from, to, knowledge.ID,
+				chunkIDs, dimension, sourceKB.Type)
 		}
 	}
 
-	// Source graph namespaces must not keep exposing a document after it
-	// leaves the KB. The exact namespace deletion is repeatable on retry.
-	if s.graphEngine != nil {
-		if err := s.graphEngine.DelGraph(ctx,
-			[]types.NameSpace{{
-				KnowledgeBase: sourceKB.ID,
-				Knowledge:     knowledge.ID,
-			}}); err != nil {
-			return err
+	// The repository validates and stages every local row before calling external
+	// stores. SQL indexes sharing its pool take part in the same transaction.
+	finish := func(moveCtx context.Context) error {
+		var err error
+		if moveIndices != nil {
+			err = moveIndices(moveCtx, sourceKB.ID, targetKB.ID)
 		}
+		if err == nil && s.graphEngine != nil {
+			graph := repository.KnowledgeMoveGraph(moveCtx, s.graphEngine)
+			err = graph.DelGraph(moveCtx, []types.NameSpace{{
+				KnowledgeBase: sourceKB.ID, Knowledge: knowledge.ID,
+			}})
+		}
+		if err != nil && moveIndices != nil {
+			// A composite engine may have moved some remote backends before one
+			// failed. Restore their exact document while we still own its row lock.
+			restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(moveCtx), 5*time.Second)
+			defer cancel()
+			restoreErr := moveIndices(restoreCtx, targetKB.ID, sourceKB.ID)
+			return errors.Join(err, restoreErr)
+		}
+		return err
 	}
 
-	// 3. Update chunks' knowledge_base_id in DB
-	if err := s.chunkRepo.MoveChunksByKnowledgeID(ctx, tenantID, knowledge.ID, targetKB.ID); err != nil {
-		return fmt.Errorf("failed to move chunks: %w", err)
-	}
-
-	// 4. Update knowledge record (tags are KB-scoped; clear relations before moving)
-	if err := s.repo.DeleteKnowledgeTagRelations(ctx, knowledge.ID); err != nil {
-		return fmt.Errorf("failed to clear knowledge tag relations: %w", err)
-	}
 	before := *knowledge
 	knowledge.KnowledgeBaseID = targetKB.ID
 	knowledge.ParseStatus = types.ParseStatusCompleted
@@ -1631,7 +1630,7 @@ func (s *knowledgeService) moveKnowledgeReuseVectors(
 	if err := setTransferState(knowledge, *state); err != nil {
 		return err
 	}
-	if err := s.repo.UpdateKnowledgeForTransfer(ctx, &before, knowledge); err != nil {
+	if err := s.repo.CommitKnowledgeMove(ctx, &before, knowledge, true, finish); err != nil {
 		return err
 	}
 
@@ -1647,14 +1646,14 @@ func (s *knowledgeService) moveKnowledgeReparse(
 	if err := access.RequireKBTransfer(ctx, sourceKB, targetKB, access.KBTransferMove); err != nil {
 		return err
 	}
+	if err := s.repo.CheckMoveOriginals(ctx, knowledge, targetKB.ID); err != nil {
+		return err
+	}
 	before := *knowledge
 	cleanup := *knowledge
 	cleanup.StorageSize = 0
 	if err := s.cleanupKnowledgeResources(ctx, &cleanup); err != nil {
 		return fmt.Errorf("failed to clean up source: %w", err)
-	}
-	if err := s.repo.DeleteKnowledgeTagRelations(ctx, knowledge.ID); err != nil {
-		return err
 	}
 	knowledge.KnowledgeBaseID = targetKB.ID
 	knowledge.EmbeddingModelID = targetKB.EmbeddingModelID
@@ -1672,7 +1671,7 @@ func (s *knowledgeService) moveKnowledgeReparse(
 	if err := setTransferState(knowledge, *state); err != nil {
 		return err
 	}
-	if err := s.repo.UpdateKnowledgeForTransfer(ctx, &before, knowledge); err != nil {
+	if err := s.repo.CommitKnowledgeMove(ctx, &before, knowledge, false, nil); err != nil {
 		return err
 	}
 	if err := s.cleanupMovedSourceWiki(ctx, knowledge, sourceKB, targetKB); err != nil {

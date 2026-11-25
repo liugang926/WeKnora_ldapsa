@@ -296,6 +296,12 @@ type KnowledgeRepository interface {
 	// UpdateKnowledgeForTransfer conditionally persists a transfer checkpoint
 	// and its storage delta in one transaction, without inserting missing rows.
 	UpdateKnowledgeForTransfer(ctx context.Context, before, after *types.Knowledge) error
+
+	// CheckMoveOriginals verifies the source rows before a reparse removes old indexes.
+	CheckMoveOriginals(ctx context.Context, source *types.Knowledge, targetKB string) error
+	// CommitKnowledgeMove commits the row, chunks, tag cleanup and original-body ownership together.
+	CommitKnowledgeMove(ctx context.Context, before, after *types.Knowledge, reuseChunks bool,
+		finish func(context.Context) error) error
 	// FailKnowledgeAuthorization stops the same live processing attempt and
 	// clears its outstanding subtask count without modifying document content.
 	FailKnowledgeAuthorization(ctx context.Context, before *types.Knowledge, summary bool) error

@@ -23,6 +23,7 @@ type moveWikiKnowledgeRepo struct {
 	interfaces.KnowledgeRepository
 	knowledge *types.Knowledge
 	commitErr error
+	chunks    *moveWikiChunkRepo
 }
 
 func (r *moveWikiKnowledgeRepo) GetKnowledgeByID(
@@ -130,7 +131,7 @@ func newMoveWikiService(t *testing.T) (
 	pendingRepo := &moveWikiPendingRepo{}
 	chunkRepo := &moveWikiChunkRepo{}
 	svc := &knowledgeService{
-		repo: &moveWikiKnowledgeRepo{knowledge: &types.Knowledge{
+		repo: &moveWikiKnowledgeRepo{chunks: chunkRepo, knowledge: &types.Knowledge{
 			ID:              "kn-1",
 			TenantID:        1,
 			Title:           "Doc",
@@ -221,6 +222,27 @@ func TestMoveOneKnowledgeSkipsWikiWorkForNonWikiKBs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, wikiRepo.listedKBs)
 	assert.Empty(t, pendingRepo.ops)
+}
+
+func (r *moveWikiKnowledgeRepo) CheckMoveOriginals(context.Context, *types.Knowledge, string) error {
+	return nil
+}
+
+func (r *moveWikiKnowledgeRepo) CommitKnowledgeMove(
+	ctx context.Context, before, after *types.Knowledge, reuse bool, finish func(context.Context) error,
+) error {
+	if reuse {
+		if err := r.chunks.MoveChunksByKnowledgeID(ctx, before.TenantID, before.ID, after.KnowledgeBaseID); err != nil {
+			return err
+		}
+	}
+	if err := r.UpdateKnowledgeForTransfer(ctx, before, after); err != nil {
+		return err
+	}
+	if finish != nil {
+		return finish(ctx)
+	}
+	return nil
 }
 
 func (r *moveWikiKnowledgeRepo) UpdateKnowledgeForTransfer(
