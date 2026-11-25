@@ -107,10 +107,11 @@ func TestPostProcessShortfallUsesResolvedParseAttempt(t *testing.T) {
 	f := attachPostProcessOriginalInputs(t, post, &wikiEnqueueFailureKnowledgeRepo{knowledge: knowledge}, kb, chunks)
 	post.knowledgeRepo = f.s.repo
 	ctx, db := f.build, f.db
-	tracker := NewSpanTracker(apprepo.NewKnowledgeSpanRepository(db), db)
+	tracker := postProcessOriginalSpanTracker(t, db)
 	post.spanTracker = tracker
-	_, _, err := tracker.OpenAttempt(ctx, "doc", "")
+	_, first, err := tracker.OpenAttempt(ctx, "doc", "")
 	require.NoError(t, err)
+	require.Equal(t, 1, first)
 	queued := false
 	post.taskEnqueuer = supersedingSummaryQueue{duringCall: func() {
 		queued = true
@@ -132,4 +133,9 @@ func TestPostProcessShortfallUsesResolvedParseAttempt(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, current.PendingSubtasksCount, "un-enqueued slots still belong to the resolved old attempt")
 	require.Equal(t, types.ParseStatusFinalizing, current.ParseStatus)
+	oldStatus, code, _ := rootSpan(t, db, "doc", first)
+	require.Equal(t, types.SpanStatusCancelled, oldStatus)
+	require.Equal(t, "ATTEMPT_SUPERSEDED", code)
+	newStatus, _, _ := rootSpan(t, db, "doc", 2)
+	require.Equal(t, types.SpanStatusRunning, newStatus)
 }
