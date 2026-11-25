@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"testing"
 	"time"
@@ -296,11 +297,20 @@ func TestBuildHNSWIndexInBackgroundOnlyLogsAFailure(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func expectIndexKnowledge(mock sqlmock.Sqlmock, knowledgeID, kbID string) {
+	const query = `SELECT "id","tenant_id","knowledge_base_id","channel","metadata" FROM "knowledges" ` +
+		`WHERE id = $1 AND knowledge_base_id = $2 LIMIT $3`
+	mock.ExpectQuery(regexp.QuoteMeta(query)).WithArgs(knowledgeID, kbID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "knowledge_base_id", "channel", "metadata"}).
+			AddRow(knowledgeID, 1, kbID, "web", nil))
+}
+
 func TestSaveSchedulesTheIndexForTheStoredDimension(t *testing.T) {
 	t.Setenv("AUTO_MIGRATE", "true")
 	repo, mock := newHNSWTestRepo(t)
 	wait := recordBuilds(repo)
 	mock.ExpectBegin()
+	expectIndexKnowledge(mock, "k1", "kb1")
 	mock.ExpectQuery(`INSERT INTO "embeddings"`).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 	mock.ExpectCommit()
@@ -319,6 +329,7 @@ func TestBatchSaveSchedulesTheIndexForEveryStoredDimension(t *testing.T) {
 	repo, mock := newHNSWTestRepo(t)
 	wait := recordBuilds(repo)
 	mock.ExpectBegin()
+	expectIndexKnowledge(mock, "k1", "kb1")
 	mock.ExpectQuery(`INSERT INTO "embeddings"`).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1).AddRow(2))
 	mock.ExpectCommit()
