@@ -1486,7 +1486,10 @@ func (s *knowledgeService) moveOneKnowledge(
 			if err := s.cleanupMovedSourceWiki(ctx, knowledge, sourceKB, targetKB); err != nil {
 				return err
 			}
-			if state.Phase == "reparse_pending" {
+			if state.Phase == "reparse_pending" || (mode == "reparse" && s.isMovedUpload(knowledge) &&
+				(knowledge.ParseStatus == types.ParseStatusPending ||
+					knowledge.ParseStatus == types.ParseStatusFailed &&
+						strings.HasPrefix(knowledge.ErrorMessage, moveDeliveryFailure))) {
 				return s.enqueueMovedKnowledge(ctx, knowledge, sourceKB, targetKB)
 			}
 			if mode == "reuse_vectors" && targetKB.IsWikiAutoGenerateEnabled() {
@@ -1654,6 +1657,11 @@ func (s *knowledgeService) moveKnowledgeReparse(
 	if err := s.repo.CheckMoveOriginals(ctx, knowledge, targetKB.ID); err != nil {
 		return err
 	}
+	if s.isMovedUpload(knowledge) {
+		if _, err := s.movedUploadInput(ctx, knowledge, sourceKB, targetKB, true); err != nil {
+			return err
+		}
+	}
 	before := *knowledge
 	cleanup := *knowledge
 	cleanup.StorageSize = 0
@@ -1683,6 +1691,43 @@ func (s *knowledgeService) moveKnowledgeReparse(
 		return err
 	}
 	return s.enqueueMovedKnowledge(ctx, knowledge, sourceKB, targetKB)
+}
+
+func (s *knowledgeService) isMovedUpload(k *types.Knowledge) bool {
+	if s.knowledgeInputs == nil || k.Type != "file" || k.FilePath == "" {
+		return false
+	}
+	switch k.Channel {
+	case "", types.ChannelWeb, types.ChannelAPI, types.ChannelBrowserExtension:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *knowledgeService) movedUploadInput(
+	ctx context.Context, k *types.Knowledge, source, target *types.KnowledgeBase, prepareOnly bool,
+) (*types.KnowledgeBuildInputProof, error) {
+	store, ok := s.knowledgeInputs.(interface {
+		MovedUploadInput(context.Context, *types.Knowledge, *types.KnowledgeBase, *types.KnowledgeBase,
+			[]byte, bool) (*types.KnowledgeBuildInputProof, error)
+	})
+	if !ok {
+		return nil, types.ErrSourceLineageUnknown
+	}
+	kb := target
+	if prepareOnly {
+		kb = source
+	}
+	file, err := s.resolveFileServiceForPath(ctx, kb, k.FilePath).GetFile(ctx, k.FilePath)
+	if err != nil {
+		return nil, err
+	}
+	input, readErr := io.ReadAll(file)
+	if err := errors.Join(readErr, file.Close()); err != nil {
+		return nil, err
+	}
+	return store.MovedUploadInput(ctx, k, source, target, input, prepareOnly)
 }
 
 func (s *knowledgeService) enqueueMovedKnowledge(
@@ -1724,6 +1769,20 @@ func (s *knowledgeService) enqueueMovedKnowledge(
 	}
 
 	if knowledge.FilePath != "" {
+		var original *types.KnowledgeBuildInputProof
+		if s.isMovedUpload(knowledge) {
+			// The checkpoint is covered by the admission digest. Persist it before
+			// issuing the worker proof. A pending, acknowledged move can re-enqueue
+			// this same deterministic task ID after a delivery interruption.
+			if err := s.acknowledgeMovedReparse(ctx, knowledge, sourceKB, targetKB); err != nil {
+				return err
+			}
+			var err error
+			original, err = s.movedUploadInput(ctx, knowledge, sourceKB, targetKB, false)
+			if err != nil {
+				return err
+			}
+		}
 		enableMultimodel := targetKB.IsMultimodalEnabled()
 		enableQuestionGeneration := false
 		questionCount := 3
@@ -1736,6 +1795,7 @@ func (s *knowledgeService) enqueueMovedKnowledge(
 
 		lang := types.LanguageFromContextOrDefault(ctx)
 		taskPayload := types.DocumentProcessPayload{
+			OriginalInput:            original,
 			TenantID:                 tenantID,
 			KnowledgeID:              knowledge.ID,
 			KnowledgeBaseID:          targetKB.ID,
@@ -1765,11 +1825,13 @@ func (s *knowledgeService) enqueueMovedKnowledge(
 				asynq.TaskID(taskID),
 				asynq.Retention(7*24*time.Hour),
 			)...)
-		info, err := s.task.Enqueue(task)
+		_, err = s.task.Enqueue(task)
 		if err != nil && !errors.Is(err, asynq.ErrTaskIDConflict) && !errors.Is(err, asynq.ErrDuplicateTask) {
 			return fmt.Errorf("failed to enqueue document process task: %w", err)
 		}
-		_ = info
+		if original != nil {
+			return nil
+		}
 	}
 
 	return s.acknowledgeMovedReparse(ctx, knowledge, sourceKB, targetKB)

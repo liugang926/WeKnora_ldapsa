@@ -463,6 +463,8 @@ func (s *knowledgeService) preflightFAQClone(
 	return maps[0], maps[1], nil
 }
 
+const moveDeliveryFailure = "move reparse delivery: "
+
 func (s *knowledgeService) markMoveItemFailed(
 	ctx context.Context,
 	id string,
@@ -483,7 +485,8 @@ func (s *knowledgeService) markMoveItemFailed(
 	}
 	sourceFailed := row.KnowledgeBaseID == source.ID && state.Phase == "moving" &&
 		row.ParseStatus == types.ParseStatusProcessing
-	enqueueFailed := row.KnowledgeBaseID == target.ID && state.Phase == "reparse_pending" &&
+	confirmedUpload := mode == "reparse" && state.Phase == "done" && s.isMovedUpload(row)
+	enqueueFailed := row.KnowledgeBaseID == target.ID && (state.Phase == "reparse_pending" || confirmedUpload) &&
 		row.ParseStatus == types.ParseStatusPending
 	if !sourceFailed && !enqueueFailed {
 		return
@@ -491,6 +494,9 @@ func (s *knowledgeService) markMoveItemFailed(
 	before, after := *row, *row
 	after.ParseStatus = types.ParseStatusFailed
 	after.ErrorMessage = taskErr.Error()
+	if confirmedUpload {
+		after.ErrorMessage = moveDeliveryFailure + after.ErrorMessage
+	}
 	if err := s.repo.UpdateKnowledgeForTransfer(ctx, &before, &after); err != nil {
 		logger.Errorf(ctx, "Failed to record move failure for knowledge %s, task %s: %v (move error: %v)",
 			row.ID, state.TaskID, err, taskErr)
