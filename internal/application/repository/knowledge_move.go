@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -16,7 +17,7 @@ import (
 // CommitKnowledgeMove changes the application rows and their retention receipts
 // in one transaction. Remote vector engines use the existing idempotent move task.
 func (r *knowledgeRepository) CommitKnowledgeMove(
-	ctx context.Context, before, after *types.Knowledge, reuseChunks bool, finish func(context.Context) error,
+	ctx context.Context, before, after *types.Knowledge, reuseChunks bool, finish, restore func(context.Context) error,
 ) error {
 	if before == nil || after == nil || before.ID == "" || before.ID != after.ID || before.TenantID != after.TenantID {
 		return fmt.Errorf("invalid knowledge move")
@@ -26,7 +27,8 @@ func (r *knowledgeRepository) CommitKnowledgeMove(
 	if err := access.RequireKBTransfer(ctx, source, target, access.KBTransferMove); err != nil {
 		return err
 	}
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var finished bool
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var stored types.Knowledge
 		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", before.ID, source.TenantID, source.ID).
@@ -37,22 +39,12 @@ func (r *knowledgeRepository) CommitKnowledgeMove(
 		if !stored.UpdatedAt.Equal(before.UpdatedAt) || stored.ParseStatus != before.ParseStatus {
 			return fmt.Errorf("knowledge changed during move")
 		}
-		var fields map[string]json.RawMessage
-		var move struct {
-			TaskID    string `json:"task_id"`
-			SourceID  string `json:"source_id"`
-			SourceKB  string `json:"source_kb"`
-			TargetKB  string `json:"target_kb"`
-			Operation string `json:"operation"`
-			Phase     string `json:"phase"`
-			Mode      string `json:"mode"`
-		}
 		mode := "reparse"
 		if reuseChunks {
 			mode = "reuse_vectors"
 		}
-		if json.Unmarshal(stored.Metadata, &fields) != nil ||
-			json.Unmarshal(fields[types.KnowledgeTransferMetadataKey], &move) != nil ||
+		move, ok := moveCheckpoint(&stored)
+		if !ok ||
 			move.TaskID == "" || move.TaskID != access.TransferTaskID(ctx) || move.Phase != "moving" ||
 			move.Mode != mode || move.Operation != string(access.KBTransferMove) || move.SourceID != stored.ID ||
 			move.SourceKB != source.ID || move.TargetKB != target.ID {
@@ -119,9 +111,120 @@ func (r *knowledgeRepository) CommitKnowledgeMove(
 		}
 		if finish != nil {
 			indexCtx := context.WithValue(ctx, knowledgeMoveTxKey{}, knowledgeMoveTx{repository: r.db, tx: tx})
-			return finish(indexCtx)
+			err := finish(indexCtx)
+			finished = err == nil
+			return err
 		}
 		return nil
+	})
+	if err == nil || !finished {
+		return err
+	}
+	committed, verifyErr := r.reconcileMoveCommit(ctx, before, after, restore)
+	if committed && verifyErr == nil {
+		return nil
+	}
+	return errors.Join(err, verifyErr)
+}
+
+func (r *knowledgeRepository) reconcileMoveCommit(ctx context.Context, before, after *types.Knowledge,
+	restore func(context.Context) error,
+) (bool, error) {
+	// A driver can lose the commit acknowledgement even when the server committed.
+	// Read the durable row under a fresh lock before deciding which side owns the index.
+	verifyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	var committed bool
+	verifyErr := r.db.WithContext(verifyCtx).Transaction(func(tx *gorm.DB) error {
+		if tx.Name() == "sqlite" {
+			// SQLite ignores FOR UPDATE. Reserve the writer before reading the checkpoint.
+			if err := tx.Exec("UPDATE knowledges SET updated_at=updated_at WHERE 1=0").Error; err != nil {
+				return err
+			}
+		}
+		var actual types.Knowledge
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id=? AND tenant_id=?", before.ID, before.TenantID).Take(&actual).Error; err != nil {
+			return err
+		}
+		switch {
+		case sameMoveCheckpoint(&actual, after):
+			committed = true
+		case sameMoveCheckpoint(&actual, before):
+			if restore != nil {
+				move := knowledgeMoveTx{repository: r.db, tx: tx}
+				return restore(context.WithValue(verifyCtx, knowledgeMoveTxKey{}, move))
+			}
+		default:
+			return errors.New("cannot reconcile index: knowledge move checkpoint changed")
+		}
+		return nil
+	})
+	return committed, verifyErr
+}
+
+type storedMoveCheckpoint struct {
+	TaskID    string `json:"task_id"`
+	SourceID  string `json:"source_id"`
+	SourceKB  string `json:"source_kb"`
+	TargetKB  string `json:"target_kb"`
+	Operation string `json:"operation"`
+	Phase     string `json:"phase"`
+	Mode      string `json:"mode"`
+}
+
+func moveCheckpoint(k *types.Knowledge) (storedMoveCheckpoint, bool) {
+	var fields map[string]json.RawMessage
+	var cp storedMoveCheckpoint
+	if json.Unmarshal(k.Metadata, &fields) != nil ||
+		json.Unmarshal(fields[types.KnowledgeTransferMetadataKey], &cp) != nil {
+		return cp, false
+	}
+	return cp, cp.TaskID != ""
+}
+
+func sameMoveCheckpoint(actual, expected *types.Knowledge) bool {
+	a, ok := moveCheckpoint(actual)
+	b, valid := moveCheckpoint(expected)
+	return ok && valid && a == b && actual.KnowledgeBaseID == expected.KnowledgeBaseID &&
+		actual.ParseStatus == expected.ParseStatus && actual.UpdatedAt.Equal(expected.UpdatedAt)
+}
+
+// CompleteMoveSourceGraph locks the destination checkpoint before deleting the
+// old graph. Repeated deletes are safe if cleanup succeeded but updating the phase failed.
+func (r *knowledgeRepository) CompleteMoveSourceGraph(ctx context.Context, before, after *types.Knowledge,
+	cleanup func(context.Context) error,
+) error {
+	if before == nil || after == nil || cleanup == nil {
+		return errors.New("missing graph cleanup input")
+	}
+	from, ok := moveCheckpoint(before)
+	to, valid := moveCheckpoint(after)
+	if !ok || !valid || from.Phase != "source_graph_pending" || to.Phase != "done" ||
+		from.Mode != "reuse_vectors" || from.Operation != string(access.KBTransferMove) ||
+		from.SourceID != before.ID || from.TargetKB != before.KnowledgeBaseID ||
+		from.TargetKB != after.KnowledgeBaseID ||
+		from.TaskID != access.TransferTaskID(ctx) {
+		return errors.New("invalid source graph cleanup checkpoint")
+	}
+	from.Phase = "done"
+	if from != to {
+		return errors.New("source graph cleanup target changed")
+	}
+	source := &types.KnowledgeBase{ID: from.SourceKB, TenantID: before.TenantID}
+	target := &types.KnowledgeBase{ID: from.TargetKB, TenantID: before.TenantID}
+	if err := access.RequireKBTransfer(ctx, source, target, access.KBTransferMove); err != nil {
+		return err
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		moveRepo := *r
+		moveRepo.db = tx
+		// The existing CAS writes only if the exact destination row/version remains current.
+		if err := moveRepo.UpdateKnowledgeForTransfer(ctx, before, after); err != nil {
+			return err
+		}
+		moveCtx := context.WithValue(ctx, knowledgeMoveTxKey{}, knowledgeMoveTx{repository: r.db, tx: tx})
+		return cleanup(moveCtx)
 	})
 }
 

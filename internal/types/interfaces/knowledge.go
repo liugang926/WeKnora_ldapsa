@@ -301,7 +301,10 @@ type KnowledgeRepository interface {
 	CheckMoveOriginals(ctx context.Context, source *types.Knowledge, targetKB string) error
 	// CommitKnowledgeMove commits the row, chunks, tag cleanup and original-body ownership together.
 	CommitKnowledgeMove(ctx context.Context, before, after *types.Knowledge, reuseChunks bool,
-		finish func(context.Context) error) error
+		finish, restore func(context.Context) error) error
+	// CompleteMoveSourceGraph finalizes the persisted destination checkpoint and its cleanup.
+	CompleteMoveSourceGraph(ctx context.Context, before, after *types.Knowledge,
+		cleanup func(context.Context) error) error
 	// FailKnowledgeAuthorization stops the same live processing attempt and
 	// clears its outstanding subtask count without modifying document content.
 	FailKnowledgeAuthorization(ctx context.Context, before *types.Knowledge, summary bool) error

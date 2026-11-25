@@ -3,10 +3,12 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service/retriever"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -226,7 +228,7 @@ func validateMoveItem(ctx context.Context, k *types.Knowledge, source, target *t
 				(k.ParseStatus == types.ParseStatusProcessing || k.ParseStatus == types.ParseStatusFailed) {
 				return nil
 			}
-		case "reparse_pending", "done":
+		case "source_graph_pending", "reparse_pending", "done":
 			if k.KnowledgeBaseID == target.ID {
 				return nil
 			}
@@ -522,6 +524,28 @@ func validateProcessingKnowledge(knowledge *types.Knowledge, tenant uint64, kbID
 		}
 	}
 	return nil
+}
+
+// The remote graph cannot be undeleted. Consume this checkpoint only after index and
+// ownership commit, and serialize deletion with any other move of the same document.
+func (s *knowledgeService) completeMovedSourceGraph(ctx context.Context, knowledge *types.Knowledge,
+	source, target *types.KnowledgeBase, state *knowledgeTransferState,
+) error {
+	if s.graphEngine == nil {
+		return errors.New("source graph cleanup unavailable")
+	}
+	if err := access.RequireKBTransfer(ctx, source, target, access.KBTransferMove); err != nil {
+		return err
+	}
+	before := *knowledge
+	state.Phase = "done"
+	if err := setTransferState(knowledge, *state); err != nil {
+		return err
+	}
+	return s.repo.CompleteMoveSourceGraph(ctx, &before, knowledge, func(moveCtx context.Context) error {
+		graph := repository.KnowledgeMoveGraph(moveCtx, s.graphEngine)
+		return graph.DelGraph(moveCtx, []types.NameSpace{{KnowledgeBase: source.ID, Knowledge: knowledge.ID}})
+	})
 }
 
 // Cleanup consumes the durable source references only after target ownership

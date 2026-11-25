@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
@@ -61,7 +62,7 @@ func testRetainedKnowledgeMove(t *testing.T, pg bool) {
 	moveIndex := func(ctx context.Context) error {
 		return KnowledgeMoveDB(ctx, db).Exec("UPDATE move_test_index SET kb='dst' WHERE id='doc'").Error
 	}
-	require.Error(t, repo.CommitKnowledgeMove(context.Background(), stored, &destination, true, nil))
+	require.Error(t, repo.CommitKnowledgeMove(context.Background(), stored, &destination, true, nil, nil))
 	assertScope(source.ID)
 
 	// A purged original rejects the move before the index callback or tag cleanup escapes.
@@ -70,7 +71,7 @@ func testRetainedKnowledgeMove(t *testing.T, pg bool) {
 	require.ErrorIs(t, repo.CommitKnowledgeMove(ctx, stored, &destination, true, func(context.Context) error {
 		t.Fatal("index writer reached for a purged original")
 		return nil
-	}), ErrOriginalBodyUnavailable)
+	}, nil), ErrOriginalBodyUnavailable)
 	require.NoError(t, db.Model(&originalBodyPayload{}).Where("id=?", beforeHead.BodyID).Update("state", "live").Error)
 	assertScope(source.ID)
 	require.Equal(t, beforeHead, readHead())
@@ -81,7 +82,7 @@ func testRetainedKnowledgeMove(t *testing.T, pg bool) {
 	require.ErrorIs(t, repo.CommitKnowledgeMove(ctx, stored, &destination, true, func(context.Context) error {
 		t.Fatal("index writer reached for an unverified source")
 		return nil
-	}), ErrOriginalBodyUnavailable)
+	}, nil), ErrOriginalBodyUnavailable)
 	require.NoError(t, db.Exec("UPDATE chunks SET content='ordinary original' WHERE id='chunk'").Error)
 	require.NoError(t, repo.CheckMoveOriginals(ctx, stored, target.ID))
 	injected := errors.New("injected index failure")
@@ -90,12 +91,59 @@ func testRetainedKnowledgeMove(t *testing.T, pg bool) {
 			return err
 		}
 		return injected
-	}), injected)
+	}, nil), injected)
 	assertScope(source.ID)
 	require.Equal(t, beforeHead, readHead())
 
-	require.NoError(t, repo.CommitKnowledgeMove(ctx, stored, &destination, true, moveIndex))
+	if pg {
+		// The external store commits independently; the application database
+		// rejects its own deferred foreign key only at COMMIT after finish returned.
+		require.NoError(t, db.Exec("CREATE TABLE move_ref (id INT PRIMARY KEY)").Error)
+		require.NoError(t, db.Exec(
+			"CREATE TABLE move_ref_child (id INT REFERENCES move_ref(id) DEFERRABLE INITIALLY DEFERRED)",
+		).Error)
+		require.NoError(t, db.Exec("CREATE TABLE remote_vector (id text PRIMARY KEY, kb text)").Error)
+		require.NoError(t, db.Exec("INSERT INTO remote_vector VALUES ('doc','kb')").Error)
+		var finished, restored bool
+		err = repo.CommitKnowledgeMove(ctx, stored, &destination, true, func(moveCtx context.Context) error {
+			if err := KnowledgeMoveDB(moveCtx, db).Exec("INSERT INTO move_ref_child VALUES (42)").Error; err != nil {
+				return err
+			}
+			err := db.Exec("UPDATE remote_vector SET kb='dst' WHERE id='doc' AND kb='kb'").Error
+			finished = err == nil
+			return err
+		}, func(context.Context) error {
+			res := db.Exec("UPDATE remote_vector SET kb='kb' WHERE id='doc' AND kb='dst'")
+			restored = res.Error == nil && res.RowsAffected == 1
+			return res.Error
+		})
+		require.ErrorContains(t, err, "violates foreign key constraint")
+		require.True(t, finished)
+		require.True(t, restored)
+		var externalKB string
+		require.NoError(t, db.Raw("SELECT kb FROM remote_vector WHERE id='doc'").Scan(&externalKB).Error)
+		require.Equal(t, source.ID, externalKB)
+		assertScope(source.ID)
+		require.Equal(t, beforeHead, readHead())
+	}
+
+	require.NoError(t, repo.CommitKnowledgeMove(ctx, stored, &destination, true, moveIndex, nil))
 	assertScope(target.ID)
+	// A lost acknowledgement may hide a successful commit. Never undo a durable
+	// destination or overwrite a newer task that already owns its row.
+	unexpectedRestore := func(context.Context) error {
+		t.Fatal("cannot compensate a committed or superseded move")
+		return nil
+	}
+	moveRepo := repo.(*knowledgeRepository)
+	committed, reconcileErr := moveRepo.reconcileMoveCommit(ctx, stored, &destination, unexpectedRestore)
+	require.NoError(t, reconcileErr)
+	require.True(t, committed)
+	stale := destination
+	stale.Metadata = types.JSON(strings.Replace(string(stale.Metadata), `"job"`, `"old-task"`, 1))
+	committed, reconcileErr = moveRepo.reconcileMoveCommit(ctx, stored, &stale, unexpectedRestore)
+	require.ErrorContains(t, reconcileErr, "checkpoint changed")
+	require.False(t, committed)
 	afterHead := readHead()
 	require.Equal(t, beforeHead.SlotID, afterHead.SlotID)
 	require.Equal(t, beforeHead.Revision+1, afterHead.Revision)

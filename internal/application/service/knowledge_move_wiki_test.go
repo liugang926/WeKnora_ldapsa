@@ -229,7 +229,7 @@ func (r *moveWikiKnowledgeRepo) CheckMoveOriginals(context.Context, *types.Knowl
 }
 
 func (r *moveWikiKnowledgeRepo) CommitKnowledgeMove(
-	ctx context.Context, before, after *types.Knowledge, reuse bool, finish func(context.Context) error,
+	ctx context.Context, before, after *types.Knowledge, reuse bool, finish, _ func(context.Context) error,
 ) error {
 	if reuse {
 		if err := r.chunks.MoveChunksByKnowledgeID(ctx, before.TenantID, before.ID, after.KnowledgeBaseID); err != nil {

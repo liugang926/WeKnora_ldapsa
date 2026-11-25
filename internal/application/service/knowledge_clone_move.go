@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
-	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service/retriever"
 	werrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -1478,6 +1477,11 @@ func (s *knowledgeService) moveOneKnowledge(
 		return err
 	}
 	if matchesTransfer(ctx, state, sourceKB, targetKB, access.KBTransferMove, knowledgeID, mode) {
+		if state.Phase == "source_graph_pending" {
+			if err := s.completeMovedSourceGraph(ctx, knowledge, sourceKB, targetKB, state); err != nil {
+				return err
+			}
+		}
 		if state.Phase == "done" || state.Phase == "reparse_pending" {
 			if err := s.cleanupMovedSourceWiki(ctx, knowledge, sourceKB, targetKB); err != nil {
 				return err
@@ -1594,28 +1598,22 @@ func (s *knowledgeService) moveKnowledgeReuseVectors(
 		}
 	}
 
-	// The repository validates and stages every local row before calling external
-	// stores. SQL indexes sharing its pool take part in the same transaction.
-	finish := func(moveCtx context.Context) error {
-		var err error
-		if moveIndices != nil {
-			err = moveIndices(moveCtx, sourceKB.ID, targetKB.ID)
+	// SQL index updates join the application transaction. For a remote store,
+	// the inverse is safe only while this task still owns the source row.
+	var finish, restore func(context.Context) error
+	if moveIndices != nil {
+		restore = func(moveCtx context.Context) error {
+			return moveIndices(moveCtx, targetKB.ID, sourceKB.ID)
 		}
-		if err == nil && s.graphEngine != nil {
-			graph := repository.KnowledgeMoveGraph(moveCtx, s.graphEngine)
-			err = graph.DelGraph(moveCtx, []types.NameSpace{{
-				KnowledgeBase: sourceKB.ID, Knowledge: knowledge.ID,
-			}})
+		finish = func(moveCtx context.Context) error {
+			if err := moveIndices(moveCtx, sourceKB.ID, targetKB.ID); err != nil {
+				// A composite store may have committed some of its backends already.
+				restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(moveCtx), 5*time.Second)
+				defer cancel()
+				return errors.Join(err, restore(restoreCtx))
+			}
+			return nil
 		}
-		if err != nil && moveIndices != nil {
-			// A composite engine may have moved some remote backends before one
-			// failed. Restore their exact document while we still own its row lock.
-			restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(moveCtx), 5*time.Second)
-			defer cancel()
-			restoreErr := moveIndices(restoreCtx, targetKB.ID, sourceKB.ID)
-			return errors.Join(err, restoreErr)
-		}
-		return err
 	}
 
 	before := *knowledge
@@ -1627,11 +1625,18 @@ func (s *knowledgeService) moveKnowledgeReuseVectors(
 		return fmt.Errorf("move state unavailable")
 	}
 	state.Phase = "done"
+	if s.graphEngine != nil {
+		state.Phase = "source_graph_pending"
+	}
 	if err := setTransferState(knowledge, *state); err != nil {
 		return err
 	}
-	if err := s.repo.CommitKnowledgeMove(ctx, &before, knowledge, true, finish); err != nil {
+	if err := s.repo.CommitKnowledgeMove(ctx, &before, knowledge, true, finish, restore); err != nil {
 		return err
+	}
+
+	if state.Phase == "source_graph_pending" {
+		return s.completeMovedSourceGraph(ctx, knowledge, sourceKB, targetKB, state)
 	}
 
 	return nil
@@ -1671,7 +1676,7 @@ func (s *knowledgeService) moveKnowledgeReparse(
 	if err := setTransferState(knowledge, *state); err != nil {
 		return err
 	}
-	if err := s.repo.CommitKnowledgeMove(ctx, &before, knowledge, false, nil); err != nil {
+	if err := s.repo.CommitKnowledgeMove(ctx, &before, knowledge, false, nil, nil); err != nil {
 		return err
 	}
 	if err := s.cleanupMovedSourceWiki(ctx, knowledge, sourceKB, targetKB); err != nil {
