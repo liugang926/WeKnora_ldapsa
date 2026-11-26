@@ -49,7 +49,11 @@ func (r *sessionRepository) Create(ctx context.Context, session *types.Session) 
 }
 
 // CreateEmbed binds the generated session ID before the row is visible to readers.
-func (r *sessionRepository) CreateEmbed(ctx context.Context, tenantID uint64, channelID string) (*types.Session, error) {
+func (r *sessionRepository) CreateEmbed(
+	ctx context.Context,
+	tenantID uint64,
+	channelID string,
+) (*types.Session, error) {
 	// The channel marker is server-generated metadata, independent of retrieved text.
 	markerLineage, _ := types.NewCompleteSourceLineage()
 	session := &types.Session{
