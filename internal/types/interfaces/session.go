@@ -87,6 +87,8 @@ type SessionService interface {
 type SessionRepository interface {
 	// Create creates a session
 	Create(ctx context.Context, session *types.Session) (*types.Session, error)
+	// CreateEmbed atomically binds a new session to its per-session visitor principal.
+	CreateEmbed(ctx context.Context, tenantID uint64, channelID string) (*types.Session, error)
 	// Get gets a session visible to the tenant/user scope.
 	Get(ctx context.Context, tenantID uint64, userID string, id string) (*types.Session, error)
 	// GetByID loads a session by tenant and id without user scoping. Callers

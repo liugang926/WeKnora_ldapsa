@@ -425,13 +425,6 @@ func (h *EmbedChannelHandler) CreateEmbedSession(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
 		return
 	}
-	ownerID := types.EmbedSessionPrincipal(tenantID, ch.ID, created.ID).StorageID()
-	if err := h.sessionService.SetSessionOwnerID(ctx, tenantID, created.ID, ownerID); err != nil {
-		logger.Warnf(ctx, "failed to assign embed session owner for %s: %v", created.ID, err)
-	} else {
-		created.UserID = ownerID
-		created.OwnerAuthSource = types.AuthSourceForBoundOwnerID(ownerID)
-	}
 	// Hand back a signed handle bound to this session; the widget must echo it
 	// (X-Embed-Session header) on every subsequent load/chat call.
 	sig := service.SignEmbedSessionHandle(ch, created.ID)

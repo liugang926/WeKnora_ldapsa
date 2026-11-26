@@ -48,6 +48,37 @@ func (r *sessionRepository) Create(ctx context.Context, session *types.Session) 
 	return session, nil
 }
 
+// CreateEmbed binds the generated session ID before the row is visible to readers.
+func (r *sessionRepository) CreateEmbed(ctx context.Context, tenantID uint64, channelID string) (*types.Session, error) {
+	// The channel marker is server-generated metadata, independent of retrieved text.
+	markerLineage, _ := types.NewCompleteSourceLineage()
+	session := &types.Session{
+		TenantID:                 tenantID,
+		Description:              types.EmbedSessionMarkerPrefix + channelID,
+		DescriptionSourceLineage: markerLineage,
+	}
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(session).Error; err != nil {
+			return err
+		}
+		ownerID := types.EmbedSessionPrincipal(tenantID, channelID, session.ID).StorageID()
+		affected, err := (&sessionRepository{db: tx}).SetOwnerID(ctx, tenantID, session.ID, ownerID)
+		if err != nil {
+			return err
+		}
+		if affected != 1 {
+			return apperrors.ErrSessionNotFound
+		}
+		session.UserID = ownerID
+		session.OwnerAuthSource = types.AuthSourceEmbed
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return session, nil
+}
+
 // Get retrieves a session by ID
 func (r *sessionRepository) Get(
 	ctx context.Context,

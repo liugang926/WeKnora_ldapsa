@@ -277,6 +277,19 @@ func (s *sessionService) CreateSession(ctx context.Context, session *types.Sessi
 
 	logger.Infof(ctx, "Creating session, tenant ID: %d", session.TenantID)
 
+	// A publish token authenticates a channel, not a workspace user.
+	if principal, ok := types.PrincipalFromContext(ctx); ok && principal.Type == types.PrincipalEmbedChannel {
+		channel, _ := ctx.Value(types.EmbedChannelContextKey).(*types.EmbedChannel)
+		tenantID, _ := types.TenantIDFromContext(ctx)
+		if channel == nil || !channel.Enabled || channel.ID == "" || channel.TenantID != tenantID ||
+			session.TenantID != tenantID || types.PrincipalAuthSourceFromContext(ctx) != types.AuthSourceEmbed ||
+			principal.ID != fmt.Sprintf("%d:%s", tenantID, channel.ID) ||
+			session.Description != EmbedSessionDescription(channel.ID) {
+			return nil, ErrResourceAccessDenied
+		}
+		return s.sessionRepo.CreateEmbed(ctx, tenantID, channel.ID)
+	}
+
 	if scope, ok := types.IMChannelScopeFromContext(ctx); ok {
 		if session.TenantID != scope.TenantID {
 			return nil, ErrResourceAccessDenied
