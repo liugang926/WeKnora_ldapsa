@@ -146,7 +146,7 @@
       </t-input>
     </div>
 
-    <div class="members-tab-layout">
+    <div ref="listScrollRoot" class="members-tab-layout">
       <div v-if="canManage" v-show="activeListTab === 'invitations'" class="pending-invitations-section">
         <div class="pending-invitations-header">
           <span class="pending-invitations-desc">
@@ -328,6 +328,9 @@
         </div>
       </div>
 
+      <TenantDirectoryCatalog v-if="canViewAudit" :key="directoryRevision" :tenant-id="activeTenantId" :can-add-user="canManage"
+        @available="directoryEnabled = $event" @changed="directoryMembersChanged" />
+      <TenantGroups v-if="canViewAudit && directoryEnabled" :key="directoryRevision" :tenant-id="activeTenantId" :can-manage="canViewAudit" />
     </div>
 
     <t-dialog v-model:visible="invitePopupVisible"
@@ -363,9 +366,6 @@
         </div>
       </div>
     </t-dialog>
-    <TenantDirectoryCatalog v-if="canViewAudit" :key="directoryRevision" :tenant-id="activeTenantId" :can-add-user="canManage" @available="directoryEnabled = $event" @changed="directoryMembersChanged" />
-    <TenantGroups v-if="canViewAudit && directoryEnabled" :key="directoryRevision" :tenant-id="activeTenantId" :can-manage="canViewAudit" />
-
     <!-- Audit log drawer. Only rendered for Admin+ because the backend
          route is g.Admin()-gated; rendering it for lower roles would
          just produce an unhelpful 403. Lazy-loaded on first open. -->
@@ -572,6 +572,8 @@ const addDialogStep = ref<'form' | 'confirm'>('form')
 const addFormRef = ref<any>(null)
 const searchQuery = ref('')
 const activeListTab = ref('members')
+const listScrollRoot = ref<HTMLElement | null>(null)
+watch(activeListTab, () => listScrollRoot.value?.scrollTo(0, 0), { flush: 'post' })
 /** 已应用到服务端筛选的检索词（相对输入框防抖） */
 const memberSearchQ = ref('')
 const MEMBER_SEARCH_DEBOUNCE_MS = 320
@@ -1567,6 +1569,12 @@ watch(
 .tenant-members {
   .settings-list-page();
   container-type: inline-size;
+
+  @media (max-height: 480px) {
+    // Let the header scroll with the rows when it would fill the dialog.
+    display: block;
+    overflow-y: auto;
+  }
 }
 
 .member-cell {
@@ -1627,6 +1635,11 @@ watch(
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+
+  @media (max-height: 480px) {
+    gap: 4px;
+    .t-button { padding-inline: 8px; }
+  }
 }
 
 .header-audit-btn.t-button,
