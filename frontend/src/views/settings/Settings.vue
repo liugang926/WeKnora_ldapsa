@@ -689,6 +689,12 @@ onUnmounted(() => {
   max-width: 1280px;
   height: 900px;
 }
+
+@media (max-width: 720px) {
+  .all-settings-overlay:has(.tenant-members) .settings-sidebar {
+    width: clamp(100px, 28%, 160px);
+  }
+}
 </style>
 
 <style lang="less" scoped>
