@@ -162,6 +162,8 @@ func (r *ToolRegistry) DefinitionSourceLineageWithContext(
 // turn still requires an actual producer receipt for each result.
 func nativeACLTool(tool types.Tool) bool {
 	switch t := tool.(type) {
+	case *DataAnalysisTool:
+		return t.scopeEnforced
 	case *ConfirmedTool:
 		if _, ok := t.inner.(SourceLineageTool); ok {
 			return true
