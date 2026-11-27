@@ -323,14 +323,7 @@ func (t *DataAnalysisTool) Execute(ctx context.Context, args json.RawMessage) (*
 		}, err
 	}
 	if t.scopeEnforced {
-		if _, err := authorizeKnowledgeInSearchTargets(
-			ctx,
-			t.searchTargets,
-			input.KnowledgeID,
-			t.knowledgeService,
-		); err != nil {
-			return &types.ToolResult{Success: false, Error: err.Error()}, err
-		}
+		return t.executeWorkspaceQuery(ctx, input)
 	}
 
 	schema, err := t.LoadFromKnowledgeID(ctx, input.KnowledgeID)
@@ -341,7 +334,12 @@ func (t *DataAnalysisTool) Execute(ctx context.Context, args json.RawMessage) (*
 			Error:   fmt.Sprintf("Failed to load knowledge ID '%s': %v", input.KnowledgeID, err),
 		}, err
 	}
+	return t.queryLoadedTable(ctx, input, schema)
+}
 
+func (t *DataAnalysisTool) queryLoadedTable(
+	ctx context.Context, input DataAnalysisInput, schema *TableSchema,
+) (*types.ToolResult, error) {
 	if rewrittenSQL, fixes := reconcileSQLColumnsWithSchema(input.SQL, schema); len(fixes) > 0 {
 		logger.Infof(ctx, "[Tool][DataAnalysis] Auto-rewrote SQL identifiers for session %s: %v", t.sessionID, fixes)
 		input.SQL = rewrittenSQL
@@ -934,8 +932,12 @@ func (t *DataAnalysisTool) LoadFromKnowledge(ctx context.Context, knowledge *typ
 	if knowledge == nil {
 		return nil, fmt.Errorf("knowledge cannot be nil")
 	}
-	tableName := t.TableName(knowledge)
+	return t.loadKnowledgeTable(ctx, knowledge, t.TableName(knowledge))
+}
 
+func (t *DataAnalysisTool) loadKnowledgeTable(
+	ctx context.Context, knowledge *types.Knowledge, tableName string,
+) (*TableSchema, error) {
 	// Normalize file type to lowercase for comparison
 	fileType := strings.ToLower(knowledge.FileType)
 

@@ -100,6 +100,25 @@ func TestRegisterToolsDefaultSurface(t *testing.T) {
 	}
 }
 
+// A saved agent may still request raw SQL. Its projections do not carry
+// document receipts, so only its separately enabled directory reader is offered.
+func TestRegisterToolsOmitsUnverifiableDatabaseQuery(t *testing.T) {
+	kb := &types.KnowledgeBase{ID: "kb"}
+	kb.IndexingStrategy.VectorEnabled = true
+	for _, allowed := range [][]string{
+		{tools.ToolDatabaseQuery, tools.ToolListDocuments},
+		{tools.ToolDatabaseQuery},
+	} {
+		registry := tools.NewToolRegistry()
+		cfg := toolSurfaceConfig(allowed...)
+		require.NoError(t, newToolSurfaceService(kb).registerTools(t.Context(), registry, cfg, nil, nil, "s"))
+		require.False(t, toolRegistered(registry, tools.ToolDatabaseQuery))
+		listGranted := toolOffered(allowed, tools.ToolListDocuments)
+		require.Equal(t, listGranted, toolRegistered(registry, tools.ToolListDocuments))
+		require.Equal(t, allowed, cfg.AllowedTools)
+	}
+}
+
 func countName(names []string, want string) int {
 	n := 0
 	for _, name := range names {

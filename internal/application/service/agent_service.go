@@ -1629,6 +1629,12 @@ func (s *agentService) registerTools(
 			toolToRegister = tools.NewSearchMemoryTool(s.memoryService)
 		case tools.ToolDatabaseQuery:
 			toolToRegister = tools.NewDatabaseQueryTool(s.db, config.SearchTargets)
+			// Arbitrary SQL projections and aggregates do not identify every source
+			// row they read. Only advertise this tool if it can account for those
+			// reads. Independently granted document readers remain available.
+			if _, ok := toolToRegister.(tools.SourceLineageTool); !ok {
+				continue
+			}
 		case tools.ToolWebSearch:
 			toolToRegister = tools.NewWebSearchTool(webClient, config.WebSearchMaxResults)
 			logger.Infof(
